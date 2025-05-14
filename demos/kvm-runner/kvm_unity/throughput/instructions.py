@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from kvm_unity.instructions import BaseGlobals, Instruction
+from kvm_unity.utils import assert_div
 from torch import Tensor
 
 
@@ -17,12 +18,17 @@ class Globals(BaseGlobals):
     silu_out: Tensor
     logits: Tensor
 
-    pos_id: int
     batch_size: int
 
     matmul_batch_block_size: int
     matmul_output_block_size: int
     norm_block_size: int
+
+    def num_batch_blocks(self) -> int:
+        return assert_div(self.batch_size, self.matmul_batch_block_size)
+
+    def num_output_blocks(self) -> int:
+        return assert_div(self.hidden_size, self.matmul_output_block_size)
 
 
 @dataclass

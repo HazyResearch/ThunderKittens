@@ -40,7 +40,16 @@ def make_globals(
     matmul_output_block_size = 128
     norm_block_size = 16
 
-    num_batch_blocks = assert_div(bs, matmul_batch_block_size)
+    barriers = torch.zeros(
+        [
+            config.num_hidden_layers,
+            10,  # more than the number of opcodes we have
+            bs,
+            config.num_attention_heads + config.num_key_value_heads * 2,
+        ],
+        dtype=torch.int32,
+        device=device,
+    )
 
     return Globals(
         # model params
@@ -78,16 +87,12 @@ def make_globals(
         intermediate_size=config.intermediate_size,
         # block sizes
         batch_size=bs,
-        max_barriers=max(
-            (config.num_attention_heads + config.num_key_value_heads * 2)
-            * matmul_batch_block_size,
-            bs,
-        ),
         matmul_batch_block_size=matmul_batch_block_size,
         matmul_output_block_size=matmul_output_block_size,
         norm_block_size=norm_block_size,
         vocab_size=config.vocab_size,
         device=device,
+        barriers=barriers,
     )
 
 

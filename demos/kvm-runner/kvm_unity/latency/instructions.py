@@ -8,7 +8,6 @@ from torch import Tensor
 @dataclass
 class Globals(BaseGlobals):
     # activation buffers
-    hidden_states: Tensor
     post_ln_rope_q: Tensor
     attn_out: Tensor
     attn_lse_intermediates: Tensor
@@ -16,7 +15,6 @@ class Globals(BaseGlobals):
     silu_out: Tensor
     logits: Tensor
 
-    pos_id: int
     skip_attn_reduction: bool
 
     # block size constants
