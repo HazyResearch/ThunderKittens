@@ -256,7 +256,13 @@ struct qkv_rope_append {
                 tma::store_async_wait();
                 s.finish_page(output_page, Config::NUM_CONSUMER_WARPS);
                 s.finish_page(output_page + 1, Config::NUM_CONSUMER_WARPS);
-                atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, inst.block_idx}], 1);
+                
+                auto start_bar = (inst.block_idx * Globals::matmul_out_block_size) / Globals::head_dim;
+                auto num_generated_heads = Globals::matmul_out_block_size / Globals::head_dim;
+                for (int i = 0; i < num_generated_heads; i++) {
+                    g.Bar[{inst.layer_idx, opcode - 1, static_cast<int>(inst.batch_start_idx), start_bar + i}] = 1;
+                }
+                
             }
         }
     };

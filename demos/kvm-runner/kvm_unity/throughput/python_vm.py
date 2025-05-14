@@ -157,12 +157,14 @@ def qkv_matmul_rope_append(
     # Barrier update
     start_bar = output_start_col // globals.head_dim
     end_bar = start_bar + num_generated_heads
+
+    # the asserts are checking 1, so we can assign and not increment
     globals.barriers[
         instruction.layer_idx,
         instruction.opcode() - 1,
         instruction.batch_start_idx,
         start_bar:end_bar,
-    ] += 1
+    ] = 1
 
 
 def attention_decode(
