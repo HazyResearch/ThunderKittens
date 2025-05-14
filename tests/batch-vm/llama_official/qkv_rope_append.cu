@@ -259,7 +259,7 @@ struct qkv_rope_append {
                 int start_bar = (inst.block_idx * Globals::matmul_out_block_size) / Globals::head_dim;
                 int num_generated_heads = Globals::matmul_out_block_size / Globals::head_dim;
                 for (int i = 0; i < num_generated_heads; i++) {
-                    g.Bar[{inst.layer_idx, opcode - 1, static_cast<int>(inst.batch_start_idx), start_bar + i}] = 1;
+                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, static_cast<int>(inst.batch_start_idx), start_bar + i}], 1);
                 }
                 
             }
