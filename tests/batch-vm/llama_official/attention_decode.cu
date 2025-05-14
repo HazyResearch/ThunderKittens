@@ -234,7 +234,7 @@ namespace kittens::prototype::vm {
                 {
                     s.record(TEVENT_AT_GMEM_WAIT);
 
-                    auto batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
+                    int batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
 
                     // K
                     while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, batch_block_idx, globals::num_attention_heads + inst.kv_head_idx}] < 1) {
@@ -242,7 +242,7 @@ namespace kittens::prototype::vm {
                     }
 
                     // V
-                    while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, batch_block_idx, globals::num_attention_heads + globals::num_kv_heads + inst.kv_head_idx}] < 1) {
+                    while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, batch_block_idx, (int)globals::num_attention_heads + (int)globals::num_kv_heads + inst.kv_head_idx}] < 1) {
                         __nanosleep(20);
                     }
 
@@ -304,7 +304,7 @@ namespace kittens::prototype::vm {
                 if (warpid() == 0)
                 {
 
-                    auto batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
+                    int batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
                     for (int i = 0; i < GQA_RATIO; i++) {
                         while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, batch_block_idx, inst.kv_head_idx * GQA_RATIO + i}] < 1) {
                             __nanosleep(20);
@@ -443,7 +443,7 @@ namespace kittens::prototype::vm {
                 warp::sync(); // ensure all writes are committed
                 asm volatile("{fence.acq_rel.gpu;}");
                 if (laneid == 0) {
-                    auto batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
+                    int batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
                     s.record(TEVENT_STORE_END);
                     atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, batch_block_idx, 0}], 1); // this is sufficient
                 }
