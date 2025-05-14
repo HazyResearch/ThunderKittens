@@ -64,78 +64,7 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const globals &g, state<config> &s)
             {
-                s.wait_page_ready(12);
-                s.warp_finish_page(12, config::NUM_CONSUMER_WARPS); // release the unused page immediately
-                parsed_instruction inst{s};
-                int laneid = warp::laneid();
-
-                if (laneid == 0)
-                { // load B
-                    uint32_t phasebits = 0xFFFF0000;
-                    for (int i = 0; i < iters; i++)
-                    {
-                        int stage = i % PIPELINE_STAGES;
-                        int weight_page = get_weight_page(s, stage);
-                        weight_tile &weight = *reinterpret_cast<weight_tile *>(s.pages[weight_page].data);
-
-                        wait(inputs_finished(s, stage), get_phasebit<1>(phasebits, stage));
-                        update_phasebit<1>(phasebits, stage);
-                        tma::expect(inputs_arrived(s, stage), weight);
-
-                        if (i < PIPELINE_STAGES)
-                        {
-                            s.wait_page_ready(weight_page);
-                            s.wait_page_ready(weight_page + 1);
-                        }
-                        auto &Weights = g.*WeightsPtr;
-                        tma::load_async(weight, Weights, {inst.layer, inst.col, i}, inputs_arrived(s, stage));
-                    }
-                }
-                else if (laneid == 1)
-                { // load A
-                    uint32_t phasebits = 0xFFFF0000;
-                    for (int i = 0; i < iters; i++)
-                    {
-                        int stage = i % PIPELINE_STAGES;
-                        int activation_page = get_activation_page(s, stage);
-                        activation_tile &activation = *reinterpret_cast<activation_tile *>(s.pages[activation_page].data);
-
-                        wait(inputs_finished(s, stage), get_phasebit<1>(phasebits, stage));
-                        update_phasebit<1>(phasebits, stage);
-                        tma::expect(inputs_arrived(s, stage), activation);
-
-                        if (i < PIPELINE_STAGES)
-                        {
-                            s.wait_page_ready(activation_page);
-                            s.wait_page_ready(activation_page + 1);
-                        }
-                        auto &Activations = g.*InputActivationsPtr;
-
-                        gmem_waiter::gmem_wait(g, s, inst);
-
-                        tma::load_async(activation, Activations, {inst.row, i}, inputs_arrived(s, stage));
-                    }
-                }
-
-                warp::sync();
-                if (laneid == 0)
-                {
-                    wait(outputs_shared(s), 0);
-                    for (int i = 0; i < PIPELINE_STAGES; i++)
-                    {
-                        int stage = (iters + i) % PIPELINE_STAGES;
-                        int weight_page = get_weight_page(s, stage);
-                        s.warp_finish_page(weight_page, config::NUM_CONSUMER_WARPS);
-                        s.warp_finish_page(weight_page + 1, config::NUM_CONSUMER_WARPS);
-                    }
-                    for (int i = 0; i < PIPELINE_STAGES - 1; i++)
-                    { // last stage is used as output page
-                        int stage = (iters + i) % PIPELINE_STAGES;
-                        int activation_page = get_activation_page(s, stage);
-                        s.warp_finish_page(activation_page, config::NUM_CONSUMER_WARPS);
-                        s.warp_finish_page(activation_page + 1, config::NUM_CONSUMER_WARPS);
-                    }
-                }
+                matmul_pipeline::loader_loop(s, g);
             }
         };
 
