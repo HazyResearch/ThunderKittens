@@ -4,27 +4,69 @@
 #include "vm/vm.cuh"
 #include <iostream>
 
-#define OPCODE_RMS_NORM 1
+#define OPCODE_AttnNorm 1
 #define OPCODE_QKV_RopeAppend 2
 #define OPCODE_GQA_AttentionDecode 3
 #define OPCODE_O_ProjResidual 4
 
-#define OPCODE_POST_RMS_NORM 5
+#define OPCODE_MlpNorm 5
 #define OPCODE_GateSiLU 6
 #define OPCODE_UpMatmul 7
 #define OPCODE_DownProjResidual 8
 
-#define LLAMA_70B_NUM_LAYERS 80
-#define LLAMA_70B_HIDDEN_DIM 8192
-#define LLAMA_70B_INTERMEDIATE_DIM 28672
-#define LLAMA_70B_HEAD_DIM 128
-#define LLAMA_70B_NUM_ATTENTION_HEADS 64
-#define LLAMA_70B_NUM_KV_HEADS 8
-#define LLAMA_70B_KV_BLOCK_SIZE 16
-#define LLAMA_70B_MATMUL_OUT_BLOCK_SIZE 128
+#define OPCODE_LM_HeadNorm 9
+#define OPCODE_LM_Head 10
+
+// #define USE_LLAMA_1B
+#define USE_LLAMA_8B
+// #define USE_LLAMA_70B
+
+
+#ifdef USE_LLAMA_1B
+
+#define LLAMA_NUM_LAYERS 16
+#define LLAMA_HIDDEN_DIM 2048
+#define LLAMA_INTERMEDIATE_DIM 8192
+#define LLAMA_HEAD_DIM 64
+#define LLAMA_NUM_ATTENTION_HEADS 32
+#define LLAMA_NUM_KV_HEADS 8
+#define LLAMA_KV_BLOCK_SIZE 16
+#define LLAMA_MATMUL_OUT_BLOCK_SIZE 128
+#define LLAMA_MATMUL_BATCH_BLOCK_SIZE 128
+
+#endif
+
+#ifdef USE_LLAMA_8B
+
+#define LLAMA_NUM_LAYERS 32
+#define LLAMA_HIDDEN_DIM 4096
+#define LLAMA_INTERMEDIATE_DIM 14336
+#define LLAMA_HEAD_DIM 128
+#define LLAMA_NUM_ATTENTION_HEADS 32
+#define LLAMA_NUM_KV_HEADS 8
+#define LLAMA_KV_BLOCK_SIZE 16
+#define LLAMA_MATMUL_OUT_BLOCK_SIZE 128
+#define LLAMA_MATMUL_BATCH_BLOCK_SIZE 128
+
+#endif
+
+#ifdef USE_LLAMA_70B
+
+// TODO 
+#define LLAMA_NUM_LAYERS 80
+#define LLAMA_HIDDEN_DIM 8192
+#define LLAMA_INTERMEDIATE_DIM "TODO"
+#define LLAMA_HEAD_DIM 128
+#define LLAMA_NUM_ATTENTION_HEADS 64
+#define LLAMA_NUM_KV_HEADS 8
+#define LLAMA_KV_BLOCK_SIZE 16
+#define LLAMA_MATMUL_OUT_BLOCK_SIZE 128
+#define LLAMA_MATMUL_BATCH_BLOCK_SIZE 128
+
+#endif
 
 #define SM_COUNT 148
-#define BATCH_SIZE 128
+#define BATCH_SIZE 1024
 #define KV_PAGE_SIZE 128
 
 // timing event convention
@@ -48,29 +90,75 @@
 
 namespace kittens::prototype::vm
 {
-    using config = default_config;
+    struct llama_config
+    {
+        // Instruction pipeline
+        static constexpr int INSTRUCTION_PIPELINE_STAGES = 2;
 
-    template <int _hidden_dim, int _intermediate_dim, int _head_dim, int _num_attention_heads, int _num_kv_heads, int _kv_block_size, int _matmul_out_block_size, int _batch_size, int _sm_count>
+        // num bits required to represent num pipeline stages
+        static constexpr int INSTRUCTION_PIPELINE_STAGES_BITS = 1;
+
+        static constexpr int INSTRUCTION_WIDTH = 32; // 128 bytes per instruction.
+        using instruction_t = int[INSTRUCTION_WIDTH];
+
+        // Timing info
+        static constexpr int TIMING_WIDTH = 128;
+        using timing_t = int[TIMING_WIDTH];
+
+        // How many semaphores are available for dynamic use?
+        static constexpr int DYNAMIC_SEMAPHORES = 32;
+
+        // One controller warp, one load warp, one store warp, and one mma warp.
+        static constexpr int NUM_CONSUMER_WARPS = 16;
+        static constexpr int NUM_WARPS = 4 + NUM_CONSUMER_WARPS;
+        static constexpr int NUM_THREADS = NUM_WARPS * ::kittens::WARP_THREADS;
+        static constexpr int NUM_BLOCKS = 1;
+        static constexpr int CLUSTER_BLOCKS = 1;
+        static constexpr int MAX_SHARED_MEMORY = kittens::MAX_SHARED_MEMORY;
+
+        // Shared memory declared statically
+        static constexpr int SCRATCH_BYTES = 8192+2048;
+        static constexpr int STATIC_SHARED_MEMORY = 512 + INSTRUCTION_PIPELINE_STAGES * (SCRATCH_BYTES + (INSTRUCTION_WIDTH + TIMING_WIDTH) * 4 + DYNAMIC_SEMAPHORES * 8);
+        static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - STATIC_SHARED_MEMORY;
+
+        // Shared memory declared dynamically
+        static constexpr int PAGE_SIZE = 32768;
+        static constexpr int NUM_PAGES = DYNAMIC_SHARED_MEMORY / PAGE_SIZE;
+        static_assert(NUM_PAGES == 6, "NUM_PAGES must be 13");
+
+        static constexpr bool TIMING_RECORD_ENABLED = false;
+
+        static constexpr bool GMEM_SPIN_LOOP_SLEEP_NANOS = 20;
+
+        static constexpr int CONSUMER_REGISTERS = 104;
+        static constexpr int NON_CONSUMER_REGISTERS = 64;
+    };
+
+    template <int _num_hidden_layers, int _hidden_dim, int _intermediate_dim, int _head_dim, int _num_attention_heads, int _num_kv_heads, int _kv_block_size, int _matmul_out_block_size, int _matmul_batch_block_size, int _batch_size, int _sm_count>
     struct globals_t
     {
-        constexpr static unsigned int matmul_out_block_size = _matmul_out_block_size;
-        constexpr static unsigned int kv_block_size = _kv_block_size;
-        constexpr static unsigned int head_dim = _head_dim;
-        constexpr static unsigned int hidden_dim = _hidden_dim;
-        constexpr static unsigned int intermediate_dim = _intermediate_dim;
-        constexpr static unsigned int num_attention_heads = _num_attention_heads;
-        constexpr static unsigned int num_kv_heads = _num_kv_heads;
-        constexpr static unsigned int batch_size = _batch_size;
-        constexpr static unsigned int sm_count = _sm_count;
+        constexpr static int num_hidden_layers = _num_hidden_layers;
+        constexpr static int matmul_out_block_size = _matmul_out_block_size;
+        constexpr static int matmul_batch_block_size = _matmul_batch_block_size;
+        constexpr static int kv_block_size = _kv_block_size;
+        constexpr static int head_dim = _head_dim;
+        constexpr static int hidden_dim = _hidden_dim;
+        constexpr static int intermediate_dim = _intermediate_dim;
+        constexpr static int num_attention_heads = _num_attention_heads;
+        constexpr static int num_kv_heads = _num_kv_heads;
+        constexpr static int batch_size = _batch_size;
+        constexpr static int sm_count = _sm_count;
 
-        using instruction_layout = ::kittens::prototype::vm::instruction_layout<config>;
-        using timing_layout = ::kittens::prototype::vm::timing_layout<config>;
+        constexpr static int num_output_blocks = hidden_dim / matmul_out_block_size;
+
+        using instruction_layout = ::kittens::prototype::vm::instruction_layout<llama_config>;
+        using timing_layout = ::kittens::prototype::vm::timing_layout<llama_config>;
 
         using weights_t = gl<bf16, 1, -1, -1, hidden_dim, st_bf<matmul_out_block_size, matmul_out_block_size>, st_bf<128, 128>>;
         using weights_big_indim_t = gl<bf16, 1, -1, -1, intermediate_dim, st_bf<matmul_out_block_size, matmul_out_block_size>>;
 
-        using activations_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, sv_bf<head_dim>, sv_bf<16>, st_bf<64, 128>, st_bf<128, 128>>;
-        using activations_big_indim_t = gl<bf16, 1, 1, -1, intermediate_dim, sv_bf<intermediate_dim>, sv_bf<hidden_dim>, sv_bf<16>, st_bf<64, 128>>;
+        using activations_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, sv_bf<head_dim>, sv_bf<128>, st_bf<64, 128>, st_bf<128, 128>>;
+        using activations_big_indim_t = gl<bf16, 1, 1, -1, intermediate_dim, sv_bf<intermediate_dim>, sv_bf<hidden_dim>, sv_bf<16>, st_bf<64, 128>, st_bf<128, 128>>;
         using logits_t = gl<bf16, 1, 1, -1, -1, sv_bf<16>>;
 
         using norm_weights_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, sv_bf<16>>;
@@ -79,8 +167,7 @@ namespace kittens::prototype::vm
         // KV Cache format: (num_layers * batch_size, sequence_length, num_heads, head_dim)
         using kv_cache_t = gl<bf16, -1, -1, num_kv_heads, head_dim, sv_bf<16>, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>, tma::descriptor<st_bf<128, 128>, 0>, sv_bf<128>>;
 
-        // num_layers by 6 ops per layer by up to 48 heads (Q + K + V)
-        using barriers = gl<uint, 1, -1, -1, num_attention_heads + 2 * num_kv_heads>;
+        using barriers = gl<uint, -1, -1, -1, -1>;
 
         // vm stuff
         barriers Bar;
@@ -116,6 +203,8 @@ namespace kittens::prototype::vm
         activations_t q_post_rope;
         activations_t attn_out;
         activations_big_indim_t silu_out;
+
+        activations_t rms_lm_head_intermediates;
         logits_t logits;
 
         unsigned int pos_id;
@@ -123,46 +212,48 @@ namespace kittens::prototype::vm
         float rms_norm_eps;
 
         dim3 grid() { return dim3(sm_count); }
-        dim3 block() { return dim3(config::NUM_THREADS); }
-        int dynamic_shared_memory() { return config::DYNAMIC_SHARED_MEMORY; }
+        dim3 block() { return dim3(llama_config::NUM_THREADS); }
+        int dynamic_shared_memory() { return llama_config::DYNAMIC_SHARED_MEMORY; }
     };
 
     typedef globals_t<
-        LLAMA_70B_HIDDEN_DIM,
-        LLAMA_70B_INTERMEDIATE_DIM,
-        LLAMA_70B_HEAD_DIM,
-        LLAMA_70B_NUM_ATTENTION_HEADS,
-        LLAMA_70B_NUM_KV_HEADS,
-        LLAMA_70B_KV_BLOCK_SIZE,
-        LLAMA_70B_MATMUL_OUT_BLOCK_SIZE,
+        LLAMA_NUM_LAYERS,
+        LLAMA_HIDDEN_DIM,
+        LLAMA_INTERMEDIATE_DIM,
+        LLAMA_HEAD_DIM,
+        LLAMA_NUM_ATTENTION_HEADS,
+        LLAMA_NUM_KV_HEADS,
+        LLAMA_KV_BLOCK_SIZE,
+        LLAMA_MATMUL_OUT_BLOCK_SIZE,
+        LLAMA_MATMUL_BATCH_BLOCK_SIZE,
         BATCH_SIZE,
         SM_COUNT>
-        llama_70b_globals;
+        llama_8b_globals;
 
-    template <typename config = config, typename globals = llama_70b_globals>
+    template <typename llama_config = llama_config, typename globals = llama_8b_globals>
     struct post_rms_norm;
 
-    template <typename config = config, typename globals = llama_70b_globals>
+    template <typename llama_config = llama_config, typename globals = llama_8b_globals>
     struct qkv_rope_append;
 
-    template <typename config = config, typename globals = llama_70b_globals>
+    template <typename llama_config = llama_config, typename globals = llama_8b_globals>
     struct attention_decode;
 
-    template <typename config = config, typename globals = llama_70b_globals>
+    template <typename llama_config = llama_config, typename globals = llama_8b_globals>
     struct o_proj;
 
-    template <typename config = config, typename globals = llama_70b_globals>
+    template <typename llama_config = llama_config, typename globals = llama_8b_globals>
     struct pre_rms_norm;
 
-    template <typename config = config, typename globals = llama_70b_globals>
+    template <typename llama_config = llama_config, typename globals = llama_8b_globals>
     struct matmul_silu;
 
-    template <typename config = config, typename globals = llama_70b_globals>
+    template <typename llama_config = llama_config, typename globals = llama_8b_globals>
     struct matmul_gate;
 
-    template <typename config = config, typename globals = llama_70b_globals>
+    template <typename llama_config = llama_config, typename globals = llama_8b_globals>
     struct downproj;
 
-    template <typename config = config, typename globals = llama_70b_globals>
+    template <typename llama_config = llama_config, typename globals = llama_8b_globals>
     struct rms_lm_head;
 }
