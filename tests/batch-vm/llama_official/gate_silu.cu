@@ -13,7 +13,7 @@ namespace kittens::prototype::vm
         static constexpr int opcode = OPCODE_GateSiLU;
         static constexpr int prev_opcode = opcode - 1;
         static constexpr int PIPELINE_STAGES = 3;
-        static constexpr int NUM_ITERS = Globals::hidden_dim / 128;
+        static constexpr int NUM_ITERS = Globals::hidden_dim / Globals::matmul_out_block_size;
 
         using weight_tile = st_bf<128, 128>;
         using activation_tile = st_bf<128, 128>;
