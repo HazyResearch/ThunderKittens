@@ -45,7 +45,10 @@ def make_globals(
             config.num_hidden_layers,
             10,  # more than the number of opcodes we have
             bs,
-            config.num_attention_heads + config.num_key_value_heads * 2,
+            max(
+                config.num_attention_heads + config.num_key_value_heads * 2,
+                assert_div(config.intermediate_size, matmul_output_block_size),
+            ),
         ],
         dtype=torch.int32,
         device=device,
@@ -115,7 +118,10 @@ def schedule_qkv_matmul_rope_append(
     instructions: list[Instruction] = []
 
     num_batch_blocks = assert_div(globs.batch_size, globs.matmul_batch_block_size)
-    num_qkv_blocks = assert_div(globs.hidden_size, globs.matmul_output_block_size)
+    num_qkv_blocks = assert_div(
+        globs.qkv_dim(),
+        globs.matmul_output_block_size,
+    )
 
     for bidx in range(0, num_batch_blocks):
         for qkv_block_idx in range(num_qkv_blocks):
@@ -154,11 +160,8 @@ def schedule_o_proj_residual(
 ) -> tuple[list[Instruction], bool]:
     instructions: list[Instruction] = []
 
-    num_batch_blocks = assert_div(globs.batch_size, globs.matmul_batch_block_size)
-    num_o_blocks = assert_div(globs.hidden_size, globs.matmul_output_block_size)
-
-    for bidx in range(num_batch_blocks):
-        for o_block_idx in range(num_o_blocks):
+    for bidx in range(globs.num_batch_blocks()):
+        for o_block_idx in range(globs.num_output_blocks()):
             instructions.append(
                 O_ProjResidual(
                     layer_idx=layer_idx,
@@ -193,13 +196,8 @@ def schedule_gate_silu(
 ) -> tuple[list[Instruction], bool]:
     instructions: list[Instruction] = []
 
-    num_batch_blocks = assert_div(globs.batch_size, globs.matmul_batch_block_size)
-    num_matmul_silu_blocks = assert_div(
-        globs.intermediate_size, globs.matmul_output_block_size
-    )
-
-    for bidx in range(num_batch_blocks):
-        for block_idx in range(num_matmul_silu_blocks):
+    for bidx in range(globs.num_batch_blocks()):
+        for block_idx in range(globs.num_intermediate_blocks()):
             instructions.append(
                 GateSilu(
                     layer_idx=layer_idx,
@@ -217,13 +215,8 @@ def schedule_up_matmul(
 ) -> tuple[list[Instruction], bool]:
     instructions: list[Instruction] = []
 
-    num_batch_blocks = assert_div(globs.batch_size, globs.matmul_batch_block_size)
-    num_matmul_gate_blocks = assert_div(
-        globs.intermediate_size, globs.matmul_output_block_size
-    )
-
-    for bidx in range(num_batch_blocks):
-        for block_idx in range(num_matmul_gate_blocks):
+    for bidx in range(globs.num_batch_blocks()):
+        for block_idx in range(globs.num_intermediate_blocks()):
             instructions.append(
                 UpMatMul(
                     layer_idx=layer_idx,
@@ -241,11 +234,8 @@ def schedule_down_proj_residual(
 ) -> tuple[list[Instruction], bool]:
     instructions: list[Instruction] = []
 
-    num_batch_blocks = assert_div(globs.batch_size, globs.matmul_batch_block_size)
-    num_down_blocks = assert_div(globs.hidden_size, globs.matmul_output_block_size)
-
-    for bidx in range(num_batch_blocks):
-        for down_block_idx in range(num_down_blocks):
+    for bidx in range(globs.num_batch_blocks()):
+        for down_block_idx in range(globs.num_output_blocks()):
             instructions.append(
                 DownProjResidual(
                     layer_idx=layer_idx,

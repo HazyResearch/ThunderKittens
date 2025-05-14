@@ -41,6 +41,7 @@ class ScriptConfig(pydra.Config):
     num_warmup: int = 5
     num_iters: int = 10
     barrier_fill_val: int = 0
+    batch_size: int = 1
     max_len_override: int | None = 16384
     noops: bool = False
     skip_kvm: bool = False
@@ -49,21 +50,36 @@ class ScriptConfig(pydra.Config):
     setting: str = "latency"
 
     def finalize(self):
-        if self.mode in ["kvm", "pyvm"]:
+        if self.setting == "latency" and self.mode in ["kvm", "pyvm"]:
             assert self.interleave_rope, "interleave_rope must be True for kvm mode"
 
     def once(self):
         self.num_warmup = 0
         self.num_iters = 1
 
-    def th(self):
+    def th(self, bs=1024, sl=128):
         self.setting = "throughput"
-        self.kvm_dir = (
+        self.kvm_path = (
             Path(__file__).parent.parent.parent.parent
             / "tests"
-            / "batch_vm"
+            / "batch-vm"
             / "llama_official"
         )
+        self.batch_size = bs
+        self.max_len_override = sl
+        self.interleave_rope = False
+        self.l8()
+
+        if self.mode == "kvm":
+            assert self.batch_size == 1024, (
+                "must recompile the kernel with new BATCH_SIZE"
+            )
+
+    def l1(self):
+        self.model = "meta-llama/Llama-3.2-1B-Instruct"
+
+    def l8(self):
+        self.model = "meta-llama/Llama-3.1-8B-Instruct"
 
 
 @torch.inference_mode()
@@ -74,6 +90,7 @@ def main(config: ScriptConfig):
     extra_config = ExtraModelConfig(
         interleave_rope=config.interleave_rope,
         max_len_override=config.max_len_override,
+        max_batch_size=config.batch_size,
     )
     model = LlamaForCausalLM.from_pretrained(
         config.model, device=config.device, extra_config=extra_config
@@ -102,8 +119,10 @@ def main(config: ScriptConfig):
     assert prefill_output.output_ids is not None
     new_input_token = prefill_output.output_ids[:, -1:]
 
-    output_tokens = torch.zeros(config.ntok, device=model.device, dtype=torch.long)
-    output_tokens[0] = new_input_token
+    output_tokens = torch.zeros(
+        config.batch_size, config.ntok, device=model.device, dtype=torch.long
+    )
+    output_tokens[:, 0] = new_input_token
 
     schedule_builder = make_schedule_builder(config.setting)
     schedule = schedule_builder.build(model)
@@ -154,7 +173,7 @@ def main(config: ScriptConfig):
     if config.tokens:
         to_cpu = output_tokens.cpu()
         print("Output ids: ", to_cpu)
-        print("Output text: ", tokenizer.decode(to_cpu))
+        print("Output text: ", tokenizer.batch_decode(to_cpu))
 
     if config.token_details:
         ids_list = to_cpu.tolist()

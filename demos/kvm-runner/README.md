@@ -172,3 +172,11 @@ def go(t=100):
     )
 
 ```
+
+throughput testing:
+
+```bash
+
+python kvm_unity/generate.py .th .l1 batch_size=128 mode=pyvm ntok=4
+ 
+```

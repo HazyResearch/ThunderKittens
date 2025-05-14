@@ -22,20 +22,21 @@ class PyTorchGenerator(Generator):
         self.model = model
 
     def generate(self, output_tokens: Tensor, prompt_len: int, ntok: int):
+        bs = output_tokens.shape[0]
         start_position_ids = torch.ones(
-            1, dtype=torch.long, device=self.model.device
+            bs, 1, dtype=torch.long, device=self.model.device
         ) * (prompt_len)
 
         for i in tqdm(range(1, ntok)):
             position_ids = start_position_ids + i
             decode_inp = BatchState(
-                input_ids=output_tokens[i - 1 : i],
+                input_ids=output_tokens[:, i - 1 : i],
                 position_ids=position_ids,
                 seq_len=prompt_len + i + 1,
             )
             decode_output: BatchState = self.model(decode_inp)
             assert decode_output.output_ids is not None
-            output_tokens[i] = decode_output.output_ids
+            output_tokens[:, i] = decode_output.output_ids.squeeze(-1)
 
 
 class KVM_Generator(Generator):
@@ -90,9 +91,9 @@ class KVM_Generator(Generator):
 
     def generate(self, output_tokens: Tensor, prompt_len: int, ntok: int):
         for i in tqdm(range(1, ntok)):
-            input_ids = output_tokens[i - 1 : i]
+            input_ids = output_tokens[:, i - 1]
             output_ids = self.run(input_ids, pos_id=prompt_len + i)
-            output_tokens[i] = output_ids
+            output_tokens[:, i] = output_ids
 
 
 class PyVM_Generator(Generator):
@@ -134,6 +135,6 @@ class PyVM_Generator(Generator):
 
     def generate(self, output_tokens: Tensor, prompt_len: int, ntok: int):
         for i in tqdm(range(1, ntok)):
-            input_ids = output_tokens[i - 1 : i]
+            input_ids = output_tokens[:, i - 1]
             output_ids = self.run(input_ids, pos_id=prompt_len + i)
-            output_tokens[i] = output_ids
+            output_tokens[:, i] = output_ids

@@ -24,11 +24,17 @@ class Globals(BaseGlobals):
     matmul_output_block_size: int
     norm_block_size: int
 
+    def qkv_dim(self) -> int:
+        return (self.num_attention_heads + self.num_kv_heads * 2) * self.head_dim
+
     def num_batch_blocks(self) -> int:
         return assert_div(self.batch_size, self.matmul_batch_block_size)
 
     def num_output_blocks(self) -> int:
         return assert_div(self.hidden_size, self.matmul_output_block_size)
+
+    def num_intermediate_blocks(self) -> int:
+        return assert_div(self.intermediate_size, self.matmul_output_block_size)
 
 
 @dataclass
