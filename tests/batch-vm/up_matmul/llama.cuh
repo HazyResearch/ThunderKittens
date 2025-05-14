@@ -69,8 +69,8 @@ namespace kittens::prototype::vm
         using weights_t = gl<bf16, 1, -1, -1, hidden_dim, st_bf<matmul_out_block_size, matmul_out_block_size>, st_bf<128, 128>>; 
         using weights_big_indim_t = gl<bf16, 1, -1, -1, intermediate_dim, st_bf<matmul_out_block_size, matmul_out_block_size>, st_bf<128, 128>>; 
 
-        using activations_t = gl<bf16, 1, 1, batch_size, hidden_dim, sv_bf<hidden_dim>, sv_bf<head_dim>, sv_bf<16>, st_bf<64, 128>>;
-        using activations_big_indim_t = gl<bf16, 1, 1, batch_size, intermediate_dim, sv_bf<intermediate_dim>, sv_bf<hidden_dim>, sv_bf<16>, st_bf<64, 128>>;
+        using activations_t = gl<bf16, 1, 1, batch_size, hidden_dim, sv_bf<hidden_dim>, sv_bf<head_dim>, sv_bf<16>, st_bf<64, 128>, st_bf<128, 128>>;
+        using activations_big_indim_t = gl<bf16, 1, 1, batch_size, intermediate_dim, sv_bf<intermediate_dim>, sv_bf<hidden_dim>, sv_bf<16>, st_bf<64, 128>, st_bf<128, 128>>;
         using logits_t = gl<bf16, 1, 1, 1, -1, sv_bf<16>>;
         using norm_weights_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, sv_bf<16>>;
         using rope_table_t = gl<float, 1, 1, -1, head_dim, sv_fl<16>>;
