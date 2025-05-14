@@ -66,7 +66,6 @@
 #endif
 
 #define SM_COUNT 148
-#define BATCH_SIZE 1024
 #define KV_PAGE_SIZE 128
 
 // timing event convention
@@ -134,7 +133,7 @@ namespace kittens::prototype::vm
         static constexpr int NON_CONSUMER_REGISTERS = 64;
     };
 
-    template <int _num_hidden_layers, int _hidden_dim, int _intermediate_dim, int _head_dim, int _num_attention_heads, int _num_kv_heads, int _kv_block_size, int _matmul_out_block_size, int _matmul_batch_block_size, int _batch_size, int _sm_count>
+    template <int _num_hidden_layers, int _hidden_dim, int _intermediate_dim, int _head_dim, int _num_attention_heads, int _num_kv_heads, int _kv_block_size, int _matmul_out_block_size, int _matmul_batch_block_size, int _sm_count>
     struct globals_t
     {
         constexpr static int num_hidden_layers = _num_hidden_layers;
@@ -146,7 +145,6 @@ namespace kittens::prototype::vm
         constexpr static int intermediate_dim = _intermediate_dim;
         constexpr static int num_attention_heads = _num_attention_heads;
         constexpr static int num_kv_heads = _num_kv_heads;
-        constexpr static int batch_size = _batch_size;
         constexpr static int sm_count = _sm_count;
 
         constexpr static int num_output_blocks = hidden_dim / matmul_out_block_size;
@@ -210,6 +208,7 @@ namespace kittens::prototype::vm
         unsigned int pos_id;
         float attn_scale;
         float rms_norm_eps;
+        int batch_size;
 
         dim3 grid() { return dim3(sm_count); }
         dim3 block() { return dim3(llama_config::NUM_THREADS); }
@@ -226,7 +225,6 @@ namespace kittens::prototype::vm
         LLAMA_KV_BLOCK_SIZE,
         LLAMA_MATMUL_OUT_BLOCK_SIZE,
         LLAMA_MATMUL_BATCH_BLOCK_SIZE,
-        BATCH_SIZE,
         SM_COUNT>
         llama_8b_globals;
 

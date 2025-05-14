@@ -178,6 +178,8 @@ class DownProjResidual(MatMulAdd):
 
 @dataclass
 class PreLMHeadRMS(Instruction):
+    # layer idx is fake but convenient so we can reuse cuda code
+    layer_idx: int
     batch_start_idx: int
 
     @classmethod

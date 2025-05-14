@@ -20,14 +20,12 @@ namespace kittens::prototype::vm
 
         struct parsed_instruction
         {
-            int layer;
             int batch_idx;
             int output_idx;
             __device__ inline parsed_instruction(typename config::instruction_t &instruction)
             {
-                layer = instruction[1];
-                batch_idx = instruction[2];
-                output_idx = instruction[3];
+                batch_idx = instruction[1];
+                output_idx = instruction[2];
             }
             __device__ inline parsed_instruction(state<config> &s) : parsed_instruction(s.instruction()) {}
         };
@@ -91,6 +89,12 @@ namespace kittens::prototype::vm
                 }
                 else if (laneid == 1)
                 { // load A
+
+                    while (*(volatile int *)&g.Bar[{0, OPCODE_LM_HeadNorm - 1, inst.batch_idx, 0}] < Globals::matmul_batch_block_size)
+                    {
+                        __nanosleep(20);
+                    }
+
                     uint32_t phasebits = 0xFFFF0000;
                     for (int i = 0; i < NUM_ITERS; i++)
                     {
@@ -221,14 +225,6 @@ namespace kittens::prototype::vm
                     s.finish_page(output_page, config::NUM_CONSUMER_WARPS);
                     s.finish_page(output_page + 1, config::NUM_CONSUMER_WARPS);
                 }
-                warp::sync();
-
-                asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
-                if (laneid == 0)
-                {
-                    atomicAdd(&g.Bar[{inst.layer, opcode - 1, inst.batch_idx, 0}], 1);
-                }
-
                 warp::sync();
                 if (kittens::laneid() == 0)
                 {

@@ -16,7 +16,6 @@ struct qkv_rope_append {
     static constexpr int V_BLOCK_START = Globals::num_attention_heads + Globals::num_kv_heads;
     static constexpr int NUM_ITERS = Globals::hidden_dim / REDUCTION_BLOCK_SIZE;
 
-    static_assert(Globals::batch_size%Globals::matmul_out_block_size == 0);
     static_assert(Globals::matmul_out_block_size==128 && Globals::head_dim==128);
 
     using weight_tile = st_bf<Globals::head_dim, REDUCTION_BLOCK_SIZE>;
@@ -247,11 +246,11 @@ struct qkv_rope_append {
                     tma::store_async(g.q_post_rope, output, {inst.batch_start_idx, inst.block_idx});
                 else if (inst.block_idx < V_BLOCK_START) 
                     tma::store_async<dim::BATCH, cache_policy::NORMAL>(g.k_cache, output, 
-                        {inst.layer_idx*(int)Globals::batch_size/(int)Globals::matmul_out_block_size + inst.batch_start_idx, 
+                        {inst.layer_idx*(int)g.batch_size/(int)Globals::matmul_out_block_size + inst.batch_start_idx, 
                             (int)g.pos_id, inst.block_idx - K_BLOCK_START, 0});
                 else
                     tma::store_async<dim::BATCH, cache_policy::NORMAL>(g.v_cache, output, 
-                        {inst.layer_idx*(int)Globals::batch_size/(int)Globals::matmul_out_block_size + inst.batch_start_idx, 
+                        {inst.layer_idx*(int)g.batch_size/(int)Globals::matmul_out_block_size + inst.batch_start_idx, 
                             (int)g.pos_id, inst.block_idx - V_BLOCK_START, 0});
                 tma::store_async_wait();
                 s.finish_page(output_page, Config::NUM_CONSUMER_WARPS);
@@ -260,7 +259,7 @@ struct qkv_rope_append {
                 int start_bar = (inst.block_idx * Globals::matmul_out_block_size) / Globals::head_dim;
                 int num_generated_heads = Globals::matmul_out_block_size / Globals::head_dim;
                 for (int i = 0; i < num_generated_heads; i++) {
-                    g.Bar[{inst.layer_idx, opcode - 1, static_cast<int>(inst.batch_start_idx), start_bar + i}] = 1;
+                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, static_cast<int>(inst.batch_start_idx), start_bar + i}], 1);
                 }
                 
             }

@@ -71,6 +71,7 @@ PYBIND11_MODULE(kvm_llama, m)
         &llama_8b_globals::logits,
         &llama_8b_globals::pos_id,
         &llama_8b_globals::attn_scale,
-        &llama_8b_globals::rms_norm_eps
+        &llama_8b_globals::rms_norm_eps,
+        &llama_8b_globals::batch_size
     );
 }
