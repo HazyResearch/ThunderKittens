@@ -11,7 +11,7 @@ namespace kittens::prototype::vm
     struct lm_head
     {
         static constexpr int opcode = OPCODE_LM_Head;
-        static constexpr int NUM_ITERS = Globals::hidden_dim / Globals::matmul_out_block_size;
+        static constexpr int NUM_ITERS = Globals::hidden_dim / PIPELINE_K_DIM;
 
         struct parsed_instruction
         {

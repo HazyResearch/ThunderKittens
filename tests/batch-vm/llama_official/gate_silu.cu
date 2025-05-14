@@ -13,7 +13,7 @@ namespace kittens::prototype::vm
     struct gate_silu {
         static constexpr int opcode = OPCODE_GateSiLU;
         static constexpr int prev_opcode = opcode - 1;
-        static constexpr int NUM_ITERS = Globals::hidden_dim / Globals::matmul_out_block_size;
+        static constexpr int NUM_ITERS = Globals::hidden_dim / PIPELINE_K_DIM;
 
         struct parsed_instruction {
             int layer;

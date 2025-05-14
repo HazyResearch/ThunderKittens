@@ -4,6 +4,8 @@
 
 namespace kittens::prototype::vm {
 
+static constexpr int PIPELINE_K_DIM = 64;
+
 template <typename Config, typename Globals, typename parsed_instruction, auto A_Ptr, auto B_Ptr, int Num_Iters>
 struct matmul_pipeline {
     static_assert(Config::NUM_CONSUMER_WARPS == 16);
@@ -11,10 +13,9 @@ struct matmul_pipeline {
     static_assert(Config::SCRATCH_BYTES >= 8192);
 
     static constexpr int INPUT_PIPELINE_STAGES = 3;
-    static constexpr int K_DIM = 64;
 
-    using a_st = st_bf<128, K_DIM>;
-    using b_st = st_bf<256, K_DIM>;
+    using a_st = st_bf<128, PIPELINE_K_DIM>;
+    using b_st = st_bf<256, PIPELINE_K_DIM>;
 
     static constexpr int SEM_COUNT = 2 * INPUT_PIPELINE_STAGES + 1;
 

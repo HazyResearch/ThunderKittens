@@ -134,7 +134,7 @@ namespace kittens::prototype::vm
                         &Globals::attn_out,
                         &Globals::o_weights,
                         &Globals::hidden_states,
-                        Globals::hidden_dim / 64,
+                        Globals::hidden_dim / PIPELINE_K_DIM,
                         OPCODE_O_ProjResidual,
                         o_proj_gmem_waiter,
                         config>
@@ -158,7 +158,7 @@ namespace kittens::prototype::vm
                           &Globals::silu_out,
                           &Globals::down_weights,
                           &Globals::hidden_states,
-                          Globals::intermediate_dim / 64,
+                          Globals::intermediate_dim / PIPELINE_K_DIM,
                           OPCODE_DownProjResidual,
                           downproj_gmem_waiter,
                           config>
