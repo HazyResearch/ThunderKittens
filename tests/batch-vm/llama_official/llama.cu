@@ -14,24 +14,24 @@ using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::vm;
 
-using attn_norm_op = attn_norm<default_config, llama_8b_globals>;
-using qkv_rope_append_op = qkv_rope_append<default_config, llama_8b_globals>;
-using attention_decode_op = attention_decode<default_config, llama_8b_globals>;
-using o_proj_op = o_proj<default_config, llama_8b_globals>;
+using attn_norm_op = attn_norm<llama_config, llama_8b_globals>;
+using qkv_rope_append_op = qkv_rope_append<llama_config, llama_8b_globals>;
+using attention_decode_op = attention_decode<llama_config, llama_8b_globals>;
+using o_proj_op = o_proj<llama_config, llama_8b_globals>;
 
-using mlp_norm_op = mlp_norm<default_config, llama_8b_globals>;
-using gate_silu_op = gate_silu<default_config, llama_8b_globals>;
-using up_matmul_op = up_matmul<default_config, llama_8b_globals>;
-using downproj_op = downproj<default_config, llama_8b_globals>;
+using mlp_norm_op = mlp_norm<llama_config, llama_8b_globals>;
+using gate_silu_op = gate_silu<llama_config, llama_8b_globals>;
+using up_matmul_op = up_matmul<llama_config, llama_8b_globals>;
+using downproj_op = downproj<llama_config, llama_8b_globals>;
 
-using lm_head_norm_op = lm_head_norm<default_config, llama_8b_globals>;
-using lm_head_op = lm_head<default_config, llama_8b_globals>;
+using lm_head_norm_op = lm_head_norm<llama_config, llama_8b_globals>;
+using lm_head_op = lm_head<llama_config, llama_8b_globals>;
 
 
 PYBIND11_MODULE(kvm_llama, m)
 {
     m.doc() = "";
-    kittens::py::bind_kernel<kvm<default_config, 
+    kittens::py::bind_kernel<kvm<llama_config, 
         llama_8b_globals,
         attn_norm_op,
         qkv_rope_append_op,

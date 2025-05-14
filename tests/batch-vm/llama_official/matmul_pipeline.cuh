@@ -4,7 +4,7 @@
 
 namespace kittens::prototype::vm {
 
-template <typename Config, typename Globals, typename parsed_instruction, auto A_Ptr, auto B_Ptr>
+template <typename Config, typename Globals, typename parsed_instruction, auto A_Ptr, auto B_Ptr, int Num_Iters>
 struct matmul_pipeline {
     static_assert(Config::NUM_CONSUMER_WARPS == 16);
     static_assert(Config::PAGE_SIZE == 32768);
@@ -32,8 +32,7 @@ struct matmul_pipeline {
 
         parsed_instruction inst{instruction};
         
-        auto iters = inst.iters;
-        auto remainder = iters % INPUT_PIPELINE_STAGES;
+        auto remainder = Num_Iters % INPUT_PIPELINE_STAGES;
 
         if(remainder == 0) {
             int ret_order[6] = {0,1,2,3,4,5};
@@ -65,12 +64,12 @@ struct matmul_pipeline {
     __device__ static inline void loader_loop(state<Config> &s, const Globals &g) {
         parsed_instruction inst{s};
 
-        auto needed_pages = min(inst.iters, INPUT_PIPELINE_STAGES) * 2;
+        auto needed_pages = min(Num_Iters, INPUT_PIPELINE_STAGES) * 2;
 
         if (laneid() == 0) {
 
             int input_stage = 0;
-            for (int iter = 0; iter < inst.iters; iter++) {
+            for (int iter = 0; iter < Num_Iters; iter++) {
                 wait(inputs_finished(s, input_stage), (iter % (2 * INPUT_PIPELINE_STAGES)) < INPUT_PIPELINE_STAGES);
 
                 auto &sem = inputs_arrived(s, input_stage);
@@ -93,10 +92,10 @@ struct matmul_pipeline {
                 input_stage = (input_stage + 1) % INPUT_PIPELINE_STAGES;
             }
             for(int i = 0; i < INPUT_PIPELINE_STAGES; i++) {
-                wait(inputs_finished(s, input_stage), ((inst.iters+i) % (2 * INPUT_PIPELINE_STAGES)) < INPUT_PIPELINE_STAGES);
+                wait(inputs_finished(s, input_stage), ((Num_Iters+i) % (2 * INPUT_PIPELINE_STAGES)) < INPUT_PIPELINE_STAGES);
                 if(i == INPUT_PIPELINE_STAGES-1) arrive(outputs_arrived(s)); // signal done with matmuls.
                 int a_page = get_a_page(s, input_stage), b_page = get_b_page(s, input_stage);
-                if(i < INPUT_PIPELINE_STAGES-inst.iters) {
+                if(i < INPUT_PIPELINE_STAGES-Num_Iters) {
                     s.wait_page_ready(a_page);
                     s.wait_page_ready(b_page);
                 }
@@ -116,7 +115,7 @@ struct matmul_pipeline {
 
         if(laneid() < 2) {
             int input_stage = 0;
-            for (int i = 0; i < inst.iters; i++) {
+            for (int i = 0; i < Num_Iters; i++) {
                 int a_page = get_a_page(s, input_stage), b_page = get_b_page(s, input_stage);
                 wait(inputs_arrived(s, input_stage), (i % (2 * INPUT_PIPELINE_STAGES)) >= INPUT_PIPELINE_STAGES);
                 a_st (&a_smem)[2] = reinterpret_cast<a_st(&)[2]>(s.pages[a_page]);

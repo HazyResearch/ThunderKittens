@@ -6,7 +6,7 @@ using namespace kittens::prototype;
 namespace kittens::prototype::vm
 {
     using globals = llama_8b_globals;
-    using config = default_config;
+    using config = llama_config;
 
     template <typename Config, typename Globals>
     struct gate_silu {
@@ -57,175 +57,175 @@ namespace kittens::prototype::vm
 
         struct loader {
             static __device__ void run(const globals &g, state<config> &s) {
-                s.wait_page_ready(12);
-                s.warp_finish_page(12, config::NUM_CONSUMER_WARPS); // release the unused page immediately
-                parsed_instruction inst{s};
-                int laneid = warp::laneid();
+                // s.wait_page_ready(12);
+                // s.warp_finish_page(12, config::NUM_CONSUMER_WARPS); // release the unused page immediately
+                // parsed_instruction inst{s};
+                // int laneid = warp::laneid();
 
-                if (laneid == 0) { // load B
-                    uint32_t phasebits = 0xFFFF0000;
-                    for (int i = 0; i < NUM_ITERS; i++) {
-                        int stage = i % PIPELINE_STAGES;
-                        int weight_page = get_weight_page(s, stage);
-                        weight_tile &weight = *reinterpret_cast<weight_tile *>(s.pages[weight_page].data);
+                // if (laneid == 0) { // load B
+                //     uint32_t phasebits = 0xFFFF0000;
+                //     for (int i = 0; i < NUM_ITERS; i++) {
+                //         int stage = i % PIPELINE_STAGES;
+                //         int weight_page = get_weight_page(s, stage);
+                //         weight_tile &weight = *reinterpret_cast<weight_tile *>(s.pages[weight_page].data);
 
-                        wait(inputs_finished(s, stage), get_phasebit<1>(phasebits, stage));
-                        update_phasebit<1>(phasebits, stage);
-                        tma::expect(inputs_arrived(s, stage), weight);
+                //         wait(inputs_finished(s, stage), get_phasebit<1>(phasebits, stage));
+                //         update_phasebit<1>(phasebits, stage);
+                //         tma::expect(inputs_arrived(s, stage), weight);
 
-                        if(i < PIPELINE_STAGES) {
-                            s.wait_page_ready(weight_page);
-                            s.wait_page_ready(weight_page + 1);
-                        }
-                        tma::load_async(weight, g.gate_weights, {inst.layer, inst.out_idx, i}, inputs_arrived(s, stage));
-                    }
-                } else if (laneid == 1) { // load A
+                //         if(i < PIPELINE_STAGES) {
+                //             s.wait_page_ready(weight_page);
+                //             s.wait_page_ready(weight_page + 1);
+                //         }
+                //         tma::load_async(weight, g.gate_weights, {inst.layer, inst.out_idx, i}, inputs_arrived(s, stage));
+                //     }
+                // } else if (laneid == 1) { // load A
                     
-                    while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, inst.batch_idx, 0}] < Globals::matmul_batch_block_size) {
-                        __nanosleep(20);
-                    }
+                //     while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, inst.batch_idx, 0}] < Globals::matmul_batch_block_size) {
+                //         __nanosleep(20);
+                //     }
                     
-                    uint32_t phasebits = 0xFFFF0000;
-                    for (int i = 0; i < NUM_ITERS; i++) {
-                        int stage = i % PIPELINE_STAGES;
-                        int activation_page = get_activation_page(s, stage);
-                        activation_tile &activation = *reinterpret_cast<activation_tile *>(s.pages[activation_page].data);
+                //     uint32_t phasebits = 0xFFFF0000;
+                //     for (int i = 0; i < NUM_ITERS; i++) {
+                //         int stage = i % PIPELINE_STAGES;
+                //         int activation_page = get_activation_page(s, stage);
+                //         activation_tile &activation = *reinterpret_cast<activation_tile *>(s.pages[activation_page].data);
 
-                        wait(inputs_finished(s, stage), get_phasebit<1>(phasebits, stage));
-                        update_phasebit<1>(phasebits, stage);
-                        tma::expect(inputs_arrived(s, stage), activation);
+                //         wait(inputs_finished(s, stage), get_phasebit<1>(phasebits, stage));
+                //         update_phasebit<1>(phasebits, stage);
+                //         tma::expect(inputs_arrived(s, stage), activation);
 
-                        if(i < PIPELINE_STAGES) {
-                            s.wait_page_ready(activation_page);
-                            s.wait_page_ready(activation_page + 1);
-                        }
-                        tma::load_async(activation, g.rms_gate_intermediates, {inst.batch_idx, i}, inputs_arrived(s, stage));
-                    }
-                }
+                //         if(i < PIPELINE_STAGES) {
+                //             s.wait_page_ready(activation_page);
+                //             s.wait_page_ready(activation_page + 1);
+                //         }
+                //         tma::load_async(activation, g.rms_gate_intermediates, {inst.batch_idx, i}, inputs_arrived(s, stage));
+                //     }
+                // }
 
-                warp::sync();
-                if (laneid == 0) {
-                    wait(outputs_shared(s), 0);
-                    for (int i = 0; i < PIPELINE_STAGES; i++) {
-                        int stage = (NUM_ITERS + i) % PIPELINE_STAGES;
-                        int weight_page = get_weight_page(s, stage);
-                        s.warp_finish_page(weight_page, config::NUM_CONSUMER_WARPS);
-                        s.warp_finish_page(weight_page + 1, config::NUM_CONSUMER_WARPS);
-                    }
-                    for (int i = 0; i < PIPELINE_STAGES - 1; i++) { // last stage is used as output page
-                        int stage = (NUM_ITERS + i) % PIPELINE_STAGES;
-                        int activation_page = get_activation_page(s, stage);
-                        s.warp_finish_page(activation_page, config::NUM_CONSUMER_WARPS);
-                        s.warp_finish_page(activation_page + 1, config::NUM_CONSUMER_WARPS);
-                    }
-                }
+                // warp::sync();
+                // if (laneid == 0) {
+                //     wait(outputs_shared(s), 0);
+                //     for (int i = 0; i < PIPELINE_STAGES; i++) {
+                //         int stage = (NUM_ITERS + i) % PIPELINE_STAGES;
+                //         int weight_page = get_weight_page(s, stage);
+                //         s.warp_finish_page(weight_page, config::NUM_CONSUMER_WARPS);
+                //         s.warp_finish_page(weight_page + 1, config::NUM_CONSUMER_WARPS);
+                //     }
+                //     for (int i = 0; i < PIPELINE_STAGES - 1; i++) { // last stage is used as output page
+                //         int stage = (NUM_ITERS + i) % PIPELINE_STAGES;
+                //         int activation_page = get_activation_page(s, stage);
+                //         s.warp_finish_page(activation_page, config::NUM_CONSUMER_WARPS);
+                //         s.warp_finish_page(activation_page + 1, config::NUM_CONSUMER_WARPS);
+                //     }
+                // }
             }
         };
 
         struct launcher {
             static __device__ void run(const globals &g, state<config> &s) {
-                parsed_instruction inst{s};
-                int laneid = warp::laneid();
-                uint32_t phasebits = 0xFFFF0000;
+                // parsed_instruction inst{s};
+                // int laneid = warp::laneid();
+                // uint32_t phasebits = 0xFFFF0000;
 
-                s.wait_tensor_ready();
+                // s.wait_tensor_ready();
 
-                if (laneid == 0) {
-                    for (int i = 0; i < NUM_ITERS; i++) {
-                        int stage = i % PIPELINE_STAGES;
-                        wait(inputs_arrived(s, stage), get_phasebit<0>(phasebits, stage));
-                        update_phasebit<0>(phasebits, stage);
-                        auto accumulator = s.tensor_alloc.template allocate<tt<float, 128, 128>>(stage*128);
-                        weight_tile &weight = *reinterpret_cast<weight_tile *>(s.pages[get_weight_page(s, stage)].data);
-                        activation_tile &activation = *reinterpret_cast<activation_tile *>(s.pages[get_activation_page(s, stage)].data);
-                        if (i < PIPELINE_STAGES)
-                            mm<transpose::N, transpose::T>(accumulator, activation, weight, inputs_finished(s, stage));
-                        else if (i >= NUM_ITERS - PIPELINE_STAGES)
-                            mma<transpose::N, transpose::T>(accumulator, activation, weight, outputs_arrived(s, stage));
-                        else
-                            mma<transpose::N, transpose::T>(accumulator, activation, weight, inputs_finished(s, stage));
-                    }
-                }
+                // if (laneid == 0) {
+                //     for (int i = 0; i < NUM_ITERS; i++) {
+                //         int stage = i % PIPELINE_STAGES;
+                //         wait(inputs_arrived(s, stage), get_phasebit<0>(phasebits, stage));
+                //         update_phasebit<0>(phasebits, stage);
+                //         auto accumulator = s.tensor_alloc.template allocate<tt<float, 128, 128>>(stage*128);
+                //         weight_tile &weight = *reinterpret_cast<weight_tile *>(s.pages[get_weight_page(s, stage)].data);
+                //         activation_tile &activation = *reinterpret_cast<activation_tile *>(s.pages[get_activation_page(s, stage)].data);
+                //         if (i < PIPELINE_STAGES)
+                //             mm<transpose::N, transpose::T>(accumulator, activation, weight, inputs_finished(s, stage));
+                //         else if (i >= NUM_ITERS - PIPELINE_STAGES)
+                //             mma<transpose::N, transpose::T>(accumulator, activation, weight, outputs_arrived(s, stage));
+                //         else
+                //             mma<transpose::N, transpose::T>(accumulator, activation, weight, inputs_finished(s, stage));
+                //     }
+                // }
             }
         };
 
         struct consumer {
             static __device__ void run(const globals &g, state<config> &s) {
-                static_assert(config::NUM_CONSUMER_WARPS == 8, "NUM_CONSUMER_WARPS must be 8");
-                using consumer = group<config::NUM_CONSUMER_WARPS>;
+                // static_assert(config::NUM_CONSUMER_WARPS == 8, "NUM_CONSUMER_WARPS must be 8");
+                // using consumer = group<config::NUM_CONSUMER_WARPS>;
 
-                parsed_instruction inst{s};
-                rt_fl<128 / config::NUM_CONSUMER_WARPS, 128> output_fl;
-                consumer::zero(output_fl);
+                // parsed_instruction inst{s};
+                // rt_fl<128 / config::NUM_CONSUMER_WARPS, 128> output_fl;
+                // consumer::zero(output_fl);
 
-                for (int i = 0; i < PIPELINE_STAGES; i++) {
-                    int stage = (NUM_ITERS + i) % PIPELINE_STAGES;
-                    auto accumulator = s.tensor_alloc.template allocate<tt<float, 128, 128>>(stage*128);
-                    wait(outputs_arrived(s, stage), 0);
-                    rt_fl<128 / config::NUM_CONSUMER_WARPS, 128> acc_fl;
-                    consumer::load_async(acc_fl, accumulator);
-                    tensor_load_wait(); 
-                    __syncwarp();
-                    consumer::add(output_fl, output_fl, acc_fl);
-                }
-                warp::sync();
+                // for (int i = 0; i < PIPELINE_STAGES; i++) {
+                //     int stage = (NUM_ITERS + i) % PIPELINE_STAGES;
+                //     auto accumulator = s.tensor_alloc.template allocate<tt<float, 128, 128>>(stage*128);
+                //     wait(outputs_arrived(s, stage), 0);
+                //     rt_fl<128 / config::NUM_CONSUMER_WARPS, 128> acc_fl;
+                //     consumer::load_async(acc_fl, accumulator);
+                //     tensor_load_wait(); 
+                //     __syncwarp();
+                //     consumer::add(output_fl, output_fl, acc_fl);
+                // }
+                // warp::sync();
 
-                rt_bf<128 / config::NUM_CONSUMER_WARPS, 128> output_bf;
-                rt_fl<128 / config::NUM_CONSUMER_WARPS, 128> gate_buf;
+                // rt_bf<128 / config::NUM_CONSUMER_WARPS, 128> output_bf;
+                // rt_fl<128 / config::NUM_CONSUMER_WARPS, 128> gate_buf;
 
-                consumer::copy(gate_buf, output_fl);
-                consumer::mul(gate_buf, gate_buf, -1);
-                consumer::exp(gate_buf, gate_buf);
-                consumer::add(gate_buf, gate_buf, 1);
-                consumer::div(output_fl, output_fl, gate_buf);
+                // consumer::copy(gate_buf, output_fl);
+                // consumer::mul(gate_buf, gate_buf, -1);
+                // consumer::exp(gate_buf, gate_buf);
+                // consumer::add(gate_buf, gate_buf, 1);
+                // consumer::div(output_fl, output_fl, gate_buf);
 
-                consumer::copy(output_bf, output_fl);
-                warp::arrive(s.tensor_finished);
+                // consumer::copy(output_bf, output_fl);
+                // warp::arrive(s.tensor_finished);
 
-                int last_stage = (NUM_ITERS - 1) % PIPELINE_STAGES;
-                int output_page = get_activation_page(s, last_stage);
-                output_tile &output = *reinterpret_cast<output_tile *>(s.pages[output_page].data);
-                consumer::store(output, output_bf);
-                __syncwarp();
-                warp::arrive(outputs_shared(s));
+                // int last_stage = (NUM_ITERS - 1) % PIPELINE_STAGES;
+                // int output_page = get_activation_page(s, last_stage);
+                // output_tile &output = *reinterpret_cast<output_tile *>(s.pages[output_page].data);
+                // consumer::store(output, output_bf);
+                // __syncwarp();
+                // warp::arrive(outputs_shared(s));
             }
         };
 
         struct storer {
             static __device__ void run(const globals &g, state<config> &s) {
-                if (kittens::laneid() == 0)
-                {
-                    s.record(TEVENT_TRIPLES_STORE_START);
-                }
+                // if (kittens::laneid() == 0)
+                // {
+                //     s.record(TEVENT_TRIPLES_STORE_START);
+                // }
 
-                parsed_instruction inst{s};
-                int laneid = warp::laneid();
+                // parsed_instruction inst{s};
+                // int laneid = warp::laneid();
 
-                wait(outputs_shared(s), 0);
-                int output_page = get_activation_page(s, (NUM_ITERS - 1) % PIPELINE_STAGES);
-                output_tile &output = *reinterpret_cast<output_tile *>(s.pages[output_page].data);
+                // wait(outputs_shared(s), 0);
+                // int output_page = get_activation_page(s, (NUM_ITERS - 1) % PIPELINE_STAGES);
+                // output_tile &output = *reinterpret_cast<output_tile *>(s.pages[output_page].data);
 
-                if (laneid == 0) {
-                    tma::store_async(g.silu_out, output, {inst.batch_idx, inst.out_idx});
+                // if (laneid == 0) {
+                //     tma::store_async(g.silu_out, output, {inst.batch_idx, inst.out_idx});
                     
-                    tma::store_async_wait();
-                    s.finish_page(output_page, config::NUM_CONSUMER_WARPS);
-                    s.finish_page(output_page + 1, config::NUM_CONSUMER_WARPS);
-                }
+                //     tma::store_async_wait();
+                //     s.finish_page(output_page, config::NUM_CONSUMER_WARPS);
+                //     s.finish_page(output_page + 1, config::NUM_CONSUMER_WARPS);
+                // }
                 
-                warp::sync();
+                // warp::sync();
 
-                asm volatile("fence.acq_rel.gpu;");
-                if (kittens::laneid() == 0)
-                {
-                    atomicAdd(&g.Bar[{inst.layer, opcode - 1, inst.batch_idx, inst.out_idx}], 1);
-                }
+                // asm volatile("fence.acq_rel.gpu;");
+                // if (kittens::laneid() == 0)
+                // {
+                //     atomicAdd(&g.Bar[{inst.layer, opcode - 1, inst.batch_idx, inst.out_idx}], 1);
+                // }
 
-                warp::sync();
-                if (kittens::laneid() == 0)
-                {
-                    s.record(TEVENT_STORE_END);
-                }
+                // warp::sync();
+                // if (kittens::laneid() == 0)
+                // {
+                //     s.record(TEVENT_STORE_END);
+                // }
             }
         };
     };

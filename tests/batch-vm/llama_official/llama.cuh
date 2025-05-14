@@ -108,7 +108,7 @@ namespace kittens::prototype::vm
         static constexpr int DYNAMIC_SEMAPHORES = 32;
 
         // One controller warp, one load warp, one store warp, and one mma warp.
-        static constexpr int NUM_CONSUMER_WARPS = 8;
+        static constexpr int NUM_CONSUMER_WARPS = 16;
         static constexpr int NUM_WARPS = 4 + NUM_CONSUMER_WARPS;
         static constexpr int NUM_THREADS = NUM_WARPS * ::kittens::WARP_THREADS;
         static constexpr int NUM_BLOCKS = 1;
@@ -152,10 +152,10 @@ namespace kittens::prototype::vm
         using instruction_layout = ::kittens::prototype::vm::instruction_layout<llama_config>;
         using timing_layout = ::kittens::prototype::vm::timing_layout<llama_config>;
 
-        using weights_t = gl<bf16, 1, -1, -1, hidden_dim, st_bf<matmul_out_block_size, matmul_out_block_size>, st_bf<128, 128>>;
+        using weights_t = gl<bf16, 1, -1, -1, hidden_dim, st_bf<matmul_out_block_size, matmul_out_block_size>, st_bf<128, 128>, st_bf<256, 64>>;
         using weights_big_indim_t = gl<bf16, 1, -1, -1, intermediate_dim, st_bf<matmul_out_block_size, matmul_out_block_size>>;
 
-        using activations_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, sv_bf<head_dim>, sv_bf<128>, st_bf<64, 128>, st_bf<128, 128>>;
+        using activations_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, sv_bf<head_dim>, sv_bf<128>, st_bf<64, 128>, st_bf<128, 128>, st_bf<128, 64>, st_bf<16, 256>>;
         using activations_big_indim_t = gl<bf16, 1, 1, -1, intermediate_dim, sv_bf<intermediate_dim>, sv_bf<hidden_dim>, sv_bf<16>, st_bf<64, 128>, st_bf<128, 128>>;
         using logits_t = gl<bf16, 1, 1, -1, -1, sv_bf<16>, st_bf<128, 128>>;
 
