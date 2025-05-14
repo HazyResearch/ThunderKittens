@@ -109,7 +109,7 @@ namespace kittens::prototype::vm
         static constexpr int DYNAMIC_SEMAPHORES = 32;
 
         // One controller warp, one load warp, one store warp, and one mma warp.
-        static constexpr int NUM_CONSUMER_WARPS = 16;
+        static constexpr int NUM_CONSUMER_WARPS = 8;
         static constexpr int NUM_WARPS = 4 + NUM_CONSUMER_WARPS;
         static constexpr int NUM_THREADS = NUM_WARPS * ::kittens::WARP_THREADS;
         static constexpr int NUM_BLOCKS = 1;
@@ -117,14 +117,14 @@ namespace kittens::prototype::vm
         static constexpr int MAX_SHARED_MEMORY = kittens::MAX_SHARED_MEMORY;
 
         // Shared memory declared statically
-        static constexpr int SCRATCH_BYTES = 8192+2048;
+        static constexpr int SCRATCH_BYTES = 1024;
         static constexpr int STATIC_SHARED_MEMORY = 512 + INSTRUCTION_PIPELINE_STAGES * (SCRATCH_BYTES + (INSTRUCTION_WIDTH + TIMING_WIDTH) * 4 + DYNAMIC_SEMAPHORES * 8);
         static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - STATIC_SHARED_MEMORY;
 
         // Shared memory declared dynamically
-        static constexpr int PAGE_SIZE = 32768;
+        static constexpr int PAGE_SIZE = 16384;
         static constexpr int NUM_PAGES = DYNAMIC_SHARED_MEMORY / PAGE_SIZE;
-        static_assert(NUM_PAGES == 6, "NUM_PAGES must be 13");
+        static_assert(NUM_PAGES == 13, "NUM_PAGES must be 13");
 
         static constexpr bool TIMING_RECORD_ENABLED = false;
 
