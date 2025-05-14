@@ -8,7 +8,6 @@ from torch import Tensor
 @dataclass
 class Globals(BaseGlobals):
     # activation buffers
-    hidden_states: Tensor
     rms_rope_intermediates: Tensor
     rms_gate_intermediates: Tensor
     rms_lm_head_intermediates: Tensor
