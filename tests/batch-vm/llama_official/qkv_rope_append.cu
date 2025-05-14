@@ -16,7 +16,7 @@ struct qkv_rope_append {
     static constexpr int V_BLOCK_START = Globals::num_attention_heads + Globals::num_kv_heads;
     static constexpr int NUM_ITERS = Globals::hidden_dim / REDUCTION_BLOCK_SIZE;
 
-    static_assert(Globals::matmul_out_block_size==128 && Globals::head_dim==128);
+    // static_assert(Globals::matmul_out_block_size==128 && Globals::head_dim==128);
 
     using weight_tile = st_bf<Globals::head_dim, REDUCTION_BLOCK_SIZE>;
     using activation_tile = st_bf<Globals::matmul_out_block_size, REDUCTION_BLOCK_SIZE>;

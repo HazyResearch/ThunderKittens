@@ -45,8 +45,8 @@
 #define LLAMA_NUM_ATTENTION_HEADS 32
 #define LLAMA_NUM_KV_HEADS 8
 #define LLAMA_KV_BLOCK_SIZE 16
-#define LLAMA_MATMUL_OUT_BLOCK_SIZE 128
-#define LLAMA_MATMUL_BATCH_BLOCK_SIZE 128
+#define LLAMA_MATMUL_OUT_BLOCK_SIZE 256
+#define LLAMA_MATMUL_BATCH_BLOCK_SIZE 256
 
 #endif
 
@@ -152,18 +152,18 @@ namespace kittens::prototype::vm
         using instruction_layout = ::kittens::prototype::vm::instruction_layout<llama_config>;
         using timing_layout = ::kittens::prototype::vm::timing_layout<llama_config>;
 
-        using weights_t = gl<bf16, 1, -1, -1, hidden_dim, st_bf<matmul_out_block_size, matmul_out_block_size>, st_bf<128, 128>, st_bf<256, 64>>;
-        using weights_big_indim_t = gl<bf16, 1, -1, -1, intermediate_dim, st_bf<matmul_out_block_size, matmul_out_block_size>>;
+        using weights_t = gl<bf16, 1, -1, -1, hidden_dim, st_bf<256, 64>>;
+        using weights_big_indim_t = gl<bf16, 1, -1, -1, intermediate_dim, st_bf<256, 64>>;
 
-        using activations_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, sv_bf<head_dim>, sv_bf<128>, st_bf<64, 128>, st_bf<128, 128>, st_bf<128, 64>, st_bf<16, 256>>;
-        using activations_big_indim_t = gl<bf16, 1, 1, -1, intermediate_dim, sv_bf<intermediate_dim>, sv_bf<hidden_dim>, sv_bf<16>, st_bf<64, 128>, st_bf<128, 128>>;
-        using logits_t = gl<bf16, 1, 1, -1, -1, sv_bf<16>, st_bf<128, 128>>;
+        using activations_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, st_bf<128, 64>, st_bf<16, 256>>;
+        using activations_big_indim_t = gl<bf16, 1, 1, -1, intermediate_dim, st_bf<128, 64>, st_bf<16, 256>>;
+        using logits_t = gl<bf16, 1, 1, -1, -1>;
 
-        using norm_weights_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, sv_bf<16>>;
-        using rope_table_t = gl<float, 1, 1, -1, head_dim, sv_fl<128>>;
+        using norm_weights_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>>;
+        using rope_table_t = gl<float, 1, 1, -1, head_dim>;
         
         // KV Cache format: (num_layers * batch_size, sequence_length, num_heads, head_dim)
-        using kv_cache_t = gl<bf16, -1, -1, num_kv_heads, head_dim, sv_bf<16>, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>, tma::descriptor<st_bf<128, 128>, 0>, sv_bf<128>>;
+        using kv_cache_t = gl<bf16, -1, -1, num_kv_heads, head_dim>;
 
         using barriers = gl<uint, -1, -1, -1, -1>;
 

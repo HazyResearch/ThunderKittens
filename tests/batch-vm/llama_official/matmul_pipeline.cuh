@@ -15,7 +15,6 @@ struct matmul_pipeline {
 
     using a_st = st_bf<128, K_DIM>;
     using b_st = st_bf<256, K_DIM>;
-    
 
     static constexpr int SEM_COUNT = 2 * INPUT_PIPELINE_STAGES + 1;
 
