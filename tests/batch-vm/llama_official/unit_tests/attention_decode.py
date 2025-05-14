@@ -1,6 +1,7 @@
 import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from time import time
 
 import torch
 torch.set_printoptions(sci_mode=False)
@@ -154,3 +155,83 @@ attn_out_ref = gqa_decode(
 
 diff = (attn_out - attn_out_ref).abs()
 print(f'attn_out -- max abs diff: {diff.max()}, mean abs diff: {diff.mean()}')
+
+
+###
+#  Check speed
+###
+print('\nChecking speed...')
+for i in range(2):
+    kvm_llama(
+        Bar,
+        instructions,
+        timings,
+        qkv_weights,
+        attn_norm_weights,
+        o_weights,
+        mlp_norm_weights,
+        up_weights,
+        gate_weights,
+        down_weights,
+        lm_head_norm_weights,
+        lm_head_weights,
+        k_cache,
+        v_cache,
+        rope_cos,
+        rope_sin,
+        hidden_states,
+        rms_rope_intermediates,
+        rms_gate_intermediates,
+        gate_silu_intermediates,
+        q_post_rope,
+        attn_out,
+        silu_out,
+        rms_lm_head_intermediates,
+        logits,
+        pos_id,
+        attn_scale,
+        rms_norm_eps,
+        batch_size,
+    )
+    torch.cuda.synchronize()
+NUM_ITERS = 10
+times = []
+for i in range(NUM_ITERS):
+    torch.cuda.synchronize()
+    start_time = time()    
+    kvm_llama(
+        Bar,
+        instructions,
+        timings,
+        qkv_weights,
+        attn_norm_weights,
+        o_weights,
+        mlp_norm_weights,
+        up_weights,
+        gate_weights,
+        down_weights,
+        lm_head_norm_weights,
+        lm_head_weights,
+        k_cache,
+        v_cache,
+        rope_cos,
+        rope_sin,
+        hidden_states,
+        rms_rope_intermediates,
+        rms_gate_intermediates,
+        gate_silu_intermediates,
+        q_post_rope,
+        attn_out,
+        silu_out,
+        rms_lm_head_intermediates,
+        logits,
+        pos_id,
+        attn_scale,
+        rms_norm_eps,
+        batch_size,
+    )
+    torch.cuda.synchronize()
+    end_time = time()
+    times.append(end_time - start_time)
+avg_time = sum(times) / NUM_ITERS
+print(f'Average time per iter: {avg_time * 1e6} us')
