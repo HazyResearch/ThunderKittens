@@ -18,7 +18,6 @@ namespace kittens::prototype::vm
     struct MatMulAddOp
     {
         static constexpr int opcode = _opcode;
-        static constexpr int PIPELINE_STAGES = 3;
 
         struct parsed_instruction
         {

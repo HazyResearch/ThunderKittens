@@ -13,7 +13,6 @@ namespace kittens::prototype::vm
     struct gate_silu {
         static constexpr int opcode = OPCODE_GateSiLU;
         static constexpr int prev_opcode = opcode - 1;
-        static constexpr int PIPELINE_STAGES = 3;
         static constexpr int NUM_ITERS = Globals::hidden_dim / Globals::matmul_out_block_size;
 
         struct parsed_instruction {
@@ -29,14 +28,6 @@ namespace kittens::prototype::vm
         };
 
         using matmul_pipeline = matmul_pipeline<config, globals, parsed_instruction, &Globals::rms_gate_intermediates, &Globals::gate_weights, NUM_ITERS>;
-
-        __device__ static inline int get_weight_page(state<config> &s, int stage)     { return 0 + stage*2; } // 32 KB pages
-        __device__ static inline int get_activation_page(state<config> &s, int stage) { return 6 + stage*2; } // 32 KB pages
-
-        __device__ static inline semaphore &inputs_arrived(state<config> &s, int stage)  { return s.semaphores()[PIPELINE_STAGES*0 + stage]; }
-        __device__ static inline semaphore &inputs_finished(state<config> &s, int stage) { return s.semaphores()[PIPELINE_STAGES*1 + stage]; }
-        __device__ static inline semaphore &outputs_arrived(state<config> &s, int stage) { return s.semaphores()[PIPELINE_STAGES*2 + stage]; }
-        __device__ static inline semaphore &outputs_shared(state<config> &s)             { return s.semaphores()[PIPELINE_STAGES*3 + 0]; }
 
         struct controller {
             static __device__ int release_lid(const globals &g, typename config::instruction_t &instruction, int &query) {

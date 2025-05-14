@@ -11,7 +11,6 @@ namespace kittens::prototype::vm
     struct lm_head
     {
         static constexpr int opcode = OPCODE_LM_Head;
-        static constexpr int PIPELINE_STAGES = 3;
         static constexpr int NUM_ITERS = Globals::hidden_dim / Globals::matmul_out_block_size;
 
         struct parsed_instruction
