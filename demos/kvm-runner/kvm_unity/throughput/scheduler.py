@@ -254,6 +254,7 @@ def schedule_lm_head(
     for bidx in range(0, globs.batch_size):
         instructions.append(
             PreLMHeadRMS(
+                layer_idx=0,
                 batch_start_idx=bidx,
             )
         )

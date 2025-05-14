@@ -59,7 +59,7 @@ class ScriptConfig(pydra.Config):
 
     def th(self, bs=1024, sl=128):
         self.setting = "throughput"
-        self.kvm_path = (
+        self.kvm_dir = (
             Path(__file__).parent.parent.parent.parent
             / "tests"
             / "batch-vm"
