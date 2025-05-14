@@ -13,7 +13,7 @@ namespace kittens::prototype::vm
         int iters,
         int _opcode,
         typename gmem_waiter,
-        typename Config = kittens::prototype::vm::default_config>
+        typename config>
     struct MatMulAddOp
     {
         static constexpr int opcode = _opcode;

@@ -19,7 +19,7 @@ namespace kittens::prototype::vm
         auto outputs_ptr,
         int _opcode,
         typename gmem_waiter,
-        typename Config = kittens::prototype::vm::default_config>
+        typename Config>
     struct rms_op
     {
         static constexpr int opcode = _opcode;

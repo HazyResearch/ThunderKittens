@@ -22,12 +22,12 @@ namespace kittens::prototype::vm
 
         struct parsed_instruction {
             int layer;
-            int row;
-            int col;
+            int batch_idx;
+            int out_idx;
             __device__ inline parsed_instruction(typename config::instruction_t &instruction) {
                 layer = instruction[1];
-                row = instruction[2];
-                col = instruction[3];
+                batch_idx = instruction[2];
+                out_idx = instruction[3];
             }
             __device__ inline parsed_instruction(state<config> &s) : parsed_instruction(s.instruction()) {}
         };
@@ -79,9 +79,16 @@ namespace kittens::prototype::vm
                             s.wait_page_ready(weight_page);
                             s.wait_page_ready(weight_page + 1);
                         }
-                        tma::load_async(weight, g.up_weights, {inst.col, i}, inputs_arrived(s, stage));
+                        tma::load_async(weight, g.up_weights, {inst.out_idx, i}, inputs_arrived(s, stage));
                     }
                 } else if (laneid == 1) { // load A
+
+                    // TODO we can do better - can start the matmul and move this wait to before the epilogue
+                    while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, inst.batch_idx, inst.out_idx}] < 1)
+                    {
+                        __nanosleep(20);
+                    }
+
                     uint32_t phasebits = 0xFFFF0000;
                     for (int i = 0; i < NUM_ITERS; i++) {
                         int stage = i % PIPELINE_STAGES;
@@ -96,7 +103,7 @@ namespace kittens::prototype::vm
                             s.wait_page_ready(activation_page);
                             s.wait_page_ready(activation_page + 1);
                         }
-                        tma::load_async(activation, g.rms_gate_intermediates, {inst.row, i}, inputs_arrived(s, stage));
+                        tma::load_async(activation, g.rms_gate_intermediates, {inst.batch_idx, i}, inputs_arrived(s, stage));
                     }
                 }
 
@@ -108,7 +115,7 @@ namespace kittens::prototype::vm
                     int gate_silu_page = get_weight_page(s, last_stage);
                     weight_tile &silu_out = *reinterpret_cast<weight_tile *>(s.pages[gate_silu_page].data);
                     tma::expect(silu_arrived(s), silu_out);
-                    tma::load_async(silu_out, g.silu_out, {inst.row, inst.col}, silu_arrived(s));
+                    tma::load_async(silu_out, g.silu_out, {inst.batch_idx, inst.out_idx}, silu_arrived(s));
                 }
                 
                 if (laneid == 1) {
@@ -179,9 +186,6 @@ namespace kittens::prototype::vm
                 warp::sync();
                 warp::arrive(s.tensor_finished);
 
-                // warp::load(silu_out, g.silu_out, {inst.row, inst.col});
-                // warp::store(silu_subtile, silu_fl);
-
                 wait(silu_arrived(s), 0);
                 int last_stage = (NUM_ITERS - 1) % PIPELINE_STAGES;
                 int gate_silu_page = get_weight_page(s, last_stage);
@@ -217,7 +221,7 @@ namespace kittens::prototype::vm
                 if (laneid == 0) {
                     int output_page = get_activation_page(s, last_stage);
                     output_tile &output = *reinterpret_cast<output_tile *>(s.pages[output_page].data);
-                    tma::store_async(g.silu_out, output, {inst.row, inst.col});
+                    tma::store_async(g.silu_out, output, {inst.batch_idx, inst.out_idx});
                     tma::store_async_wait();
                     s.finish_page(output_page, config::NUM_CONSUMER_WARPS);
                     s.finish_page(output_page + 1, config::NUM_CONSUMER_WARPS);
@@ -232,7 +236,7 @@ namespace kittens::prototype::vm
                 asm volatile("fence.acq_rel.gpu;");
                 if (kittens::laneid() == 0)
                 {
-                    atomicAdd(&g.Bar[{inst.layer, opcode - 1, 0}], 1);
+                    atomicAdd(&g.Bar[{inst.layer, opcode - 1, inst.batch_idx, 0}], 1);
                 }
 
                 warp::sync();

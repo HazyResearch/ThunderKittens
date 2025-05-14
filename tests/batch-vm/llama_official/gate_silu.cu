@@ -21,12 +21,12 @@ namespace kittens::prototype::vm
 
         struct parsed_instruction {
             int layer;
-            int row;
-            int col;
+            int batch_idx;
+            int out_idx;
             __device__ inline parsed_instruction(typename config::instruction_t &instruction) {
                 layer = instruction[1];
-                row = instruction[2];
-                col = instruction[3];
+                batch_idx = instruction[2];
+                out_idx = instruction[3];
             }
             __device__ inline parsed_instruction(state<config> &s) : parsed_instruction(s.instruction()) {}
         };
@@ -77,9 +77,14 @@ namespace kittens::prototype::vm
                             s.wait_page_ready(weight_page);
                             s.wait_page_ready(weight_page + 1);
                         }
-                        tma::load_async(weight, g.gate_weights, {inst.col, i}, inputs_arrived(s, stage));
+                        tma::load_async(weight, g.gate_weights, {inst.out_idx, i}, inputs_arrived(s, stage));
                     }
                 } else if (laneid == 1) { // load A
+                    
+                    while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, inst.batch_idx, 0}] < Globals::matmul_batch_block_size) {
+                        __nanosleep(20);
+                    }
+                    
                     uint32_t phasebits = 0xFFFF0000;
                     for (int i = 0; i < NUM_ITERS; i++) {
                         int stage = i % PIPELINE_STAGES;
@@ -94,7 +99,7 @@ namespace kittens::prototype::vm
                             s.wait_page_ready(activation_page);
                             s.wait_page_ready(activation_page + 1);
                         }
-                        tma::load_async(activation, g.rms_gate_intermediates, {inst.row, i}, inputs_arrived(s, stage));
+                        tma::load_async(activation, g.rms_gate_intermediates, {inst.batch_idx, i}, inputs_arrived(s, stage));
                     }
                 }
 
@@ -201,7 +206,7 @@ namespace kittens::prototype::vm
                 output_tile &output = *reinterpret_cast<output_tile *>(s.pages[output_page].data);
 
                 if (laneid == 0) {
-                    tma::store_async(g.silu_out, output, {inst.row, inst.col});
+                    tma::store_async(g.silu_out, output, {inst.batch_idx, inst.out_idx});
                     
                     tma::store_async_wait();
                     s.finish_page(output_page, config::NUM_CONSUMER_WARPS);
@@ -213,7 +218,7 @@ namespace kittens::prototype::vm
                 asm volatile("fence.acq_rel.gpu;");
                 if (kittens::laneid() == 0)
                 {
-                    atomicAdd(&g.Bar[{inst.layer, opcode - 1, 0}], 1);
+                    atomicAdd(&g.Bar[{inst.layer, opcode - 1, inst.batch_idx, inst.out_idx}], 1);
                 }
 
                 warp::sync();
