@@ -115,7 +115,7 @@ namespace kittens::prototype::vm
         // KV Cache format: (num_layers * batch_size, sequence_length, num_heads, head_dim)
         using kv_cache_t = gl<bf16, -1, -1, num_kv_heads, head_dim, sv_bf<16>, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>, tma::descriptor<st_bf<128, 128>, 0>, sv_bf<128>>;
 
-        using barriers = gl<uint, 1, -1, -1, -1>;
+        using barriers = gl<uint, -1, -1, -1, -1>;
 
         // vm stuff
         barriers Bar;
