@@ -150,8 +150,6 @@ namespace kittens::prototype::vm
 
         constexpr static unsigned int num_output_blocks = hidden_dim / matmul_out_block_size;
 
-        constexpr static unsigned int num_output_blocks = hidden_dim / matmul_out_block_size;
-
         using instruction_layout = ::kittens::prototype::vm::instruction_layout<llama_config>;
         using timing_layout = ::kittens::prototype::vm::timing_layout<llama_config>;
 

@@ -11,7 +11,7 @@ struct matmul_globals {
     timing_layout<llama_config> timings;
     gl<bf16, 1, 1, -1, -1, st_bf<128, 64>> A;
     gl<bf16, 1, 1, -1, -1, st_bf<256, 64>> B;
-    gl<bf16, 1, 1, -1, -1, st_bf<128, 32>> D;
+    gl<bf16, 1, 1, -1, -1, st_bf<32, 128>> D;
 
     dim3 grid() { return dim3(148); }
     dim3 block() { return dim3(llama_config::NUM_THREADS); }
@@ -37,13 +37,17 @@ struct matmul_op {
     };
 
     using matmul_pipeline = matmul_pipeline<config, globals, parsed_instruction, &globals::A, &globals::B>;
+    static constexpr int MATMUL_SEMAPHORES = matmul_pipeline::SEM_COUNT;
+
+    // __device__ static inline semaphore &store_state(state<config> &s) { return s.semaphores()[MATMUL_SEMAPHORES]; }
 
     struct controller {
         static __device__ int release_lid(const globals &g, typename config::instruction_t &instruction, int &query) {
             return matmul_pipeline::release_lid(g, instruction, query);
         }
         static __device__ int init_semaphores(const globals &g, state<config> &s) {
-            return matmul_pipeline::init_semaphores(s);
+            // init_semaphore(store_state(s), 1);
+            return matmul_pipeline::init_semaphores(s); // + 1;
         }
     };
     struct loader {
@@ -66,16 +70,32 @@ struct matmul_op {
             tensor_load_wait();
             __syncwarp();
             warp::arrive(s.tensor_finished);
-            coord<> target = {
-                256 * inst.row + 128 * (warpid() >= 8),
-                256 * inst.col + 128 * ((warpid() % 8) >= 4)
-            };
-            warpgroup::store(g.D, out, target);
+            int store_bar = 10 + s.instruction_index%2;
+            st_bf<32, 128> &smem = *reinterpret_cast<st_bf<32, 128>*>(s.scratch());
+            for(int i = 0; i < config::NUM_CONSUMER_WARPS; i++) {
+                if(warpid() == i) warp::store(smem, out);
+                group<config::NUM_CONSUMER_WARPS + 1>::sync(store_bar); // arrive for storer
+                group<config::NUM_CONSUMER_WARPS + 1>::sync(store_bar); // await release from storer
+            }
         }
     };
 
     struct storer {
-        static __device__ void run(const globals &g, state<config> &s) {}
+        static __device__ void run(const globals &g, state<config> &s) {
+            parsed_instruction inst{s};
+            int store_bar = 10 + s.instruction_index%2;
+            st_bf<32, 128> &smem = *reinterpret_cast<st_bf<32, 128>*>(s.scratch());
+            for(int i = 0; i < config::NUM_CONSUMER_WARPS; i++) {
+                group<config::NUM_CONSUMER_WARPS + 1>::sync(store_bar); // await arrive from consumer
+                coord<> target = {
+                    256 * inst.row + 128 * (i >= 8) + 32 * (i % 4),
+                    256 * inst.col + 128 * ((i % 8) >= 4)
+                };
+                warp::tma::store_async(g.D, smem, target);
+                tma::store_async_read_wait();
+                group<config::NUM_CONSUMER_WARPS + 1>::sync(store_bar); // release back to consumer
+            }
+        }
     };
 };
 
