@@ -155,7 +155,7 @@ namespace kittens::prototype::vm
         using weights_t = gl<bf16, 1, -1, -1, hidden_dim, st_bf<256, 64>>;
         using weights_big_indim_t = gl<bf16, 1, -1, -1, intermediate_dim, st_bf<256, 64>>;
 
-        using activations_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, st_bf<128, 64>, st_bf<16, 256>>;
+        using activations_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<head_dim>, sv_bf<hidden_dim>, st_bf<128, 64>, st_bf<16, 256>>;
         using activations_big_indim_t = gl<bf16, 1, 1, -1, intermediate_dim, st_bf<128, 64>, st_bf<16, 256>>;
         using logits_t = gl<bf16, 1, 1, -1, -1, st_bf<16, 256>>;
 
@@ -163,7 +163,7 @@ namespace kittens::prototype::vm
         using rope_table_t = gl<float, 1, 1, -1, head_dim>;
         
         // KV Cache format: (num_layers * batch_size, sequence_length, num_heads, head_dim)
-        using kv_cache_t = gl<bf16, -1, -1, num_kv_heads, head_dim>;
+        using kv_cache_t = gl<bf16, -1, -1, num_kv_heads, head_dim, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>>;
 
         using barriers = gl<uint, -1, -1, -1, -1>;
 
