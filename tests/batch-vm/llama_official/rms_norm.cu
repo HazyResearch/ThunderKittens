@@ -3,12 +3,6 @@
 using namespace kittens;
 using namespace kittens::prototype;
 
-/*
-What do we need to do here... normalize entire hidden state vector
-Need to prevent activation values from getting too large or small as go through layers
-Calculate rms_norm for one entire hidden state 1 x LLAMA_8B_HIDDEN_DIM
-*/
-
 namespace kittens::prototype::vm
 {
 
@@ -19,11 +13,14 @@ namespace kittens::prototype::vm
         auto outputs_ptr,
         int _opcode,
         typename gmem_waiter,
-        typename Config>
+        typename Config = kittens::prototype::vm::default_config>
     struct rms_op
     {
         static constexpr int opcode = _opcode;
         static constexpr int REDUCTION_DIM_PER_WARP = globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
+
+        using activations_vec = sv_bf<globals::hidden_dim>; 
+        using weights_vec = sv_bf<globals::hidden_dim>;
 
         struct parsed_instruction
         {
@@ -42,11 +39,20 @@ namespace kittens::prototype::vm
         __device__ static inline semaphore &weights_arrived(state<Config> &s) { return s.semaphores()[1]; }
         __device__ static inline semaphore &outputs_arrived(state<Config> &s) { return s.semaphores()[2]; }
 
-        // Pages (very naive for now, no fine-grained usage)
-        static constexpr int PAGE_WEIGHT = 0;
-        static constexpr int PAGE_ACTIVATION = 1;
-        __device__ static inline int get_weight_page(state<Config> &s) { return s.pid(PAGE_WEIGHT); }
-        __device__ static inline int get_activation_page(state<Config> &s) { return s.pid(PAGE_ACTIVATION); }
+        static constexpr int SHARED_PAGE = 0; // 32kb shared page
+
+        __device__ static inline activations_vec &get_activations_vec(state<Config> &s)
+        {
+            char *page_base_ptr = reinterpret_cast<char *>(s.pages[s.pid(SHARED_PAGE)].data);
+            return *reinterpret_cast<activations_vec *>(page_base_ptr);
+        }
+
+        __device__ static inline weights_vec &get_weights_vec(state<Config> &s)
+        {
+            char *page_base_ptr = reinterpret_cast<char *>(s.pages[s.pid(SHARED_PAGE)].data);
+            size_t offset = sizeof(activations_vec);
+            return *reinterpret_cast<weights_vec *>(page_base_ptr + offset);
+        }
 
         struct controller
         {
@@ -80,34 +86,28 @@ namespace kittens::prototype::vm
 
                 if (laneid() == 0)
                 {
+                    s.wait_page_ready(s.pid(SHARED_PAGE));
+                    
                     // RMS scale
-                    int weight_page = get_weight_page(s);
-                    s.wait_page_ready(weight_page);
-                    auto &rms_scale = *reinterpret_cast<sv_bf<globals::hidden_dim> *>(s.pages[weight_page].ptr());
-
+                    weights_vec &rms_scale = get_weights_vec(s);
                     tma::expect(weights_arrived(s), rms_scale);
                     auto &weights_global = g.*weights_ptr;
                     tma::load_async(rms_scale, weights_global, {inst.layer_idx, 0}, weights_arrived(s));
 
-                    // Activation
-                    int act_page = get_activation_page(s);
-                    s.wait_page_ready(act_page);
                     s.record(TEVENT_AT_GMEM_WAIT);
-
                     gmem_waiter::gmem_wait(g, s, inst);
-
                     s.record(TEVENT_DONE_GMEM_WAIT);
-                    auto &activations = *reinterpret_cast<sv_bf<globals::hidden_dim> *>(s.pages[act_page].ptr());
 
-                    tma::expect(activations_arrived(s), activations);
-                    tma::load_async(activations, g.hidden_states, {inst.batch_idx, 0}, activations_arrived(s));
+                    // Activation
+                    activations_vec &act_vec = get_activations_vec(s);
+                    tma::expect(activations_arrived(s), act_vec);
+                    tma::load_async(act_vec, g.hidden_states, {inst.batch_idx, 0}, activations_arrived(s));
                 }
-
-                else if (laneid() >= 2 && laneid() <= 12)
+                else if (laneid() >= 1 && laneid() < Config::NUM_PAGES)
                 {
                     // Unused pages
                     s.wait_page_ready(s.pid(laneid()));
-                    arrive(s.page_finished[s.pid(laneid())][0], Config::NUM_CONSUMER_WARPS);
+                    s.finish_page(s.pid(laneid()), Config::NUM_CONSUMER_WARPS);
                 }
 
                 warp::sync();
@@ -139,18 +139,21 @@ namespace kittens::prototype::vm
 
                 // Setup
                 parsed_instruction inst{s};
-                rv_fl<REDUCTION_DIM_PER_WARP> activations_vec, copy_activations_vec, rms_scale_vec;
-                sv_bf<REDUCTION_DIM_PER_WARP> *rms_scale_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(s.pages[get_weight_page(s)].ptr());
-                sv_bf<REDUCTION_DIM_PER_WARP> *activations_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(s.pages[get_activation_page(s)].ptr());
+                rv_fl<REDUCTION_DIM_PER_WARP> act_vec, copy_activations_vec, rms_scale_vec; // 4096 / 16 = 256
+
+                sv_bf<REDUCTION_DIM_PER_WARP> *activations_smem = 
+                    reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(s.pages[s.pid(SHARED_PAGE)].ptr());
+                sv_bf<REDUCTION_DIM_PER_WARP> *rms_scale_smem = 
+                    reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(s.pages[s.pid(SHARED_PAGE)].ptr(sizeof(activations_vec)));
 
                 // Setup
                 wait(activations_arrived(s), 0);
 
-                warp::load(activations_vec, activations_smem[warpid()]);
+                warp::load(act_vec, activations_smem[warpid()]);
                 warp::sync();
 
                 // Step 2: Apply RMS normalization
-                warp::copy(copy_activations_vec, activations_vec);                           // cast to float
+                warp::copy(copy_activations_vec, act_vec);                           // cast to float
                 warp::mul(copy_activations_vec, copy_activations_vec, copy_activations_vec); // square
                 float partial_sum = warp::sum(copy_activations_vec);
 
@@ -172,9 +175,9 @@ namespace kittens::prototype::vm
                 float variance = full_sum / (float)globals::hidden_dim;
                 float rms_scale = rsqrtf(variance + g.rms_norm_eps);
 
-                warp::copy(copy_activations_vec, activations_vec); // unsquare
+                warp::copy(copy_activations_vec, act_vec); // unsquare
                 warp::mul(copy_activations_vec, copy_activations_vec, rms_scale);
-                warp::copy(activations_vec, copy_activations_vec);
+                warp::copy(act_vec, copy_activations_vec);
 
                 // multiply by rms scale
                 wait(weights_arrived(s), 0);
@@ -182,10 +185,10 @@ namespace kittens::prototype::vm
                 warp::load(rms_scale_vec, rms_scale_smem[warpid()]);
                 warp::sync();
 
-                warp::mul(activations_vec, activations_vec, rms_scale_vec);
+                warp::mul(act_vec, act_vec, rms_scale_vec);
 
                 // Need to ensure storing here is correct!!!
-                warp::store(activations_smem[warpid()], activations_vec);
+                warp::store(activations_smem[warpid()], act_vec);
                 warp::sync();
                 warp::arrive(outputs_arrived(s));
             }
@@ -205,14 +208,12 @@ namespace kittens::prototype::vm
                 if (warp::laneid() == 0)
                 {
                     wait(outputs_arrived(s), 0);
-                    int activation_page = get_activation_page(s);
-                    auto &rms_activations = *reinterpret_cast<sv_bf<globals::hidden_dim> *>(s.pages[activation_page].ptr());
+                    activations_vec &act_vec = get_activations_vec(s);
                     auto &outputs_global = g.*outputs_ptr;
-                    tma::store_async<cache_policy::NORMAL>(outputs_global, rms_activations, {inst.batch_idx, 0});
+                    tma::store_async<cache_policy::NORMAL>(outputs_global, act_vec, {inst.batch_idx, 0});
                     tma::store_async_wait();
 
-                    s.finish_page(activation_page, Config::NUM_CONSUMER_WARPS);
-                    s.finish_page(get_weight_page(s), Config::NUM_CONSUMER_WARPS);
+                    s.finish_page(s.pid(SHARED_PAGE), Config::NUM_CONSUMER_WARPS);
                 }
 
                 warp::sync();
@@ -289,3 +290,4 @@ namespace kittens::prototype::vm
     };
 
 }
+
