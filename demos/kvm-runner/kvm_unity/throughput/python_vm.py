@@ -181,8 +181,8 @@ def attention_decode(
     q_head_start, q_head_end = get_start_end(gqa_ratio, kv_head_idx)
 
     # barrier check
-    bar_idx = batch_idx // globals.matmul_batch_block_size
-    bars = globals.barriers[layer_idx, instruction.prev_opcode() - 1, bar_idx]
+    batch_block_idx = batch_idx // globals.matmul_batch_block_size
+    bars = globals.barriers[layer_idx, instruction.prev_opcode() - 1, batch_block_idx]
     for i in range(gqa_ratio):
         assert bars[kv_head_idx * gqa_ratio + i] == 1
     assert bars[globals.num_attention_heads + kv_head_idx] == 1
@@ -213,7 +213,7 @@ def attention_decode(
     all_out = rearrange(globals.attn_out[batch_idx], "(h d) -> h d", d=globals.head_dim)
     all_out[q_head_start:q_head_end] = out
 
-    globals.barriers[layer_idx, instruction.opcode() - 1, bar_idx, 0] += 1
+    globals.barriers[layer_idx, instruction.opcode() - 1, batch_block_idx, 0] += 1
 
 
 def o_proj_residual(
