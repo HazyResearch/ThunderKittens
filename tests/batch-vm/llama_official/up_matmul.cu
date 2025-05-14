@@ -79,7 +79,7 @@ namespace kittens::prototype::vm
                             s.wait_page_ready(weight_page);
                             s.wait_page_ready(weight_page + 1);
                         }
-                        tma::load_async(weight, g.up_weights, {inst.out_idx, i}, inputs_arrived(s, stage));
+                        tma::load_async(weight, g.up_weights, {inst.layer, inst.out_idx, i}, inputs_arrived(s, stage));
                     }
                 } else if (laneid == 1) { // load A
 

@@ -92,7 +92,7 @@ namespace kittens::prototype::vm
                             s.wait_page_ready(weight_page + 1);
                         }
                         auto &Weights = g.*WeightsPtr;
-                        tma::load_async(weight, Weights, {inst.output_idx, i}, inputs_arrived(s, stage));
+                        tma::load_async(weight, Weights, {inst.layer, inst.output_idx, i}, inputs_arrived(s, stage));
                     }
                 }
                 else if (laneid == 1)
