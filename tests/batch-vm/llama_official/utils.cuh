@@ -20,12 +20,6 @@ namespace kittens::prototype::vm
 
         wait(activations_arrived, 0);
 
-        // TODO 
-        // if (warpid() == 0 && laneid() == 0)
-        // {
-        //     s.record(TEVENT_TRIPLES_END + 7);
-        // }
-
         warp::load(activations_vec, activations_smem[warpid()]);
         warp::sync();
 
