@@ -1,5 +1,6 @@
 import torch
 from torch import Tensor
+from einops import einsum
 
 def get_start_end(block_size: int, block_idx: int):
     start = block_size * block_idx
@@ -95,4 +96,13 @@ def rms_norm(hidden_states, weights, eps: float):
     variance = inp.pow(2).mean(-1, keepdim=True)
     inp = inp * torch.rsqrt(variance + eps)
     return weights * inp.to(input_dtype)
+
+def matmul_adds(hidden_states, weights, acc):
+    matmul = einsum(hidden_states, weights, "m k, n k -> m n")
+    acc += matmul
+    return acc
+
+
+
+
 

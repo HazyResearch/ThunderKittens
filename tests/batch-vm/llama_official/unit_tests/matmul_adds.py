@@ -6,7 +6,7 @@ import torch
 torch.set_printoptions(sci_mode=False)
 
 from kvm_llama import kvm_llama
-from reference import gqa_decode
+from reference import matmul_adds
 
 
 ###
@@ -15,6 +15,8 @@ from reference import gqa_decode
 RMS_NORM_OPCODE = 1
 QKV_ROPE_APPEND_OPCODE = 2
 GQA_DECODE_OPCODE = 3
+O_PROJ_RESIDUAL_OPCODE = 4
+
 
 ###
 #  Parameters
@@ -23,6 +25,7 @@ SM_COUNT = 148
 INSTRUCTION_WIDTH = 32
 TIMING_WIDTH = 128
 BATCH_SIZE = 128
+
 NUM_OPS = 8
 NUM_LAYERS = 1 # actual value is 32
 HIDDEN_DIM = 4096
@@ -50,23 +53,23 @@ instructions = None # set below
 timings = None # set below
 qkv_weights = torch.zeros(NUM_LAYERS, (NUM_ATTENTION_HEADS + 2 * NUM_KV_HEADS) * HEAD_DIM, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 attn_norm_weights = torch.zeros(NUM_LAYERS, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
-o_weights = torch.zeros(NUM_LAYERS, HIDDEN_DIM, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+o_weights = torch.randn(NUM_LAYERS, HIDDEN_DIM, HIDDEN_DIM, dtype=torch.bfloat16, device=device) * 0.001
 mlp_norm_weights = torch.zeros(NUM_LAYERS, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 up_weights = torch.zeros(NUM_LAYERS, INTERMEDIATE_DIM, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 gate_weights = torch.zeros(NUM_LAYERS, HIDDEN_DIM, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 down_weights = torch.zeros(NUM_LAYERS, HIDDEN_DIM, INTERMEDIATE_DIM, dtype=torch.bfloat16, device=device)
 lm_head_norm_weights = torch.zeros(HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 lm_head_weights = torch.zeros(VOCAB_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
-k_cache = torch.randn(NUM_LAYERS*BATCH_SIZE, MAX_SEQ_LEN, NUM_KV_HEADS, HEAD_DIM, dtype=torch.bfloat16, device=device)
-v_cache = torch.randn(NUM_LAYERS*BATCH_SIZE, MAX_SEQ_LEN, NUM_KV_HEADS, HEAD_DIM, dtype=torch.bfloat16, device=device)
+k_cache = torch.zeros(NUM_LAYERS*BATCH_SIZE, MAX_SEQ_LEN, NUM_KV_HEADS, HEAD_DIM, dtype=torch.bfloat16, device=device)
+v_cache = torch.zeros(NUM_LAYERS*BATCH_SIZE, MAX_SEQ_LEN, NUM_KV_HEADS, HEAD_DIM, dtype=torch.bfloat16, device=device)
 rope_cos = torch.zeros(MAX_SEQ_LEN, HEAD_DIM, dtype=torch.float32, device=device)
 rope_sin = torch.zeros(MAX_SEQ_LEN, HEAD_DIM, dtype=torch.float32, device=device)
-hidden_states = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+hidden_states = torch.randn(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 rms_rope_intermediates = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 rms_gate_intermediates = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 gate_silu_intermediates = torch.zeros(BATCH_SIZE, INTERMEDIATE_DIM, dtype=torch.bfloat16, device=device)
-q_post_rope = torch.randn(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
-attn_out = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+q_post_rope = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+attn_out = torch.randn(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device) * 0.001
 silu_out = torch.zeros(BATCH_SIZE, INTERMEDIATE_DIM, dtype=torch.bfloat16, device=device)
 logits = torch.zeros(BATCH_SIZE, VOCAB_SIZE, dtype=torch.bfloat16, device=device)
 pos_id = 15
@@ -76,13 +79,15 @@ rms_norm_eps = 1e-5
 # Generate instructions
 instructions = [[] for _ in range(SM_COUNT)]
 instruction_idx = 0
-for batch_idx in range(BATCH_SIZE):
-    for kv_head_idx in range(NUM_KV_HEADS):
+for batch_idx in range(BATCH_SIZE // 128):
+    for hidden_block_idx in range(HIDDEN_DIM // 128):
+        # print(batch_idx * 2, hidden_block_idx)
         instructions[instruction_idx%SM_COUNT].append([
-            GQA_DECODE_OPCODE, LAYER_IDX, batch_idx, kv_head_idx
+            O_PROJ_RESIDUAL_OPCODE, LAYER_IDX, batch_idx, hidden_block_idx
         ] + [0]*(INSTRUCTION_WIDTH - 4))
         instruction_idx += 1
 
+# raise Exception('stop')
 # Pad instructions
 max_instructions = -1
 for i in range(SM_COUNT):
@@ -101,6 +106,7 @@ timings = torch.zeros((SM_COUNT, instructions.shape[1], TIMING_WIDTH), dtype=tor
 ###
 #  Launch the kernel
 ###
+hidden_states_ref = hidden_states.clone()
 print('\nRunning the kernel...')
 torch.cuda.synchronize()
 kvm_llama(
@@ -134,15 +140,14 @@ kvm_llama(
 )
 torch.cuda.synchronize()
 
-
 ###
 #  Check correctness
 ###
-attn_out_ref = gqa_decode(
-    q_post_rope.view(BATCH_SIZE, NUM_ATTENTION_HEADS, HEAD_DIM),
-    k_cache[LAYER_IDX*BATCH_SIZE:(LAYER_IDX+1)*BATCH_SIZE, :pos_id+1],
-    v_cache[LAYER_IDX*BATCH_SIZE:(LAYER_IDX+1)*BATCH_SIZE, :pos_id+1]
-).reshape(BATCH_SIZE, HIDDEN_DIM)
+hidden_states_ref = matmul_adds(
+    attn_out, # BATCH_SIZE x HIDDEN_DIM
+    o_weights[LAYER_IDX], # HIDDEN_DIM x HIDDEN_DIM
+    hidden_states_ref, # BATCH_SIZE x HIDDEN_DIM
+)
 
-diff = (attn_out - attn_out_ref).abs()
+diff = (hidden_states - hidden_states_ref).abs()
 print(f'attn_out -- max abs diff: {diff.max()}, mean abs diff: {diff.mean()}')
