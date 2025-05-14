@@ -35,6 +35,9 @@ class Globals(BaseGlobals):
     def num_intermediate_blocks(self) -> int:
         return assert_div(self.intermediate_size, self.matmul_output_block_size)
 
+    def num_vocab_blocks(self) -> int:
+        return assert_div(self.vocab_size, self.matmul_output_block_size)
+
 
 @dataclass
 class PreAttnLayerNorm(Instruction):
