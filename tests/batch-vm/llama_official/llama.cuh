@@ -134,21 +134,22 @@ namespace kittens::prototype::vm
         static constexpr int NON_CONSUMER_REGISTERS = 64;
     };
 
-    template <int _hidden_dim, int _intermediate_dim, int _head_dim, int _num_attention_heads, int _num_kv_heads, int _kv_block_size, int _matmul_out_block_size, int _matmul_batch_block_size, int _batch_size, int _sm_count>
+    template <int _num_hidden_layers, int _hidden_dim, int _intermediate_dim, int _head_dim, int _num_attention_heads, int _num_kv_heads, int _kv_block_size, int _matmul_out_block_size, int _matmul_batch_block_size, int _batch_size, int _sm_count>
     struct globals_t
     {
-        constexpr static unsigned int matmul_out_block_size = _matmul_out_block_size;
-        constexpr static unsigned int matmul_batch_block_size = _matmul_batch_block_size;
-        constexpr static unsigned int kv_block_size = _kv_block_size;
-        constexpr static unsigned int head_dim = _head_dim;
-        constexpr static unsigned int hidden_dim = _hidden_dim;
-        constexpr static unsigned int intermediate_dim = _intermediate_dim;
-        constexpr static unsigned int num_attention_heads = _num_attention_heads;
-        constexpr static unsigned int num_kv_heads = _num_kv_heads;
-        constexpr static unsigned int batch_size = _batch_size;
-        constexpr static unsigned int sm_count = _sm_count;
+        constexpr static int num_hidden_layers = _num_hidden_layers;
+        constexpr static int matmul_out_block_size = _matmul_out_block_size;
+        constexpr static int matmul_batch_block_size = _matmul_batch_block_size;
+        constexpr static int kv_block_size = _kv_block_size;
+        constexpr static int head_dim = _head_dim;
+        constexpr static int hidden_dim = _hidden_dim;
+        constexpr static int intermediate_dim = _intermediate_dim;
+        constexpr static int num_attention_heads = _num_attention_heads;
+        constexpr static int num_kv_heads = _num_kv_heads;
+        constexpr static int batch_size = _batch_size;
+        constexpr static int sm_count = _sm_count;
 
-        constexpr static unsigned int num_output_blocks = hidden_dim / matmul_out_block_size;
+        constexpr static int num_output_blocks = hidden_dim / matmul_out_block_size;
 
         using instruction_layout = ::kittens::prototype::vm::instruction_layout<llama_config>;
         using timing_layout = ::kittens::prototype::vm::timing_layout<llama_config>;
@@ -216,6 +217,7 @@ namespace kittens::prototype::vm
     };
 
     typedef globals_t<
+        LLAMA_NUM_LAYERS,
         LLAMA_HIDDEN_DIM,
         LLAMA_INTERMEDIATE_DIM,
         LLAMA_HEAD_DIM,

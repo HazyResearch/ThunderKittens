@@ -366,9 +366,10 @@ def down_proj_residual(
         globals.matmul_output_block_size, out_idx
     )
 
-    assert globals.barriers[
-        layer_idx, instruction.prev_opcode() - 1, batch_idx, 0
-    ] == assert_div(globals.intermediate_size, globals.matmul_output_block_size)
+    assert (
+        globals.barriers[layer_idx, instruction.prev_opcode() - 1, batch_idx, 0]
+        == globals.num_intermediate_blocks()
+    )
 
     matmul_with_residual(
         matA=globals.silu_out[

@@ -18,6 +18,7 @@ namespace kittens::prototype::vm
         auto weights_ptr,
         auto outputs_ptr,
         int _opcode,
+        typename gmem_waiter,
         typename Config = kittens::prototype::vm::default_config>
     struct rms_op
     {
@@ -93,7 +94,7 @@ namespace kittens::prototype::vm
                     s.wait_page_ready(act_page);
                     s.record(TEVENT_AT_GMEM_WAIT);
 
-                    gmem_wait(g, s);
+                    gmem_waiter::gmem_wait(g, s, inst);
 
                     s.record(TEVENT_DONE_GMEM_WAIT);
                     auto &activations = *reinterpret_cast<sv_bf<globals::hidden_dim> *>(s.pages[act_page].ptr());
@@ -217,8 +218,9 @@ namespace kittens::prototype::vm
                 warp::sync();
                 asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
 
-                if (warp::laneid() == 0) {
-                    auto batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
+                if (warp::laneid() == 0)
+                {
+                    int batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
                     atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, batch_block_idx, 0}], 1);
                 }
 
@@ -229,69 +231,61 @@ namespace kittens::prototype::vm
         };
     };
 
-    template <typename Config, typename globals>
-    struct attn_norm : rms_op<&globals::attn_norm_weights, &globals::rms_rope_intermediates, OPCODE_AttnNorm, Config>
+    struct attn_norm_gmem_waiter
     {
-        using base_op = rms_op<&globals::attn_norm_weights, &globals::rms_rope_intermediates, OPCODE_AttnNorm, Config>;
-        struct loader : base_op::loader
+        template <typename Config, typename Globals, typename instruction_t>
+        static __device__ inline void gmem_wait(const Globals &g, state<Config> &s, instruction_t &inst)
         {
-            static __device__ inline void gmem_wait(const globals &g, state<Config> &s)
+            int batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
+            if (inst.layer_idx > 0)
             {
-                typename base_op::parsed_instruction inst{s};
-                auto batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
-                if (inst.layer_idx > 0)
-                {
-                    while (*(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, batch_block_idx, 0}] < globals::num_output_blocks)
-                    {
-                        __nanosleep(20);
-                    }
-                }
-            }
-        };
-    };
-
-    template <typename Config, typename globals>
-    struct mlp_norm : rms_op<
-                          &globals::mlp_norm_weights,
-                          &globals::rms_gate_intermediates,
-                          OPCODE_MlpNorm,
-                          Config>
-    {
-        using base_op = rms_op<&globals::mlp_norm_weights, &globals::rms_gate_intermediates, OPCODE_MlpNorm, Config>;
-        struct loader : base_op::loader
-        {
-            static __device__ inline void gmem_wait(const globals &g, state<Config> &s)
-            {
-                typename base_op::parsed_instruction inst{s};
-                auto batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
-                while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_O_ProjResidual - 1, batch_block_idx, 0}] < globals::num_output_blocks)
+                while (*(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, batch_block_idx, 0}] < globals::num_output_blocks)
                 {
                     __nanosleep(20);
                 }
             }
-        };
+        }
+    };
+
+    template <typename Config, typename Globals>
+    struct attn_norm : rms_op<&globals::attn_norm_weights, &globals::rms_rope_intermediates, OPCODE_AttnNorm, attn_norm_gmem_waiter, Config>
+    {
+    };
+
+    struct mlp_norm_gmem_waiter
+    {
+        template <typename Config, typename Globals, typename instruction_t>
+        static __device__ inline void gmem_wait(const Globals &g, state<Config> &s, instruction_t &inst)
+        {
+            int batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
+            while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_O_ProjResidual - 1, batch_block_idx, 0}] < globals::num_output_blocks)
+            {
+                __nanosleep(20);
+            }
+        }
+    };
+
+    template <typename Config, typename Globals>
+    struct mlp_norm : rms_op<&globals::mlp_norm_weights, &globals::rms_gate_intermediates, OPCODE_MlpNorm, mlp_norm_gmem_waiter, Config>
+    {
+    };
+
+    struct lm_head_norm_gmem_waiter
+    {
+        template <typename Config, typename Globals, typename instruction_t>
+        static __device__ inline void gmem_wait(const Globals &g, state<Config> &s, instruction_t &inst)
+        {
+            int batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
+            while (*(volatile int *)&g.Bar[{globals::num_hidden_layers - 1, OPCODE_DownProjResidual - 1, batch_block_idx, 0}] < globals::num_output_blocks)
+            {
+                __nanosleep(20);
+            }
+        }
     };
 
     template <typename Config, typename globals>
-    struct lm_head_norm : rms_op<
-                              &globals::lm_head_norm_weights,
-                              &globals::rms_lm_head_intermediates,
-                              OPCODE_LM_HeadNorm,
-                              Config>
+    struct lm_head_norm : rms_op<&globals::lm_head_norm_weights, &globals::rms_lm_head_intermediates, OPCODE_LM_HeadNorm, lm_head_norm_gmem_waiter, Config>
     {
-        using base_op = rms_op<&globals::lm_head_norm_weights, &globals::rms_lm_head_intermediates, OPCODE_LM_HeadNorm, Config>;
-        struct loader : base_op::loader
-        {
-            static __device__ inline void gmem_wait(const globals &g, state<Config> &s)
-            {
-                typename base_op::parsed_instruction inst{s};
-                auto batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
-                while (*(volatile int *)&g.Bar[{globals::num_hidden_layers - 1, OPCODE_DownProjResidual - 1, batch_block_idx, 0}] < globals::num_output_blocks)
-                {
-                    __nanosleep(20);
-                }
-            }
-        };
     };
 
 }
