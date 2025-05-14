@@ -63,6 +63,7 @@ class ScriptConfig(pydra.Config):
         self.max_len_override = sl
         self.interleave_rope = False
         self.l8()
+        assert self.batch_size==1024, 'must recompile the kernel with new BATCH_SIZE'
 
     def l8(self):
         self.model = "meta-llama/Llama-3.1-8B-Instruct"
