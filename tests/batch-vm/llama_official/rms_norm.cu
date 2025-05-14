@@ -217,8 +217,10 @@ namespace kittens::prototype::vm
                 warp::sync();
                 asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
 
-                if (warp::laneid() == 0)
-                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, inst.batch_idx / (int)globals::matmul_out_block_size}], 1);
+                if (warp::laneid() == 0) {
+                    auto batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
+                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, batch_block_idx, 0}], 1);
+                }
 
                 warp::sync();
                 if (laneid() == 0)
