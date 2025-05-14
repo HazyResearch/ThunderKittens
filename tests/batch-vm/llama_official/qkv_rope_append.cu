@@ -94,7 +94,7 @@ struct qkv_rope_append {
                     s.finish_page(weight_page + 1, Config::NUM_CONSUMER_WARPS);
                 }
             } else if (laneid == 1) { // load activations
-                while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_NORM - 1, inst.batch_start_idx}] < Globals::matmul_out_block_size)
+                while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_AttnNorm - 1, inst.batch_start_idx}] < Globals::matmul_out_block_size)
                     __nanosleep(20);
 
                 uint32_t phasebits = 0xFFFF0000;

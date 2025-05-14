@@ -4,15 +4,18 @@
 #include "vm/vm.cuh"
 #include <iostream>
 
-#define OPCODE_RMS_NORM 1
+#define OPCODE_AttnNorm 1
 #define OPCODE_QKV_RopeAppend 2
 #define OPCODE_GQA_AttentionDecode 3
 #define OPCODE_O_ProjResidual 4
 
-#define OPCODE_POST_RMS_NORM 5
+#define OPCODE_MlpNorm 5
 #define OPCODE_GateSiLU 6
 #define OPCODE_UpMatmul 7
 #define OPCODE_DownProjResidual 8
+
+#define OPCODE_LM_HeadNorm 9
+#define OPCODE_LM_Head 10
 
 // #define USE_LLAMA_1B
 #define USE_LLAMA_8B
@@ -29,6 +32,7 @@
 #define LLAMA_NUM_KV_HEADS 8
 #define LLAMA_KV_BLOCK_SIZE 16
 #define LLAMA_MATMUL_OUT_BLOCK_SIZE 128
+#define LLAMA_MATMUL_BATCH_BLOCK_SIZE 128
 
 #endif
 
@@ -42,6 +46,7 @@
 #define LLAMA_NUM_KV_HEADS 8
 #define LLAMA_KV_BLOCK_SIZE 16
 #define LLAMA_MATMUL_OUT_BLOCK_SIZE 128
+#define LLAMA_MATMUL_BATCH_BLOCK_SIZE 128
 
 #endif
 
@@ -56,6 +61,7 @@
 #define LLAMA_NUM_KV_HEADS 8
 #define LLAMA_KV_BLOCK_SIZE 16
 #define LLAMA_MATMUL_OUT_BLOCK_SIZE 128
+#define LLAMA_MATMUL_BATCH_BLOCK_SIZE 128
 
 #endif
 
@@ -86,10 +92,11 @@ namespace kittens::prototype::vm
 {
     using config = default_config;
 
-    template <int _hidden_dim, int _intermediate_dim, int _head_dim, int _num_attention_heads, int _num_kv_heads, int _kv_block_size, int _matmul_out_block_size, int _batch_size, int _sm_count>
+    template <int _hidden_dim, int _intermediate_dim, int _head_dim, int _num_attention_heads, int _num_kv_heads, int _kv_block_size, int _matmul_out_block_size, int _matmul_batch_block_size, int _batch_size, int _sm_count>
     struct globals_t
     {
         constexpr static unsigned int matmul_out_block_size = _matmul_out_block_size;
+        constexpr static unsigned int matmul_batch_block_size = _matmul_batch_block_size;
         constexpr static unsigned int kv_block_size = _kv_block_size;
         constexpr static unsigned int head_dim = _head_dim;
         constexpr static unsigned int hidden_dim = _hidden_dim;
@@ -98,6 +105,8 @@ namespace kittens::prototype::vm
         constexpr static unsigned int num_kv_heads = _num_kv_heads;
         constexpr static unsigned int batch_size = _batch_size;
         constexpr static unsigned int sm_count = _sm_count;
+
+        constexpr static unsigned int num_output_blocks = hidden_dim / matmul_out_block_size;
 
         using instruction_layout = ::kittens::prototype::vm::instruction_layout<config>;
         using timing_layout = ::kittens::prototype::vm::timing_layout<config>;
@@ -151,6 +160,8 @@ namespace kittens::prototype::vm
         activations_t q_post_rope;
         activations_t attn_out;
         activations_big_indim_t silu_out;
+
+        activations_t rms_lm_head_intermediates;
         logits_t logits;
 
         unsigned int pos_id;
@@ -170,6 +181,7 @@ namespace kittens::prototype::vm
         LLAMA_NUM_KV_HEADS,
         LLAMA_KV_BLOCK_SIZE,
         LLAMA_MATMUL_OUT_BLOCK_SIZE,
+        LLAMA_MATMUL_BATCH_BLOCK_SIZE,
         BATCH_SIZE,
         SM_COUNT>
         llama_8b_globals;
