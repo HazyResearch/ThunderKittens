@@ -12,8 +12,6 @@ namespace kittens::prototype::vm {
         static constexpr int GQA_RATIO = globals::num_attention_heads / globals::num_kv_heads;
         static constexpr int QO_PAGE = 0;
         static constexpr int KV_PAGE = 1;
-        static constexpr int KV_INDICES_LEN = 0;
-        static constexpr int MAX_KV_INDICES_LEN = 0;
 
         static_assert(GQA_RATIO == 4, "GQA_RATIO must be 4.");
         static_assert(NUM_STAGES <= 2, "Modify page allocation for KVs.");
