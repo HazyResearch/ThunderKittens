@@ -53,7 +53,7 @@ instructions = None # set below
 timings = None # set below
 qkv_weights = torch.zeros(NUM_LAYERS, (NUM_ATTENTION_HEADS + 2 * NUM_KV_HEADS) * HEAD_DIM, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 attn_norm_weights = torch.zeros(NUM_LAYERS, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
-o_weights = torch.randn(NUM_LAYERS, HIDDEN_DIM, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+o_weights = torch.randn(NUM_LAYERS, HIDDEN_DIM, HIDDEN_DIM, dtype=torch.bfloat16, device=device) * 0.001
 mlp_norm_weights = torch.zeros(NUM_LAYERS, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 up_weights = torch.zeros(NUM_LAYERS, INTERMEDIATE_DIM, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 gate_weights = torch.zeros(NUM_LAYERS, HIDDEN_DIM, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
@@ -69,7 +69,7 @@ rms_rope_intermediates = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat1
 rms_gate_intermediates = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 gate_silu_intermediates = torch.zeros(BATCH_SIZE, INTERMEDIATE_DIM, dtype=torch.bfloat16, device=device)
 q_post_rope = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
-attn_out = torch.randn(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+attn_out = torch.randn(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device) * 0.001
 silu_out = torch.zeros(BATCH_SIZE, INTERMEDIATE_DIM, dtype=torch.bfloat16, device=device)
 logits = torch.zeros(BATCH_SIZE, VOCAB_SIZE, dtype=torch.bfloat16, device=device)
 pos_id = 15
@@ -83,8 +83,8 @@ for batch_idx in range(BATCH_SIZE // 128):
     for hidden_block_idx in range(HIDDEN_DIM // 128):
         # print(batch_idx * 2, hidden_block_idx)
         instructions[instruction_idx%SM_COUNT].append([
-            O_PROJ_RESIDUAL_OPCODE, LAYER_IDX, batch_idx * 2, hidden_block_idx, HIDDEN_DIM // 128
-        ] + [0]*(INSTRUCTION_WIDTH - 5))
+            O_PROJ_RESIDUAL_OPCODE, LAYER_IDX, batch_idx, hidden_block_idx
+        ] + [0]*(INSTRUCTION_WIDTH - 4))
         instruction_idx += 1
 
 # raise Exception('stop')
