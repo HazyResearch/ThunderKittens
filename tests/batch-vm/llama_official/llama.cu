@@ -6,7 +6,7 @@
 #include "matmul_adds.cu"
 #include "gate_silu.cu"
 #include "up_matmul.cu"
-// #include "lm_head.cu"
+#include "lm_head.cu"
 
 #include "pyutils/pyutils.cuh"
 
@@ -25,7 +25,7 @@ using up_matmul_op = up_matmul<default_config, llama_8b_globals>;
 using downproj_op = downproj<default_config, llama_8b_globals>;
 
 using lm_head_norm_op = lm_head_norm<default_config, llama_8b_globals>;
-// using lm_head_op = lm_head<default_config, llama_8b_globals>;
+using lm_head_op = lm_head<default_config, llama_8b_globals>;
 
 
 PYBIND11_MODULE(kvm_llama, m)
@@ -41,8 +41,8 @@ PYBIND11_MODULE(kvm_llama, m)
         gate_silu_op,
         up_matmul_op,
         downproj_op,
-        lm_head_norm_op
-        // lm_head_op
+        lm_head_norm_op,
+        lm_head_op
     >>(m, "kvm_llama",
         &llama_8b_globals::Bar,
         &llama_8b_globals::instructions,
