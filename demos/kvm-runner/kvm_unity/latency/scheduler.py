@@ -49,6 +49,16 @@ def make_globals(
 
     max_attn_partitions = get_sm_count(device)
 
+    barriers = torch.zeros(
+        [
+            config.num_hidden_layers,
+            10,  # more than the number of opcodes we have
+            config.num_attention_heads + config.num_key_value_heads * 2,
+        ],
+        dtype=torch.int32,
+        device=device,
+    )
+
     return Globals(
         # model params
         qkv_proj_weights=stacked_params.qkv_proj,
@@ -101,6 +111,7 @@ def make_globals(
         attn_reduction_size=4,
         vocab_size=config.vocab_size,
         device=device,
+        barriers=barriers,
     )
 
 

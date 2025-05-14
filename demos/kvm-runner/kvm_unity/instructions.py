@@ -32,16 +32,19 @@ class BaseGlobals:
     hidden_size: int
     intermediate_size: int
     vocab_size: int
-    max_barriers: int
 
     attn_scale: float
     rms_norm_eps: float
     device: DeviceType
 
+    hidden_states: Tensor
+    barriers: Tensor
+
+    pos_id: int
+
     def __post_init__(self):
         self.instructions: Tensor | None = None
         self.timings: Tensor | None = None
-        self.barriers: Tensor | None = None
 
     def sm_count(self) -> int:
         return get_sm_count(self.device)

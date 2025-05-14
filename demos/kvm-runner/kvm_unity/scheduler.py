@@ -275,19 +275,5 @@ def tensorize_instructions(
         device=device,
     )
 
-    barriers = (
-        torch.ones(
-            [
-                globs.num_hidden_layers,
-                max_opcode + 1,
-                globs.max_barriers,
-            ],
-            dtype=torch.int32,
-            device=device,
-        )
-        * barrier_init_val
-    )
-
     globs.instructions = serialized
     globs.timings = timings
-    globs.barriers = barriers
