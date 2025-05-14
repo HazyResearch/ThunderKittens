@@ -186,8 +186,8 @@ namespace kittens::prototype::vm
                 int last_stage = (NUM_ITERS - 1) % PIPELINE_STAGES;
                 int gate_silu_page = get_weight_page(s, last_stage);
                 weight_tile &silu_out = *reinterpret_cast<weight_tile *>(s.pages[gate_silu_page].data);
-                weight_subtile silu_subtile(silu_out, {warpgroup::warpid(), 0});
-                warp::load(silu_fl, silu_subtile);
+
+                consumer::load(silu_fl, silu_out);
 
                 consumer::mul(output_fl, output_fl, silu_fl);
 
