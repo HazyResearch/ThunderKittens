@@ -270,26 +270,26 @@ namespace kittens::prototype::vm
         };
     };
 
-    // template <typename Config, typename globals>
-    // struct lm_head_norm : rms_op<
-    //                           &globals::lm_head_norm_weights,
-    //                           &globals::rms_lm_head_intermediates,
-    //                           OPCODE_LM_HeadNorm,
-    //                           Config>
-    // {
-    //     using base_op = rms_op<&globals::lm_head_norm_weights, &globals::rms_lm_head_intermediates, OPCODE_LM_HeadNorm, Config>;
-    //     struct loader : base_op::loader
-    //     {
-    //         static __device__ inline void gmem_wait(const globals &g, state<Config> &s)
-    //         {
-    //             typename base_op::parsed_instruction inst{s};
-    //             auto batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
-    //             while (*(volatile int *)&g.Bar[{globals::num_hidden_layers - 1, OPCODE_DownProjResidual - 1, batch_block_idx, 0}] < globals::num_output_blocks)
-    //             {
-    //                 __nanosleep(20);
-    //             }
-    //         }
-    //     };
-    // };
+    template <typename Config, typename globals>
+    struct lm_head_norm : rms_op<
+                              &globals::lm_head_norm_weights,
+                              &globals::rms_lm_head_intermediates,
+                              OPCODE_LM_HeadNorm,
+                              Config>
+    {
+        using base_op = rms_op<&globals::lm_head_norm_weights, &globals::rms_lm_head_intermediates, OPCODE_LM_HeadNorm, Config>;
+        struct loader : base_op::loader
+        {
+            static __device__ inline void gmem_wait(const globals &g, state<Config> &s)
+            {
+                typename base_op::parsed_instruction inst{s};
+                auto batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
+                while (*(volatile int *)&g.Bar[{globals::num_hidden_layers - 1, OPCODE_DownProjResidual - 1, batch_block_idx, 0}] < globals::num_output_blocks)
+                {
+                    __nanosleep(20);
+                }
+            }
+        };
+    };
 
 }
