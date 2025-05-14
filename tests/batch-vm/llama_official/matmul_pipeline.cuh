@@ -82,8 +82,8 @@ struct matmul_pipeline {
 
                 if (iter < INPUT_PIPELINE_STAGES) s.wait_page_ready(a_page); // Stall until A is ready.
                 // Load A
-                tma::load_async(a_smem[0], g.*A_Ptr, {inst.row+0, iter}, sem);
-                tma::load_async(a_smem[1], g.*A_Ptr, {inst.row+1, iter}, sem);
+                tma::load_async(a_smem[0], g.*A_Ptr, {2*inst.row+0, iter}, sem);
+                tma::load_async(a_smem[1], g.*A_Ptr, {2*inst.row+1, iter}, sem);
 
                 if (iter < INPUT_PIPELINE_STAGES) s.wait_page_ready(b_page); // Stall until B is ready.
                 // Load B
