@@ -157,7 +157,7 @@ namespace kittens::prototype::vm
 
         using activations_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>, st_bf<128, 64>, st_bf<16, 256>>;
         using activations_big_indim_t = gl<bf16, 1, 1, -1, intermediate_dim, st_bf<128, 64>, st_bf<16, 256>>;
-        using logits_t = gl<bf16, 1, 1, -1, -1>;
+        using logits_t = gl<bf16, 1, 1, -1, -1, st_bf<16, 256>>;
 
         using norm_weights_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>>;
         using rope_table_t = gl<float, 1, 1, -1, head_dim>;
@@ -229,7 +229,7 @@ namespace kittens::prototype::vm
         llama_8b_globals;
 
     template <typename llama_config = llama_config, typename globals = llama_8b_globals>
-    struct post_rms_norm;
+    struct attn_norm;
 
     template <typename llama_config = llama_config, typename globals = llama_8b_globals>
     struct qkv_rope_append;
@@ -241,17 +241,20 @@ namespace kittens::prototype::vm
     struct o_proj;
 
     template <typename llama_config = llama_config, typename globals = llama_8b_globals>
-    struct pre_rms_norm;
+    struct mlp_norm;
 
     template <typename llama_config = llama_config, typename globals = llama_8b_globals>
-    struct matmul_silu;
+    struct gate_silu;
 
     template <typename llama_config = llama_config, typename globals = llama_8b_globals>
-    struct matmul_gate;
+    struct up_matmul;
 
     template <typename llama_config = llama_config, typename globals = llama_8b_globals>
     struct downproj;
 
     template <typename llama_config = llama_config, typename globals = llama_8b_globals>
-    struct rms_lm_head;
+    struct lm_head_norm;
+
+    template <typename llama_config = llama_config, typename globals = llama_8b_globals>
+    struct lm_head;
 }

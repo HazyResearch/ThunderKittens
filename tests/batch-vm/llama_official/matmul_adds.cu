@@ -20,10 +20,6 @@ namespace kittens::prototype::vm
         static constexpr int opcode = _opcode;
         static constexpr int PIPELINE_STAGES = 3;
 
-        using weight_tile = st_bf<128, 128>;
-        using activation_tile = st_bf<128, 128>;
-        using output_tile = st_bf<128, 128>;
-
         struct parsed_instruction
         {
             int layer;
@@ -39,14 +35,6 @@ namespace kittens::prototype::vm
         };
 
         using matmul_pipeline = matmul_pipeline<config, globals, parsed_instruction, InputActivationsPtr, WeightsPtr, iters>;
-
-        __device__ static inline int get_weight_page(state<config> &s, int stage) { return 0 + stage * 2; }     // 32 KB pages
-        __device__ static inline int get_activation_page(state<config> &s, int stage) { return 6 + stage * 2; } // 32 KB pages
-
-        __device__ static inline semaphore &inputs_arrived(state<config> &s, int stage) { return s.semaphores()[PIPELINE_STAGES * 0 + stage]; }
-        __device__ static inline semaphore &inputs_finished(state<config> &s, int stage) { return s.semaphores()[PIPELINE_STAGES * 1 + stage]; }
-        __device__ static inline semaphore &outputs_arrived(state<config> &s, int stage) { return s.semaphores()[PIPELINE_STAGES * 2 + stage]; }
-        __device__ static inline semaphore &outputs_shared(state<config> &s) { return s.semaphores()[PIPELINE_STAGES * 3 + 0]; }
 
         struct controller
         {
