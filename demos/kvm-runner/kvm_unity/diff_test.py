@@ -12,7 +12,6 @@ from kvm_unity.dispatch import (
     make_pyvm_interpreter,
     make_schedule_builder,
 )
-from kvm_unity.instructions import BaseGlobals
 from kvm_unity.llama import ExtraModelConfig, LlamaForCausalLM
 from kvm_unity.scheduler import (
     assign_to_sms,
@@ -63,7 +62,9 @@ class ScriptConfig(pydra.Config):
         self.max_len_override = sl
         self.interleave_rope = False
         self.l8()
-        assert self.batch_size==1024, 'must recompile the kernel with new BATCH_SIZE'
+
+    def l1(self):
+        self.model = "meta-llama/Llama-3.2-1B-Instruct"
 
     def l8(self):
         self.model = "meta-llama/Llama-3.1-8B-Instruct"
@@ -207,15 +208,6 @@ def main(config: ScriptConfig):
             end = time.time()
             print(f"starting instructions time: {end - start}")
 
-        def summarize_caches(globs: BaseGlobals, name: str):
-            k_cache_summary = globs.k_cache[:, pos_id].float().sum(-1).sum(-1)
-            print(f"{name} k_cache_summary:", k_cache_summary)
-            v_cache_summary = globs.v_cache[:, pos_id].float().sum(-1).sum(-1)
-            print(f"{name} v_cache_summary:", v_cache_summary)
-
-        # summarize_caches(globs_for_pyvm, "pyvm")
-        # summarize_caches(globs_for_kvm, "kvm")
-
         if not config.skip_pyvm:
             print("interpreting with pyvm...")
             start = time.time()
@@ -223,9 +215,6 @@ def main(config: ScriptConfig):
             torch.cuda.synchronize()
             end = time.time()
             print(f"pyvm time: {end - start}")
-
-        # summarize_caches(globs_for_pyvm, "pyvm")
-        # summarize_caches(globs_for_kvm, "kvm")
 
         print("interpreting with kvm...")
         start = time.time()

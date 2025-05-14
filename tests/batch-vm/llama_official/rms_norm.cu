@@ -4,9 +4,9 @@ using namespace kittens;
 using namespace kittens::prototype;
 
 /*
-What do we need to do here... normalize entire hidden state vector 
-Need to prevent activation values from getting too large or small as go through layers 
-Calculate rms_norm for one entire hidden state 1 x LLAMA_8B_HIDDEN_DIM 
+What do we need to do here... normalize entire hidden state vector
+Need to prevent activation values from getting too large or small as go through layers
+Calculate rms_norm for one entire hidden state 1 x LLAMA_8B_HIDDEN_DIM
 */
 
 namespace kittens::prototype::vm
@@ -15,11 +15,9 @@ namespace kittens::prototype::vm
     using globals = llama_8b_globals;
 
     template <
-        auto activations_ptr,
         auto weights_ptr,
         auto outputs_ptr,
         int _opcode,
-        int _prev_opcode = 0,
         typename Config = kittens::prototype::vm::default_config>
     struct rms_op
     {
@@ -66,6 +64,8 @@ namespace kittens::prototype::vm
         };
         struct loader
         {
+            static __device__ inline void gmem_wait(const globals &g, state<Config> &s) {}
+
             static __device__ void run(const globals &g, state<Config> &s)
             {
                 if (warp::laneid() == 0)
@@ -82,10 +82,10 @@ namespace kittens::prototype::vm
                     // RMS scale
                     int weight_page = get_weight_page(s);
                     s.wait_page_ready(weight_page);
-                    auto &rms_scale = *reinterpret_cast<sv_bf<globals::hidden_dim>*>(s.pages[weight_page].ptr());
-                    s.record(TEVENT_TRIPLES_START);
+                    auto &rms_scale = *reinterpret_cast<sv_bf<globals::hidden_dim> *>(s.pages[weight_page].ptr());
+
                     tma::expect(weights_arrived(s), rms_scale);
-                    auto& weights_global = g.*weights_ptr;
+                    auto &weights_global = g.*weights_ptr;
                     tma::load_async(rms_scale, weights_global, {inst.layer_idx, 0}, weights_arrived(s));
 
                     // Activation
@@ -93,16 +93,13 @@ namespace kittens::prototype::vm
                     s.wait_page_ready(act_page);
                     s.record(TEVENT_AT_GMEM_WAIT);
 
-                    // TODO: Add barrier back in 
-                    // while (inst.layer_idx > 0 && *(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, 0}] < 512)
-                    //     __nanosleep(20);
+                    gmem_wait(g, s);
 
                     s.record(TEVENT_DONE_GMEM_WAIT);
-                    auto &activations = *reinterpret_cast<sv_bf<globals::hidden_dim>*>(s.pages[act_page].ptr());
-                    s.record(TEVENT_TRIPLES_START + 7);
+                    auto &activations = *reinterpret_cast<sv_bf<globals::hidden_dim> *>(s.pages[act_page].ptr());
+
                     tma::expect(activations_arrived(s), activations);
-                    auto& activations_global = g.*activations_ptr;
-                    tma::load_async(activations, activations_global, {inst.batch_idx, 0}, activations_arrived(s));
+                    tma::load_async(activations, g.hidden_states, {inst.batch_idx, 0}, activations_arrived(s));
                 }
 
                 else if (laneid() >= 2 && laneid() <= 12)
@@ -142,8 +139,8 @@ namespace kittens::prototype::vm
                 // Setup
                 parsed_instruction inst{s};
                 rv_fl<REDUCTION_DIM_PER_WARP> activations_vec, copy_activations_vec, rms_scale_vec;
-                sv_bf<REDUCTION_DIM_PER_WARP>* rms_scale_smem   = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP>*>(s.pages[get_weight_page(s)].ptr());
-                sv_bf<REDUCTION_DIM_PER_WARP>* activations_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP>*>(s.pages[get_activation_page(s)].ptr());
+                sv_bf<REDUCTION_DIM_PER_WARP> *rms_scale_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(s.pages[get_weight_page(s)].ptr());
+                sv_bf<REDUCTION_DIM_PER_WARP> *activations_smem = reinterpret_cast<sv_bf<REDUCTION_DIM_PER_WARP> *>(s.pages[get_activation_page(s)].ptr());
 
                 // Setup
                 wait(activations_arrived(s), 0);
@@ -208,11 +205,11 @@ namespace kittens::prototype::vm
                 {
                     wait(outputs_arrived(s), 0);
                     int activation_page = get_activation_page(s);
-                    auto &rms_activations = *reinterpret_cast<sv_bf<globals::hidden_dim>*>(s.pages[activation_page].ptr());
+                    auto &rms_activations = *reinterpret_cast<sv_bf<globals::hidden_dim> *>(s.pages[activation_page].ptr());
                     auto &outputs_global = g.*outputs_ptr;
                     tma::store_async<cache_policy::NORMAL>(outputs_global, rms_activations, {inst.batch_idx, 0});
-                    tma::store_async_wait(); 
-                    
+                    tma::store_async_wait();
+
                     s.finish_page(activation_page, Config::NUM_CONSUMER_WARPS);
                     s.finish_page(get_weight_page(s), Config::NUM_CONSUMER_WARPS);
                 }
@@ -220,8 +217,10 @@ namespace kittens::prototype::vm
                 warp::sync();
                 asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
 
-                if (warp::laneid() == 0)
-                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, inst.batch_idx / (int)globals::matmul_out_block_size}], 1);
+                if (warp::laneid() == 0) {
+                    auto batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
+                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, batch_block_idx, 0}], 1);
+                }
 
                 warp::sync();
                 if (laneid() == 0)
@@ -231,25 +230,68 @@ namespace kittens::prototype::vm
     };
 
     template <typename Config, typename globals>
-    struct pre_rms_norm : rms_op<
-                          &globals::hidden_states,
-                          &globals::attn_norm_weights,
-                          &globals::rms_rope_intermediates,
-                          OPCODE_RMS_NORM,
-                          OPCODE_RMS_NORM - 1,
-                          Config>
-    {};
+    struct attn_norm : rms_op<&globals::attn_norm_weights, &globals::rms_rope_intermediates, OPCODE_AttnNorm, Config>
+    {
+        using base_op = rms_op<&globals::attn_norm_weights, &globals::rms_rope_intermediates, OPCODE_AttnNorm, Config>;
+        struct loader : base_op::loader
+        {
+            static __device__ inline void gmem_wait(const globals &g, state<Config> &s)
+            {
+                typename base_op::parsed_instruction inst{s};
+                auto batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
+                if (inst.layer_idx > 0)
+                {
+                    while (*(volatile int *)&g.Bar[{inst.layer_idx - 1, OPCODE_DownProjResidual - 1, batch_block_idx, 0}] < globals::num_output_blocks)
+                    {
+                        __nanosleep(20);
+                    }
+                }
+            }
+        };
+    };
 
     template <typename Config, typename globals>
-    struct post_rms_norm : rms_op<
-                        &globals::hidden_states,
-                        &globals::mlp_norm_weights,
-                        &globals::rms_gate_intermediates,
-                        OPCODE_POST_RMS_NORM,
-                        OPCODE_POST_RMS_NORM - 1,
-                        Config>
-    {};
+    struct mlp_norm : rms_op<
+                          &globals::mlp_norm_weights,
+                          &globals::rms_gate_intermediates,
+                          OPCODE_MlpNorm,
+                          Config>
+    {
+        using base_op = rms_op<&globals::mlp_norm_weights, &globals::rms_gate_intermediates, OPCODE_MlpNorm, Config>;
+        struct loader : base_op::loader
+        {
+            static __device__ inline void gmem_wait(const globals &g, state<Config> &s)
+            {
+                typename base_op::parsed_instruction inst{s};
+                auto batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
+                while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_O_ProjResidual - 1, batch_block_idx, 0}] < globals::num_output_blocks)
+                {
+                    __nanosleep(20);
+                }
+            }
+        };
+    };
+
+    template <typename Config, typename globals>
+    struct lm_head_norm : rms_op<
+                              &globals::lm_head_norm_weights,
+                              &globals::rms_lm_head_intermediates,
+                              OPCODE_LM_HeadNorm,
+                              Config>
+    {
+        using base_op = rms_op<&globals::lm_head_norm_weights, &globals::rms_lm_head_intermediates, OPCODE_LM_HeadNorm, Config>;
+        struct loader : base_op::loader
+        {
+            static __device__ inline void gmem_wait(const globals &g, state<Config> &s)
+            {
+                typename base_op::parsed_instruction inst{s};
+                auto batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
+                while (*(volatile int *)&g.Bar[{globals::num_hidden_layers - 1, OPCODE_DownProjResidual - 1, batch_block_idx, 0}] < globals::num_output_blocks)
+                {
+                    __nanosleep(20);
+                }
+            }
+        };
+    };
+
 }
-
-
-

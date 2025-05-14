@@ -39,6 +39,7 @@ def interpret_with_kvm(
         globs.post_ln_rope_q,
         globs.attn_out,
         globs.silu_out,
+        globs.rms_lm_head_intermediates,
         globs.logits,
         globs.pos_id,
         globs.attn_scale,

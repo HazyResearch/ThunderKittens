@@ -100,7 +100,6 @@ def make_globals(
         hidden_size=config.hidden_size,
         intermediate_size=config.intermediate_size,
         # block sizes
-        max_barriers=config.num_attention_heads + config.num_key_value_heads * 2,
         up_gate_proj_block_size=16,
         down_proj_block_size=16,
         qkv_block_size=16,

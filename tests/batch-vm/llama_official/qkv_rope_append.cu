@@ -94,7 +94,7 @@ struct qkv_rope_append {
                     s.finish_page(weight_page + 1, Config::NUM_CONSUMER_WARPS);
                 }
             } else if (laneid == 1) { // load activations
-                while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_RMS_NORM - 1, inst.batch_start_idx}] < Globals::matmul_out_block_size)
+                while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_AttnNorm - 1, inst.batch_start_idx, 0}] < Globals::matmul_batch_block_size)
                     __nanosleep(20);
 
                 uint32_t phasebits = 0xFFFF0000;
@@ -256,7 +256,13 @@ struct qkv_rope_append {
                 tma::store_async_wait();
                 s.finish_page(output_page, Config::NUM_CONSUMER_WARPS);
                 s.finish_page(output_page + 1, Config::NUM_CONSUMER_WARPS);
-                atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, inst.block_idx}], 1);
+                
+                auto start_bar = (inst.block_idx * Globals::matmul_out_block_size) / Globals::head_dim;
+                auto num_generated_heads = Globals::matmul_out_block_size / Globals::head_dim;
+                for (int i = 0; i < num_generated_heads; i++) {
+                    g.Bar[{inst.layer_idx, opcode - 1, static_cast<int>(inst.batch_start_idx), start_bar + i}] = 1;
+                }
+                
             }
         }
     };

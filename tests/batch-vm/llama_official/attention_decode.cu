@@ -233,12 +233,19 @@ namespace kittens::prototype::vm {
                 if (laneid == 0)
                 {
                     s.record(TEVENT_AT_GMEM_WAIT);
-                    // Wait for the previous ops to finish (16 dims each, so 4 ops on the same head)
-                    // while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, globals::num_attention_heads + inst.kv_head_idx}] < 1 ||                        // K
-                    //        *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, globals::num_attention_heads + globals::num_kv_heads + inst.kv_head_idx}] < 1) // V
-                    // {
-                    //     __nanosleep(20);
-                    // }
+
+                    auto batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
+
+                    // K
+                    while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, batch_block_idx, globals::num_attention_heads + inst.kv_head_idx}] < 1) {
+                        __nanosleep(20);
+                    }
+
+                    // V
+                    while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, batch_block_idx, globals::num_attention_heads + globals::num_kv_heads + inst.kv_head_idx}] < 1) {
+                        __nanosleep(20);
+                    }
+
                     s.record(TEVENT_DONE_GMEM_WAIT);
 
                     // Wait for the KV page
@@ -296,18 +303,13 @@ namespace kittens::prototype::vm {
 
                 if (warpid() == 0)
                 {
-                    // Wait for the previous ops to finish
-                    // while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, q_head_start_idx + 0}] < 1 ||
-                    //        *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, q_head_start_idx + 1}] < 1 ||
-                    //        *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, q_head_start_idx + 2}] < 1 ||
-                    //        *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, q_head_start_idx + 3}] < 1 ||
-                    //        *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, q_head_start_idx + 4}] < 1 ||
-                    //        *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, q_head_start_idx + 5}] < 1 ||
-                    //        *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, q_head_start_idx + 6}] < 1 ||
-                    //        *(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, q_head_start_idx + 7}] < 1)
-                    // {
-                    //     __nanosleep(20);
-                    // }
+
+                    auto batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
+                    for (int i = 0; i < GQA_RATIO; i++) {
+                        while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, batch_block_idx, inst.kv_head_idx * GQA_RATIO + i}] < 1) {
+                            __nanosleep(20);
+                        }
+                    }
 
                     // Initiate the load on Q
                     int q_head_start_idx = inst.kv_head_idx * GQA_RATIO;
@@ -441,8 +443,9 @@ namespace kittens::prototype::vm {
                 warp::sync(); // ensure all writes are committed
                 asm volatile("{fence.acq_rel.gpu;}");
                 if (laneid == 0) {
+                    auto batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
                     s.record(TEVENT_STORE_END);
-                    atomicAdd(&g.Bar[{inst.layer_idx, OPCODE_GQA_AttentionDecode - 1, q_head_start_idx}], 1); // this is sufficient
+                    atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, batch_block_idx, 0}], 1); // this is sufficient
                 }
             }
         };

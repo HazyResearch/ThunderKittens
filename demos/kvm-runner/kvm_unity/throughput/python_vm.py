@@ -1,7 +1,6 @@
 import torch
 import torch.nn.functional as F
 from einops import einsum, rearrange
-from kvm_unity.instructions import Instruction
 from kvm_unity.llama import (
     apply_rotary_pos_emb,
 )
@@ -46,23 +45,27 @@ def pre_attn_layer_norm(
     instruction: PreAttnLayerNorm,
 ):
     layer_idx = instruction.layer_idx
-    batch_start_idx = instruction.batch_start_idx
+    batch_idx = instruction.batch_start_idx
+    batch_block_idx = batch_idx // globals.matmul_batch_block_size
 
     if layer_idx > 0:
-        assert globals.barriers[
-            layer_idx - 1, instruction.prev_opcode() - 1, batch_start_idx - 1, 0
-        ] == assert_div(globals.hidden_size, globals.matmul_batch_block_size)
+        assert (
+            globals.barriers[
+                layer_idx - 1, instruction.prev_opcode() - 1, batch_block_idx, 0
+            ]
+            == globals.num_output_blocks()
+        )
 
     pre_attn_ln = rms_norm(
-        inp=globals.hidden_states[batch_start_idx],
+        inp=globals.hidden_states[batch_idx],
         weight=globals.attn_ln_weights[layer_idx],
         eps=globals.rms_norm_eps,
     )
 
-    globals.rms_rope_intermediates[batch_start_idx] = pre_attn_ln
+    globals.rms_rope_intermediates[batch_idx] = pre_attn_ln
 
     # barrier update
-    batch_block_idx = batch_start_idx // globals.matmul_batch_block_size
+    batch_block_idx = batch_idx // globals.matmul_batch_block_size
     globals.barriers[layer_idx, instruction.opcode() - 1, batch_block_idx, 0] += 1
 
 
@@ -124,7 +127,7 @@ def qkv_matmul_rope_append(
 
         output = rearrange(with_rope, "... h d -> ... (h d)")
 
-    num_generated_heads = assert_div(end - start, globals.head_dim)
+    num_generated_heads = assert_div(globals.matmul_output_block_size, globals.head_dim)
 
     if mode == "q":
         assert end <= k_start
@@ -152,14 +155,16 @@ def qkv_matmul_rope_append(
             ] = arr
 
     # Barrier update
-    start_bar = batch_start_row // globals.head_dim
+    start_bar = output_start_col // globals.head_dim
     end_bar = start_bar + num_generated_heads
+
+    # the asserts are checking 1, so we can assign and not increment
     globals.barriers[
         instruction.layer_idx,
         instruction.opcode() - 1,
         instruction.batch_start_idx,
         start_bar:end_bar,
-    ] += 1
+    ] = 1
 
 
 def attention_decode(
@@ -170,33 +175,31 @@ def attention_decode(
     batch_idx = instruction.batch_start_idx
     kv_head_idx = instruction.kv_head_idx
 
-    batch_start_row, batch_end_row = get_start_end(
-        globals.matmul_output_block_size, batch_idx
-    )
-
     gqa_ratio = globals.num_attention_heads // globals.num_kv_heads
     seq_len = globals.pos_id + 1
 
     q_head_start, q_head_end = get_start_end(gqa_ratio, kv_head_idx)
 
     # barrier check
-    bar_idx = batch_idx // globals.matmul_batch_block_size
-    bars = globals.barriers[layer_idx, instruction.prev_opcode() - 1, bar_idx]
+    batch_block_idx = batch_idx // globals.matmul_batch_block_size
+    bars = globals.barriers[layer_idx, instruction.prev_opcode() - 1, batch_block_idx]
     for i in range(gqa_ratio):
-        assert bars[kv_head_idx * gqa_ratio + i] == 8
-    assert bars[globals.num_attention_heads + kv_head_idx] == 8
-    assert bars[globals.num_attention_heads + globals.num_kv_heads + kv_head_idx] == 8
+        assert bars[kv_head_idx * gqa_ratio + i] == 1
+    assert bars[globals.num_attention_heads + kv_head_idx] == 1
+    assert bars[globals.num_attention_heads + globals.num_kv_heads + kv_head_idx] == 1
 
     all_q = rearrange(
-        globals.post_ln_rope_q[batch_idx], "b (h d) -> b h d", d=globals.head_dim
+        globals.post_ln_rope_q[batch_idx],
+        "(h d) -> h d",
+        d=globals.head_dim,
     )
 
-    q = all_q[batch_start_row:batch_end_row, q_head_start:q_head_end]
+    q = all_q[q_head_start:q_head_end]
 
-    k = globals.k_cache[layer_idx, batch_start_row:batch_end_row, :seq_len, kv_head_idx]
-    v = globals.v_cache[layer_idx, batch_start_row:batch_end_row, :seq_len, kv_head_idx]
+    k = globals.k_cache[layer_idx, batch_idx, :seq_len, kv_head_idx]
+    v = globals.v_cache[layer_idx, batch_idx, :seq_len, kv_head_idx]
 
-    qk = einsum(q.float(), k.float(), "b qheads i, seqlen i -> b qheads seqlen")
+    qk = einsum(q.float(), k.float(), "qheads i, seqlen i -> qheads seqlen")
     scaled_qk = qk * globals.attn_scale
 
     # casting the output of the softmax to 16-bit causes small numerical differences
@@ -205,12 +208,12 @@ def attention_decode(
     # lse = torch.logsumexp(scaled_qk, dim=-1)
     # lse = torch.log2(torch.sum(torch.exp(scaled_qk), dim=-1))
 
-    out = einsum(softmax.float(), v.float(), "b qheads seqlen, seqlen o -> b qheads o")
+    out = einsum(softmax.float(), v.float(), "qheads seqlen, seqlen o -> qheads o")
 
-    all_out = rearrange(globals.attn_out, "b (h d) -> b h d", d=globals.head_dim)
-    all_out[batch_start_row:batch_end_row, q_head_start:q_head_end] = out
+    all_out = rearrange(globals.attn_out[batch_idx], "(h d) -> h d", d=globals.head_dim)
+    all_out[q_head_start:q_head_end] = out
 
-    globals.barriers[layer_idx, instruction.opcode() - 1, bar_idx, 0] += 1
+    globals.barriers[layer_idx, instruction.opcode() - 1, batch_block_idx, 0] += 1
 
 
 def o_proj_residual(
@@ -226,9 +229,9 @@ def o_proj_residual(
         globals.matmul_output_block_size, instruction.output_block_idx
     )
 
-    op_barriers = globals.barriers[layer_idx, instruction.prev_opcode() - 1, batch_idx]
     assert (
-        op_barriers[0] == globals.num_attention_heads * globals.matmul_batch_block_size
+        globals.barriers[layer_idx, instruction.prev_opcode() - 1, batch_idx, 0]
+        == globals.matmul_batch_block_size * globals.num_kv_heads
     )
 
     matmul_with_residual(
@@ -250,10 +253,12 @@ def pre_mlp_layer_norm(
 ):
     layer_idx = instruction.layer_idx
     batch_idx = instruction.batch_start_idx
+    batch_block_idx = batch_idx // globals.matmul_batch_block_size
 
-    assert globals.barriers[
-        layer_idx - 1, instruction.prev_opcode() - 1, batch_idx - 1, 0
-    ] == assert_div(globals.hidden_size, globals.matmul_batch_block_size)
+    assert (
+        globals.barriers[layer_idx, instruction.prev_opcode() - 1, batch_block_idx, 0]
+        == globals.num_output_blocks()
+    )
 
     post_norm = rms_norm(
         inp=globals.hidden_states[batch_idx],
@@ -429,11 +434,9 @@ def lm_head(
 
     assert (
         globals.barriers[
-            globals.num_hidden_layers - 1,
-            instruction.prev_opcode() - 1,
-            batch_idx - 1,
+            globals.num_hidden_layers - 1, instruction.prev_opcode() - 1, batch_idx, 0
         ]
-        == globals.hidden_size
+        == globals.matmul_batch_block_size
     )
 
     matmul_output = matmul(
