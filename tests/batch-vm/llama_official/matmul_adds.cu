@@ -94,8 +94,8 @@ namespace kittens::prototype::vm
                 int store_bar = 10 + s.instruction_index%2;
                 auto &smem = *reinterpret_cast<st_bf<16, 256>*>(s.scratch());
                 for(int i = 0; i < config::NUM_CONSUMER_WARPS; i++) {
-                    constorer::sync(store_bar); // await arrive from consumer
                     auto &OutputActivations = g.*OutputActivationsPtr;
+                    constorer::sync(store_bar); // await arrive from consumer
                     warp::tma::store_add_async(OutputActivations, smem, {16*inst.row + 8*(i>=8) + 2*(i%4) + ((i%8)/4), inst.col});
                     tma::store_async_read_wait();
                     constorer::sync(store_bar); // release back to consumer
@@ -134,7 +134,7 @@ namespace kittens::prototype::vm
                         &Globals::attn_out,
                         &Globals::o_weights,
                         &Globals::hidden_states,
-                        Globals::hidden_dim / Globals::matmul_out_block_size,
+                        Globals::hidden_dim / 64,
                         OPCODE_O_ProjResidual,
                         o_proj_gmem_waiter,
                         config>
@@ -158,7 +158,7 @@ namespace kittens::prototype::vm
                           &Globals::silu_out,
                           &Globals::down_weights,
                           &Globals::hidden_states,
-                          Globals::intermediate_dim / Globals::matmul_out_block_size,
+                          Globals::intermediate_dim / 64,
                           OPCODE_DownProjResidual,
                           downproj_gmem_waiter,
                           config>

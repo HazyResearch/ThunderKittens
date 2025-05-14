@@ -62,7 +62,6 @@ struct matmul_pipeline {
 
     __device__ static inline void loader_loop(state<Config> &s, const Globals &g) {
         parsed_instruction inst{s};
-
         auto needed_pages = min(Num_Iters, INPUT_PIPELINE_STAGES) * 2;
 
         if (laneid() == 0) {

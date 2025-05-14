@@ -36,8 +36,8 @@ def make_globals(
     extra_config = model.extra_config
     bs = extra_config.max_batch_size
 
-    matmul_batch_block_size = 128
-    matmul_output_block_size = 128
+    matmul_batch_block_size = 256
+    matmul_output_block_size = 256
     norm_block_size = 16
 
     barriers = torch.zeros(
