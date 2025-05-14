@@ -40,7 +40,21 @@ class Globals(BaseGlobals):
 
 
 @dataclass
-class PreAttnLayerNorm(Instruction):
+class ComputeInstruction(Instruction):
+    @classmethod
+    def tags(cls):
+        return {"pool": "compute"}
+
+
+@dataclass
+class MemoryInstruction(Instruction):
+    @classmethod
+    def tags(cls):
+        return {"pool": "memory"}
+
+
+@dataclass
+class PreAttnLayerNorm(MemoryInstruction):
     """
     pre-attention layernorm
     """
@@ -58,7 +72,7 @@ class PreAttnLayerNorm(Instruction):
 
 
 @dataclass
-class QKV_MatMulRopeAppend(Instruction):
+class QKV_MatMulRopeAppend(ComputeInstruction):
     """
     attention: qkv matmul + rope on q and k + append k and v to kv cache
     """
@@ -77,7 +91,7 @@ class QKV_MatMulRopeAppend(Instruction):
 
 
 @dataclass
-class AttentionDecode(Instruction):
+class AttentionDecode(MemoryInstruction):
     layer_idx: int
     batch_start_idx: int
     kv_head_idx: int
@@ -92,7 +106,7 @@ class AttentionDecode(Instruction):
 
 
 @dataclass
-class MatMulAdd(Instruction):
+class MatMulAdd(ComputeInstruction):
     layer_idx: int
     batch_start_idx: int
     output_block_idx: int
@@ -113,7 +127,7 @@ class O_ProjResidual(MatMulAdd):
 
 
 @dataclass
-class PreMLP_Norm(Instruction):
+class PreMLP_Norm(MemoryInstruction):
     """
     layernorm pre-mlp
     """
@@ -131,7 +145,7 @@ class PreMLP_Norm(Instruction):
 
 
 @dataclass
-class GateSilu(Instruction):
+class GateSilu(ComputeInstruction):
     """
     matmul + silu
     """
@@ -150,7 +164,7 @@ class GateSilu(Instruction):
 
 
 @dataclass
-class UpMatMul(Instruction):
+class UpMatMul(ComputeInstruction):
     """
     matmul + gate
     """
@@ -180,7 +194,7 @@ class DownProjResidual(MatMulAdd):
 
 
 @dataclass
-class PreLMHeadRMS(Instruction):
+class PreLMHeadRMS(MemoryInstruction):
     # layer idx is fake but convenient so we can reuse cuda code
     layer_idx: int
     batch_start_idx: int
@@ -195,7 +209,7 @@ class PreLMHeadRMS(Instruction):
 
 
 @dataclass
-class LM_Head(Instruction):
+class LM_Head(ComputeInstruction):
     batch_start_idx: int
     output_block_idx: int
 

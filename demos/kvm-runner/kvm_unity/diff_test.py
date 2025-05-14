@@ -185,12 +185,11 @@ def main(config: ScriptConfig):
     else:
         cost_per_sm = None
 
-    tensorize_instructions(
-        gpy, assigned_to_sms, barrier_init_val=config.barrier_init_val
-    )
-    tensorize_instructions(
-        gkvm, assigned_to_sms, barrier_init_val=config.barrier_init_val
-    )
+    tensorize_instructions(gpy, assigned_to_sms)
+    tensorize_instructions(gkvm, assigned_to_sms)
+
+    gpy.barriers.fill_(config.barrier_init_val)
+    gkvm.barriers.fill_(config.barrier_init_val)
 
     if config.noops:
         gpy.instructions.zero_()
