@@ -9,6 +9,8 @@ namespace kittens::prototype::vm {
 using globals = llama_8b_globals;
 using config = llama_config;
 
+struct qkv_gmem_waiter;
+
 template <typename Config, typename Globals>
 struct qkv_rope_append {
     static constexpr int opcode = OPCODE_QKV_RopeAppend;
@@ -29,16 +31,6 @@ struct qkv_rope_append {
             col = instruction[3];
         }
         __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
-    };
-    struct qkv_gmem_waiter {
-        template <typename _Config, typename _Globals, typename _instruction_t>
-        static __device__ inline void gmem_wait(const _Globals &g, state<_Config> &s, _instruction_t &inst)
-        {
-            while (*(volatile int *)&g.Bar[{inst.layer, OPCODE_AttnNorm - 1, inst.row, 0}] < Globals::matmul_batch_block_size)
-            {
-                __nanosleep(20);
-            }
-        }
     };
 
     using matmul_pipeline = matmul_pipeline<Config, Globals, parsed_instruction, qkv_gmem_waiter, &Globals::rms_rope_intermediates, &Globals::qkv_weights, NUM_ITERS>;
@@ -194,17 +186,25 @@ struct qkv_rope_append {
             {
                 int rope_page = matmul_pipeline::get_used_page_at(5);
                 s.finish_page(rope_page, config::NUM_CONSUMER_WARPS);
+                // int start_bar = (inst.col * Globals::matmul_out_block_size) / Globals::head_dim;
+                // int num_generated_heads = Globals::matmul_out_block_size / Globals::head_dim;
+                // for (int i = 0; i < num_generated_heads; i++) {
+                //     atomicAdd(&g.Bar[{inst.layer, opcode - 1, inst.row, start_bar + i}], 1);
+                // }
             }
         }
     };
 };
 
+struct qkv_gmem_waiter {
+    template <typename config, typename Globals, typename instruction_t>
+    static __device__ inline void gmem_wait(const Globals &g, state<config> &s, instruction_t &inst)
+    {
+        while (*(volatile int *)&g.Bar[{inst.layer, OPCODE_AttnNorm - 1, inst.row, 0}] < Globals::matmul_batch_block_size)
+        {
+            __nanosleep(20);
+        }
+    }
+};
+
 }
-
-/*
-If I'm still working with the same head dim but Im now modifying my code to work with 256 x 256 tiles at a time, and each warp in the consumer has a 
-
-rt_fl<16, 256> out_fl, out_rotated_fl;
-
-16 x 256 tile. How can I modify this code to easily still apply rope to my 16 x 256 tile with the same vector of 128? 
-*/
