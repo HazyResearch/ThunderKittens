@@ -6,7 +6,7 @@ namespace kittens::prototype::vm {
 
 static constexpr int PIPELINE_K_DIM = 64;
 
-template <typename Config, typename Globals, typename parsed_instruction, typename gmem_waiter, auto A_Ptr, auto B_Ptr, int Num_Iters>
+template <typename Config, typename Globals, typename parsed_instruction, typename gmem_waiter, auto A_Ptr, auto B_Ptr, int _num_iters>
 struct matmul_pipeline {
     static_assert(Config::NUM_CONSUMER_WARPS == 16);
     static_assert(Config::PAGE_SIZE == 32768);
@@ -19,7 +19,6 @@ struct matmul_pipeline {
 
     static constexpr int SEM_COUNT = 2 * INPUT_PIPELINE_STAGES + 1;
 
-    // Pages (very naive for now, no fine-grained usage)
     __device__ static inline int get_a_page(state<Config> &s, int stage) { return s.pid(2*stage); }
     __device__ static inline int get_b_page(state<Config> &s, int stage) { return s.pid(2*stage + 1); }
 
@@ -29,7 +28,7 @@ struct matmul_pipeline {
 
     // Helper to get what page is released at certain stage 
     __device__ static inline int get_used_page_at(int idx) {
-        auto iters = Num_Iters;
+        auto iters = _num_iters;
         auto remainder = iters % INPUT_PIPELINE_STAGES;
 
         if(remainder == 0) {
@@ -55,7 +54,7 @@ struct matmul_pipeline {
 
         parsed_instruction inst{instruction};
         
-        auto remainder = Num_Iters % INPUT_PIPELINE_STAGES;
+        auto remainder = _num_iters % INPUT_PIPELINE_STAGES;
 
         if(remainder == 0) {
             int ret_order[6] = {0,1,2,3,4,5};
@@ -76,6 +75,7 @@ struct matmul_pipeline {
     }
 
     __device__ static inline int init_semaphores(state<Config> &s) {
+        #pragma unroll
         for (int i = 0; i < INPUT_PIPELINE_STAGES; i++) {
             init_semaphore(inputs_arrived(s, i), 1);
             init_semaphore(inputs_finished(s, i), 2);
@@ -87,12 +87,13 @@ struct matmul_pipeline {
     template <int _stages_to_not_release = 0>
     __device__ static inline void loader_loop(state<Config> &s, const Globals &g, int layer_idx = 0) {
         parsed_instruction inst{s};
-        auto needed_pages = min(Num_Iters, INPUT_PIPELINE_STAGES) * 2;
+        auto needed_pages = min(_num_iters, INPUT_PIPELINE_STAGES) * 2;
 
         if (laneid() == 0) {
 
             int input_stage = 0;
-            for (int iter = 0; iter < Num_Iters; iter++) {
+            #pragma unroll
+            for (int iter = 0; iter < _num_iters; iter++) {
                 wait(inputs_finished(s, input_stage), (iter % (2 * INPUT_PIPELINE_STAGES)) < INPUT_PIPELINE_STAGES);
 
                 auto &sem = inputs_arrived(s, input_stage);
@@ -116,11 +117,12 @@ struct matmul_pipeline {
                 // Advance
                 input_stage = (input_stage + 1) % INPUT_PIPELINE_STAGES;
             }
+            #pragma unroll
             for(int i = 0; i < INPUT_PIPELINE_STAGES; i++) {
-                wait(inputs_finished(s, input_stage), ((Num_Iters+i) % (2 * INPUT_PIPELINE_STAGES)) < INPUT_PIPELINE_STAGES);
+                wait(inputs_finished(s, input_stage), ((_num_iters+i) % (2 * INPUT_PIPELINE_STAGES)) < INPUT_PIPELINE_STAGES);
                 if(i == INPUT_PIPELINE_STAGES-1) arrive(outputs_arrived(s)); // signal done with matmuls.
                 int a_page = get_a_page(s, input_stage), b_page = get_b_page(s, input_stage);
-                if(i < INPUT_PIPELINE_STAGES-Num_Iters) {
+                if(i < INPUT_PIPELINE_STAGES-_num_iters) {
                     s.wait_page_ready(a_page);
                     s.wait_page_ready(b_page);
                 }
@@ -143,7 +145,8 @@ struct matmul_pipeline {
 
         if(laneid() < 2) {
             int input_stage = 0;
-            for (int i = 0; i < Num_Iters; i++) {
+            #pragma unroll
+            for (int i = 0; i < _num_iters; i++) {
                 int a_page = get_a_page(s, input_stage), b_page = get_b_page(s, input_stage);
                 wait(inputs_arrived(s, input_stage), (i % (2 * INPUT_PIPELINE_STAGES)) >= INPUT_PIPELINE_STAGES);
                 a_st (&a_smem)[2] = reinterpret_cast<a_st(&)[2]>(s.pages[a_page]);
