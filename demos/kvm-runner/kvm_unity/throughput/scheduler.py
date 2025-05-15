@@ -117,21 +117,21 @@ def schedule_qkv_matmul_rope_append(
 ) -> tuple[list[Instruction], bool]:
     instructions: list[Instruction] = []
 
-    num_batch_blocks = assert_div(globs.batch_size, globs.matmul_batch_block_size)
     num_qkv_blocks = assert_div(
         globs.qkv_dim(),
         globs.matmul_output_block_size,
     )
 
-    for bidx in range(0, num_batch_blocks):
+    for super_m in range(0, globs.batch_size, 4096):
         for qkv_block_idx in range(num_qkv_blocks):
-            instructions.append(
-                QKV_MatMulRopeAppend(
-                    layer_idx=layer_idx,
-                    batch_start_idx=bidx,
-                    qkv_block_idx=qkv_block_idx,
+            for m256 in range(super_m, min(super_m+4096, globs.batch_size), 256):
+                instructions.append(
+                    QKV_MatMulRopeAppend(
+                        layer_idx=layer_idx,
+                        batch_start_idx=m256//256,
+                        qkv_block_idx=qkv_block_idx,
+                    )
                 )
-            )
 
     return instructions
 
@@ -151,6 +151,7 @@ def schedule_attention_decode(
                     kv_head_idx=kv_head_idx,
                 ),
             )
+
     return instructions
 
 
@@ -160,15 +161,16 @@ def schedule_o_proj_residual(
 ) -> tuple[list[Instruction], bool]:
     instructions: list[Instruction] = []
 
-    for bidx in range(globs.num_batch_blocks()):
+    for super_m in range(0, globs.batch_size, 4096):
         for o_block_idx in range(globs.num_output_blocks()):
-            instructions.append(
-                O_ProjResidual(
-                    layer_idx=layer_idx,
-                    batch_start_idx=bidx,
-                    output_block_idx=o_block_idx,
+            for m256 in range(super_m, min(super_m+4096, globs.batch_size), 256):
+                instructions.append(
+                    O_ProjResidual(
+                        layer_idx=layer_idx,
+                        batch_start_idx=m256//256,
+                        output_block_idx=o_block_idx,
+                    )
                 )
-            )
 
     return instructions
 
@@ -196,15 +198,16 @@ def schedule_gate_silu(
 ) -> tuple[list[Instruction], bool]:
     instructions: list[Instruction] = []
 
-    for bidx in range(globs.num_batch_blocks()):
+    for super_m in range(0, globs.batch_size, 4096):
         for block_idx in range(globs.num_intermediate_blocks()):
-            instructions.append(
-                GateSilu(
-                    layer_idx=layer_idx,
-                    batch_start_idx=bidx,
-                    output_block_idx=block_idx,
+            for m256 in range(super_m, min(super_m+4096, globs.batch_size), 256):
+                instructions.append(
+                    GateSilu(
+                        layer_idx=layer_idx,
+                        batch_start_idx=m256//256,
+                        output_block_idx=block_idx,
+                    )
                 )
-            )
 
     return instructions
 
@@ -215,15 +218,16 @@ def schedule_up_matmul(
 ) -> tuple[list[Instruction], bool]:
     instructions: list[Instruction] = []
 
-    for bidx in range(globs.num_batch_blocks()):
+    for super_m in range(0, globs.batch_size, 4096):
         for block_idx in range(globs.num_intermediate_blocks()):
-            instructions.append(
-                UpMatMul(
-                    layer_idx=layer_idx,
-                    batch_start_idx=bidx,
-                    output_block_idx=block_idx,
+            for m256 in range(super_m, min(super_m+4096, globs.batch_size), 256):
+                instructions.append(
+                    UpMatMul(
+                        layer_idx=layer_idx,
+                        batch_start_idx=m256//256,
+                        output_block_idx=block_idx,
+                    )
                 )
-            )
 
     return instructions
 
@@ -234,15 +238,17 @@ def schedule_down_proj_residual(
 ) -> tuple[list[Instruction], bool]:
     instructions: list[Instruction] = []
 
-    for bidx in range(globs.num_batch_blocks()):
+    for super_m in range(0, globs.batch_size, 4096):
         for down_block_idx in range(globs.num_output_blocks()):
-            instructions.append(
-                DownProjResidual(
-                    layer_idx=layer_idx,
-                    batch_start_idx=bidx,
-                    output_block_idx=down_block_idx,
+            for m256 in range(super_m, min(super_m+4096, globs.batch_size), 256):
+                instructions.append(
+                    DownProjResidual(
+                        layer_idx=layer_idx,
+                        batch_start_idx=m256//256,
+                        output_block_idx=down_block_idx,
+                    )
                 )
-            )
+
     return instructions
 
 
@@ -267,14 +273,15 @@ def schedule_lm_head(
 ) -> tuple[list[Instruction], bool]:
     instructions: list[Instruction] = []
 
-    for bidx in range(globs.num_batch_blocks()):
+    for super_m in range(0, globs.batch_size, 4096):
         for logit_block_idx in range(globs.num_vocab_blocks()):
-            instructions.append(
-                LM_Head(
-                    batch_start_idx=bidx,
-                    output_block_idx=logit_block_idx,
+            for m256 in range(super_m, min(super_m+4096, globs.batch_size), 256):
+                instructions.append(
+                    LM_Head(
+                        batch_start_idx=m256//256,
+                        output_block_idx=logit_block_idx,
+                    )
                 )
-            )
 
     return instructions
 
