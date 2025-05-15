@@ -35,16 +35,13 @@ namespace kittens::prototype::vm
 
         struct controller {
             static __device__ int release_lid(const globals &g, typename config::instruction_t &instruction, int &query) {
-                // how to handle this if also allocating a page outside of pipeline?
                 return matmul_pipeline::release_lid(g, instruction, query);
-                // return query; 
             }
             static __device__ int init_semaphores(const globals &g, state<config> &s) {
                 for (int i = 0; i < 2; i++) {
                     init_semaphore(silu_arrived(s, i), 1);
                 }
                 return matmul_pipeline::init_semaphores(s) + 2; // +2 for silu_arrived
-                // return matmul_pipeline::init_semaphores(s);
             }
         };
 
