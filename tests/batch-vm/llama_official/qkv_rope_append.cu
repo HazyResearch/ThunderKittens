@@ -184,10 +184,6 @@ struct qkv_rope_append {
 
             if (kittens::laneid() == 0)
             {
-                // int rope_page = matmul_pipeline::get_used_page_at(5);
-                // s.finish_page(rope_page, config::NUM_CONSUMER_WARPS);
-
-                // Including this causes CUDA errors if running full suite
                 int start_bar = (inst.col * Globals::matmul_out_block_size) / Globals::head_dim;
                 int num_generated_heads = Globals::matmul_out_block_size / Globals::head_dim;
                 for (int i = 0; i < num_generated_heads; i++) {
