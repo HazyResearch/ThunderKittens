@@ -53,6 +53,7 @@ namespace kittens::prototype::vm
 
                 // // Once this loop is done, all pages used are released and ready for reuse.
                 matmul_pipeline::template loader_loop<2>(s, g, inst.layer);
+                // matmul_pipeline::template loader_loop<0>(s, g, inst.layer);
 
                 // /*
                 // If specify two in loader_loop, now have FOUR free pages here:
@@ -60,7 +61,7 @@ namespace kittens::prototype::vm
                 warp::sync(); // need to sync here 
                 if (kittens::laneid() < 2) {
                     int unfreed_page_base = matmul_pipeline::get_used_page_at(2 + (2 * laneid()));
-                    silu_tile &silu_out = *reinterpret_cast<silu_tile *>(s.pages[unfreed_page_base].data);
+                    silu_tile &silu_out = *reinterpret_cast<silu_tile *>(s.pages[s.pid(unfreed_page_base)].data);
 
                     while (*(volatile int *)&g.Bar[{inst.layer, OPCODE_GateSiLU - 1, inst.row, inst.col}] < 1)
                     {
@@ -94,7 +95,7 @@ namespace kittens::prototype::vm
                 wait(silu_arrived(s, half_consumer::groupid()), 0);
                 
                 int unfreed_page_base = matmul_pipeline::get_used_page_at(2 + (2 * half_consumer::groupid()));
-                silu_tile &silu_out = *reinterpret_cast<silu_tile *>(s.pages[unfreed_page_base].data);
+                silu_tile &silu_out = *reinterpret_cast<silu_tile *>(s.pages[s.pid(unfreed_page_base)].data);
                 half_consumer::load(silu_fl, silu_out);
 
                 half_consumer::mul(out_fl, out_fl, silu_fl);
@@ -133,8 +134,8 @@ namespace kittens::prototype::vm
                 // Need to free gate_silu pages
                 if (kittens::laneid() < 2) {
                     int unfreed_page_base = matmul_pipeline::get_used_page_at(2 + (2 * laneid()));
-                    s.finish_page(unfreed_page_base, config::NUM_CONSUMER_WARPS);
-                    s.finish_page(unfreed_page_base + 1, config::NUM_CONSUMER_WARPS);
+                    s.finish_page(s.pid(unfreed_page_base), config::NUM_CONSUMER_WARPS);
+                    s.finish_page(s.pid(unfreed_page_base + 1), config::NUM_CONSUMER_WARPS);
                 }
 
                 warp::sync();
