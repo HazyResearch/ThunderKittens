@@ -1,4 +1,5 @@
 from dataclasses import dataclass, fields
+from typing import Any
 
 from kvm_runner.model_types import DeviceType
 from kvm_runner.utils import get_sm_count
@@ -87,6 +88,10 @@ class Instruction:
     @classmethod
     def prev_opcode(cls) -> int:
         raise NotImplementedError
+
+    @classmethod
+    def tags(cls) -> dict[str, Any]:
+        return {}
 
     def serialize(self):
         words = [self.opcode()]
