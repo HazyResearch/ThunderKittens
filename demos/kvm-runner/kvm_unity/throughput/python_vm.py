@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 from einops import einsum, rearrange
 from kvm_unity.llama import (
-    apply_rotary_pos_emb,
+    apply_rotary_pos_emb_interleaved,
 )
 from kvm_unity.python_vm import get_start_end, rms_norm
 from kvm_unity.throughput.instructions import (
@@ -117,7 +117,7 @@ def qkv_matmul_rope_append(
         arr = rearrange(output, "... (h d) -> ... h d", d=globals.head_dim)
 
         # not interleaved for big-batch version
-        with_rope, _ = apply_rotary_pos_emb(
+        with_rope, _ = apply_rotary_pos_emb_interleaved(
             q=arr,
             k=arr,
             cos=globals.rope_cos[pos_id],
