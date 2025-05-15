@@ -186,11 +186,13 @@ struct qkv_rope_append {
             {
                 int rope_page = matmul_pipeline::get_used_page_at(5);
                 s.finish_page(rope_page, config::NUM_CONSUMER_WARPS);
-                // int start_bar = (inst.col * Globals::matmul_out_block_size) / Globals::head_dim;
-                // int num_generated_heads = Globals::matmul_out_block_size / Globals::head_dim;
-                // for (int i = 0; i < num_generated_heads; i++) {
-                //     atomicAdd(&g.Bar[{inst.layer, opcode - 1, inst.row, start_bar + i}], 1);
-                // }
+
+                // Including this causes CUDA errors if running full suite
+                int start_bar = (inst.col * Globals::matmul_out_block_size) / Globals::head_dim;
+                int num_generated_heads = Globals::matmul_out_block_size / Globals::head_dim;
+                for (int i = 0; i < num_generated_heads; i++) {
+                    atomicAdd(&g.Bar[{inst.layer, opcode - 1, inst.row, start_bar + i}], 1);
+                }
             }
         }
     };
