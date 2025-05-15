@@ -49,12 +49,11 @@ namespace kittens::prototype::vm {
             __device__ inline parsed_instruction(state<config> &s) : parsed_instruction(s.instruction()) {}
         };
 
-        __device__ static inline semaphore &Q_arrived(state<config> &s) { return s.semaphores()[0]; }
-        __device__ static inline semaphore &O_arrived(state<config> &s) { return s.semaphores()[1]; }
-        __device__ static inline semaphore &K_arrived(state<config> &s, int stage) { return s.semaphores()[2 + stage * 2]; }
-        __device__ static inline semaphore &V_arrived(state<config> &s, int stage) { return s.semaphores()[2 + stage * 2 + 1]; }
-        __device__ static inline semaphore &K_finished(state<config> &s, int stage) { return s.semaphores()[2 + NUM_STAGES * 2 + stage * 2]; }
-        __device__ static inline semaphore &V_finished(state<config> &s, int stage) { return s.semaphores()[2 + NUM_STAGES * 2 + stage * 2 + 1]; }
+        __device__ static inline semaphore &O_arrived(state<config> &s) { return s.semaphores()[0]; }
+        __device__ static inline semaphore &K_arrived(state<config> &s, int stage) { return s.semaphores()[1 + stage * 2]; }
+        __device__ static inline semaphore &V_arrived(state<config> &s, int stage) { return s.semaphores()[1 + stage * 2 + 1]; }
+        __device__ static inline semaphore &K_finished(state<config> &s, int stage) { return s.semaphores()[1 + NUM_STAGES * 2 + stage * 2]; }
+        __device__ static inline semaphore &V_finished(state<config> &s, int stage) { return s.semaphores()[1 + NUM_STAGES * 2 + stage * 2 + 1]; }
 
         __device__ static inline void wait_KV_page(state<config> &s, int stage) { s.wait_page_ready(s.pid(stage)); }
         __device__ static inline void finish_KV_page(state<config> &s, int stage) { s.finish_page(s.pid(stage), config::NUM_CONSUMER_WARPS); }
@@ -196,7 +195,6 @@ namespace kittens::prototype::vm {
             }
             static __device__ int init_semaphores(const globals &g, state<config> &s)
             {
-                init_semaphore(Q_arrived(s), 0, 1);
                 init_semaphore(O_arrived(s), 0, 1);
                 for (int i = 0; i < NUM_STAGES; i++)
                 {
@@ -205,7 +203,7 @@ namespace kittens::prototype::vm {
                     init_semaphore(K_finished(s, i), 0, 1);
                     init_semaphore(V_finished(s, i), 0, 1);
                 }
-                return 2 + 4*NUM_STAGES;
+                return 1 + 4*NUM_STAGES;
             }
         };
         struct loader
