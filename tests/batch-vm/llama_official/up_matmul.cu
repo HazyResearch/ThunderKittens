@@ -58,9 +58,15 @@ namespace kittens::prototype::vm
                 // If specify two in loader_loop, now have FOUR free pages here:
                 // */
                 warp::sync(); // need to sync here 
-                if (laneid() < 2) {
+                if (kittens::laneid() < 2) {
                     int unfreed_page_base = matmul_pipeline::get_used_page_at(2 + (2 * laneid()));
                     silu_tile &silu_out = *reinterpret_cast<silu_tile *>(s.pages[unfreed_page_base].data);
+
+                    while (*(volatile int *)&g.Bar[{inst.layer, OPCODE_GateSiLU - 1, inst.row, inst.col}] < 1)
+                    {
+                        __nanosleep(20);
+                    }
+
                     tma::expect(silu_arrived(s, laneid()), silu_out);
                     tma::load_async(silu_out, g.silu_out, {(inst.row * 2) + laneid(), inst.col}, silu_arrived(s, laneid()));
                 } 
@@ -151,9 +157,7 @@ namespace kittens::prototype::vm
     struct up_matmul_gmem_waiter {
         template <typename config, typename Globals, typename instruction_t>
         static __device__ inline void gmem_wait(const Globals &g, state<config> &s, instruction_t &inst) {
-            // while (*(volatile int *)&g.Bar[{inst.layer, OPCODE_MlpNorm - 1, inst.row, 0}] < Globals::matmul_batch_block_size)
-            // TODO: Can we use OPCode_MlpNorm here?
-            while (*(volatile int *)&g.Bar[{inst.layer, OPCODE_GateSiLU - 1, inst.row, inst.col}] < 1)
+            while (*(volatile int *)&g.Bar[{inst.layer, OPCODE_MlpNorm - 1, inst.row, 0}] < Globals::matmul_batch_block_size)
             {
                 __nanosleep(20);
             }
