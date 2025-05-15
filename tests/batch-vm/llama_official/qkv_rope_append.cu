@@ -30,10 +30,20 @@ struct qkv_rope_append {
         }
         __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
     };
+    struct qkv_gmem_waiter {
+        template <typename _Config, typename _Globals, typename _instruction_t>
+        static __device__ inline void gmem_wait(const _Globals &g, state<_Config> &s, _instruction_t &inst)
+        {
+            while (*(volatile int *)&g.Bar[{inst.layer, OPCODE_AttnNorm - 1, inst.row, 0}] < Globals::matmul_batch_block_size)
+            {
+                __nanosleep(20);
+            }
+        }
+    };
 
-    using matmul_pipeline = matmul_pipeline<config, globals, parsed_instruction, &Globals::rms_rope_intermediates, &Globals::qkv_weights, NUM_ITERS>;
+    using matmul_pipeline = matmul_pipeline<Config, Globals, parsed_instruction, qkv_gmem_waiter, &Globals::rms_rope_intermediates, &Globals::qkv_weights, NUM_ITERS>;
 
-    __device__ static inline semaphore &rope_arrived(state<Config> &s)               { return s.semaphores()[matmul_pipeline::SEM_COUNT]; }
+    __device__ static inline semaphore &rope_arrived(state<Config> &s) { return s.semaphores()[matmul_pipeline::SEM_COUNT]; }
 
     struct controller {
         static __device__ int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query) {
