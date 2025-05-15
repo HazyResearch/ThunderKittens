@@ -156,7 +156,7 @@ namespace kittens::prototype::vm
         using weights_big_indim_t = gl<bf16, 1, -1, -1, intermediate_dim, st_bf<256, 64>>;
 
         using activations_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<head_dim>, sv_bf<hidden_dim>, st_bf<128, 64>, st_bf<16, 256>>;
-        using activations_big_indim_t = gl<bf16, 1, 1, -1, intermediate_dim, st_bf<128, 64>, st_bf<16, 256>>;
+        using activations_big_indim_t = gl<bf16, 1, 1, -1, intermediate_dim, st_bf<128, 64>, st_bf<16, 256>, st_bf<128, 256>, st_bf<256, 256>>;
         using logits_t = gl<bf16, 1, 1, -1, -1, st_bf<16, 256>>;
 
         using norm_weights_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>>;
@@ -197,11 +197,11 @@ namespace kittens::prototype::vm
         activations_t hidden_states;
         activations_t rms_rope_intermediates;
         activations_t rms_gate_intermediates;
-        activations_big_indim_t gate_silu_intermediates;
+
+        activations_big_indim_t silu_out;
         activations_t q_post_rope;
         activations_t attn_out;
-        activations_big_indim_t silu_out;
-
+        
         activations_t rms_lm_head_intermediates;
         logits_t logits;
 

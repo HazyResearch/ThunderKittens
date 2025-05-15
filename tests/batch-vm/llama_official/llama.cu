@@ -47,26 +47,33 @@ PYBIND11_MODULE(kvm_llama, m)
         &llama_8b_globals::Bar,
         &llama_8b_globals::instructions,
         &llama_8b_globals::timings,
+
         &llama_8b_globals::qkv_weights,
         &llama_8b_globals::attn_norm_weights,
         &llama_8b_globals::o_weights,
         &llama_8b_globals::mlp_norm_weights,
+
         &llama_8b_globals::up_weights,
         &llama_8b_globals::gate_weights,
         &llama_8b_globals::down_weights,
+
         &llama_8b_globals::lm_head_norm_weights,
         &llama_8b_globals::lm_head_weights,
+
         &llama_8b_globals::k_cache,
         &llama_8b_globals::v_cache,
+
         &llama_8b_globals::rope_cos,
         &llama_8b_globals::rope_sin,
+
         &llama_8b_globals::hidden_states,
         &llama_8b_globals::rms_rope_intermediates,
         &llama_8b_globals::rms_gate_intermediates,
-        &llama_8b_globals::gate_silu_intermediates,
+
+        &llama_8b_globals::silu_out,
         &llama_8b_globals::q_post_rope,
         &llama_8b_globals::attn_out,
-        &llama_8b_globals::silu_out,
+        
         &llama_8b_globals::rms_lm_head_intermediates,
         &llama_8b_globals::logits,
         &llama_8b_globals::pos_id,

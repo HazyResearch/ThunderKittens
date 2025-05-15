@@ -27,6 +27,29 @@ struct matmul_pipeline {
     __device__ static inline semaphore &inputs_finished(state<Config> &s, int stage) { return s.semaphores()[INPUT_PIPELINE_STAGES + stage]; }
     __device__ static inline semaphore &outputs_arrived(state<Config> &s) { return s.semaphores()[2 * INPUT_PIPELINE_STAGES]; }
 
+    // Helper to get what page is released at certain stage 
+    __device__ static inline int get_used_page_at(int idx) {
+        auto iters = Num_Iters;
+        auto remainder = iters % INPUT_PIPELINE_STAGES;
+
+        if(remainder == 0) {
+            int ret_order[6] = {0,1,2,3,4,5};
+            return ret_order[idx];
+        }
+        else if (remainder == 1) {
+            int ret_order[6] = {2,3,4,5,0,1};
+            return ret_order[idx];
+        }
+        else if (remainder == 2) {
+            int ret_order[6] = {4,5,0,1,2,3};
+            return ret_order[idx];
+        }
+        else {
+            asm volatile("trap;");
+            return -1;
+        }
+    }
+
     __device__ static inline int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query) {
         static_assert(INPUT_PIPELINE_STAGES == 3, "INPUT_PIPELINE_STAGES must be 3");
 
@@ -61,7 +84,8 @@ struct matmul_pipeline {
         return SEM_COUNT;
     }
 
-    __device__ static inline void loader_loop(state<Config> &s, const Globals &g) {
+    template <int _stages_to_not_release = 0>
+    __device__ static inline void loader_loop(state<Config> &s, const Globals &g, int layer_idx = 0) {
         parsed_instruction inst{s};
         auto needed_pages = min(Num_Iters, INPUT_PIPELINE_STAGES) * 2;
 
@@ -85,7 +109,7 @@ struct matmul_pipeline {
 
                 if (iter < INPUT_PIPELINE_STAGES) s.wait_page_ready(b_page); // Stall until B is ready.
                 // Load B
-                tma::load_async(b_smem, g.*B_Ptr, {inst.col, iter}, sem);
+                tma::load_async(b_smem, g.*B_Ptr, {layer_idx, inst.col, iter}, sem);
 
                 // Advance
                 input_stage = (input_stage + 1) % INPUT_PIPELINE_STAGES;
@@ -98,8 +122,11 @@ struct matmul_pipeline {
                     s.wait_page_ready(a_page);
                     s.wait_page_ready(b_page);
                 }
-                s.finish_page(a_page, Config::NUM_CONSUMER_WARPS);
-                s.finish_page(b_page, Config::NUM_CONSUMER_WARPS);
+                
+                if (i < INPUT_PIPELINE_STAGES - _stages_to_not_release) {
+                    s.finish_page(a_page, Config::NUM_CONSUMER_WARPS);
+                    s.finish_page(b_page, Config::NUM_CONSUMER_WARPS);
+                }
 
                 input_stage = (input_stage + 1) % INPUT_PIPELINE_STAGES; // Advance input stage.
             }

@@ -40,7 +40,8 @@ namespace kittens::prototype::vm
 
         struct loader {
             static __device__ void run(const globals &g, state<config> &s) {
-                matmul_pipeline::loader_loop(s, g);
+                parsed_instruction inst{s};
+                matmul_pipeline::loader_loop(s, g, inst.layer);
             }
         };
 
@@ -92,7 +93,7 @@ namespace kittens::prototype::vm
                 auto &smem = *reinterpret_cast<st_bf<16, 256>*>(s.scratch());
                 for(int i = 0; i < config::NUM_CONSUMER_WARPS; i++) {
                     constorer::sync(store_bar); // await arrive from consumer
-                    warp::tma::store_add_async(g.silu_out, smem, {16*inst.row + 8*(i>=8) + 2*(i%4) + ((i%8)/4), inst.col});
+                    warp::tma::store_async(g.silu_out, smem, {16*inst.row + 8*(i>=8) + 2*(i%4) + ((i%8)/4), inst.col});
                     tma::store_async_read_wait();
                     constorer::sync(store_bar); // release back to consumer
                 }

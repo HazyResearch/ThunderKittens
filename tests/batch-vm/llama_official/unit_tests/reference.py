@@ -102,6 +102,10 @@ def matmul_adds(hidden_states, weights, acc):
     acc += matmul
     return acc
 
+def up_matmul(rms_gate_intermediates, up_proj_weights, silu_out):
+    matmul = einsum(rms_gate_intermediates, up_proj_weights, "m k, n k -> m n")
+    matmul *= silu_out
+    return matmul
 
 
 

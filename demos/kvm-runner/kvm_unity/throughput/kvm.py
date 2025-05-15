@@ -20,11 +20,14 @@ def interpret_with_kvm(
         globs.attn_ln_weights,
         globs.o_proj_weights,
         globs.mlp_ln_weights,
+
         globs.up_proj_weights,
         globs.gate_proj_weights,
         globs.down_proj_weights,
+
         globs.lm_head_norm_weights.data,
         globs.lm_head_weights.data,
+
         fourD_k_cache,
         fourD_v_cache,
         # rope
@@ -34,11 +37,11 @@ def interpret_with_kvm(
         globs.hidden_states,
         globs.rms_rope_intermediates,
         globs.rms_gate_intermediates,
-        # globs.gate_silu_intermediates,
+        
         globs.silu_out,
         globs.post_ln_rope_q,
         globs.attn_out,
-        globs.silu_out,
+
         globs.rms_lm_head_intermediates,
         globs.logits,
         globs.pos_id,
