@@ -200,7 +200,7 @@ namespace kittens::prototype::vm {
                     int start_bar = (inst.col * Globals::matmul_out_block_size) / Globals::head_dim;
                     int num_generated_heads = Globals::matmul_out_block_size / Globals::head_dim;
                     for (int i = 0; i < num_generated_heads; i++) {
-                        atomicAdd(&g.Bar[{inst.layer, opcode - 1, 0, start_bar + i}], 1);
+                        atomicAdd(&g.Bar[{inst.layer, opcode - 1, inst.row, start_bar + i}], 1);
                     }
                 }
             }
