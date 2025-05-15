@@ -17,7 +17,6 @@ struct qkv_rope_append {
     static constexpr int NUM_ITERS = Globals::hidden_dim / PIPELINE_K_DIM;
 
     using rope_vec = sv_fl<128>;
-    using rope_vec_256 = sv_fl<256>;
 
     struct parsed_instruction {
         int layer;
