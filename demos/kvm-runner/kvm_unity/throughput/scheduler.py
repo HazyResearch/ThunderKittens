@@ -386,7 +386,7 @@ def make_dag_layer(
     new_nodes.extend([DAG_Node(i, prev_layer_outputs) for i in ins])
 
     if stop_after_op == "up":
-        return new_nodes, []
+        return new_nodes, [] 
 
     # INSTRUCTION 8: DownProjResidual
     ins = schedule_down_proj_residual(globs, layer_idx)
