@@ -195,17 +195,15 @@ struct qkv_rope_append {
             {
                 int rope_page = matmul_pipeline::get_used_page_at(5);
                 s.finish_page(rope_page, config::NUM_CONSUMER_WARPS);
+
+                int start_bar = (inst.col * Globals::matmul_out_block_size) / Globals::head_dim;
+                int num_generated_heads = Globals::matmul_out_block_size / Globals::head_dim;
+                for (int i = 0; i < num_generated_heads; i++) {
+                    atomicAdd(&g.Bar[{inst.layer, opcode - 1, 0, start_bar + i}], 1);
+                }
             }
         }
     };
 };
 
 }
-
-/*
-If I'm still working with the same head dim but Im now modifying my code to work with 256 x 256 tiles at a time, and each warp in the consumer has a 
-
-rt_fl<16, 256> out_fl, out_rotated_fl;
-
-16 x 256 tile. How can I modify this code to easily still apply rope to my 16 x 256 tile with the same vector of 128? 
-*/
