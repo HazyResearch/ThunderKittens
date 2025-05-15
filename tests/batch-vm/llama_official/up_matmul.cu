@@ -157,8 +157,6 @@ namespace kittens::prototype::vm
     struct up_matmul_gmem_waiter {
         template <typename config, typename Globals, typename instruction_t>
         static __device__ inline void gmem_wait(const Globals &g, state<config> &s, instruction_t &inst) {
-            // TODO: Can we use OPCode_MlpNorm here?
-            // while (*(volatile int *)&g.Bar[{inst.layer, OPCODE_GateSiLU - 1, inst.row, inst.col}] < Globals::matmul_batch_block_size)
             while (*(volatile int *)&g.Bar[{inst.layer, OPCODE_MlpNorm - 1, inst.row, 0}] < Globals::matmul_batch_block_size)
             {
                 __nanosleep(20);
