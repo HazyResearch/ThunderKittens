@@ -33,7 +33,7 @@ namespace kittens::prototype::vm
             __device__ inline parsed_instruction(state<config> &s) : parsed_instruction(s.instruction()) {}
         };
 
-        using matmul_pipeline = matmul_pipeline<config, globals, parsed_instruction, InputActivationsPtr, WeightsPtr, iters>;
+        using matmul_pipeline = matmul_pipeline<config, globals, parsed_instruction, gmem_waiter, InputActivationsPtr, WeightsPtr, iters>;
 
         struct controller
         {

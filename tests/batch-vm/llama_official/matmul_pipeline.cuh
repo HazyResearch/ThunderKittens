@@ -6,7 +6,7 @@ namespace kittens::prototype::vm {
 
 static constexpr int PIPELINE_K_DIM = 64;
 
-template <typename Config, typename Globals, typename parsed_instruction, auto A_Ptr, auto B_Ptr, int Num_Iters>
+template <typename Config, typename Globals, typename parsed_instruction, typename gmem_waiter, auto A_Ptr, auto B_Ptr, int Num_Iters>
 struct matmul_pipeline {
     static_assert(Config::NUM_CONSUMER_WARPS == 16);
     static_assert(Config::PAGE_SIZE == 32768);
@@ -103,6 +103,8 @@ struct matmul_pipeline {
                 auto &b_smem = reinterpret_cast<b_st&>(s.pages[b_page]);
 
                 if (iter < INPUT_PIPELINE_STAGES) s.wait_page_ready(a_page); // Stall until A is ready.
+                gmem_waiter::gmem_wait(g, s, inst);
+
                 // Load A
                 tma::load_async(a_smem[0], g.*A_Ptr, {2*inst.row+0, iter}, sem);
                 tma::load_async(a_smem[1], g.*A_Ptr, {2*inst.row+1, iter}, sem);
