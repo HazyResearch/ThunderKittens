@@ -153,7 +153,7 @@ namespace kittens::prototype::vm
         static __device__ inline void gmem_wait(const Globals &g, state<config> &s, instruction_t &inst) {
             // while (*(volatile int *)&g.Bar[{inst.layer, OPCODE_MlpNorm - 1, inst.row, 0}] < Globals::matmul_batch_block_size)
             // TODO: Can we use OPCode_MlpNorm here?
-            while (*(volatile int *)&g.Bar[{inst.layer, OPCODE_GateSiLU - 1, inst.row, 0}] < Globals::matmul_batch_block_size)
+            while (*(volatile int *)&g.Bar[{inst.layer, OPCODE_GateSiLU - 1, inst.row, inst.col}] < 1)
             {
                 __nanosleep(20);
             }
