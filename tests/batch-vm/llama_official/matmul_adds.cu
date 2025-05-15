@@ -51,7 +51,8 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const globals &g, state<config> &s)
             {
-                matmul_pipeline::loader_loop(s, g);
+                parsed_instruction inst{s};
+                matmul_pipeline::loader_loop(s, g, inst.layer);
             }
         };
 
