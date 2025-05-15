@@ -9,6 +9,8 @@ namespace kittens::prototype::vm
     using globals = llama_8b_globals;
     using config = llama_config;
 
+    struct gate_silu_gmem_waiter;
+
     template <typename Config, typename Globals>
     struct gate_silu {
         static constexpr int opcode = OPCODE_GateSiLU;
@@ -27,7 +29,7 @@ namespace kittens::prototype::vm
             __device__ inline parsed_instruction(state<config> &s) : parsed_instruction(s.instruction()) {}
         };
 
-        using matmul_pipeline = matmul_pipeline<config, globals, parsed_instruction, &Globals::rms_gate_intermediates, &Globals::gate_weights, NUM_ITERS>;
+        using matmul_pipeline = matmul_pipeline<config, globals, parsed_instruction, gate_silu_gmem_waiter, &Globals::rms_gate_intermediates, &Globals::gate_weights, NUM_ITERS>;
 
         struct controller {
             static __device__ int release_lid(const globals &g, typename config::instruction_t &instruction, int &query) {
@@ -113,6 +115,17 @@ namespace kittens::prototype::vm
             }
         };
     };
+
+    struct gate_silu_gmem_waiter {
+        template <typename config, typename Globals, typename instruction_t>
+        static __device__ inline void gmem_wait(const Globals &g, state<config> &s, instruction_t &inst) {
+            while (*(volatile int *)&g.Bar[{inst.layer, OPCODE_MlpNorm - 1, inst.row, 0}] < Globals::matmul_batch_block_size)
+            {
+                __nanosleep(20);
+            }
+        }
+    };
+
 }
 
 
