@@ -60,7 +60,7 @@ class ScriptConfig(pydra.Config):
         self.batch_size = bs
         self.skip_cost = True
         self.max_len_override = sl
-        self.interleave_rope = False
+        self.interleave_rope = True
         self.l8()
 
     def l1(self):

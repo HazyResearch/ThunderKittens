@@ -116,7 +116,6 @@ def qkv_matmul_rope_append(
     if mode in "qk":
         arr = rearrange(output, "... (h d) -> ... h d", d=globals.head_dim)
 
-        # not interleaved for big-batch version
         with_rope, _ = apply_rotary_pos_emb_interleaved(
             q=arr,
             k=arr,
