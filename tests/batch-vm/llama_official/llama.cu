@@ -70,9 +70,9 @@ PYBIND11_MODULE(kvm_llama, m)
         &llama_8b_globals::rms_rope_intermediates,
         &llama_8b_globals::rms_gate_intermediates,
 
-        &llama_8b_globals::silu_out,
         &llama_8b_globals::q_post_rope,
         &llama_8b_globals::attn_out,
+        &llama_8b_globals::silu_out,
         
         &llama_8b_globals::rms_lm_head_intermediates,
         &llama_8b_globals::logits,

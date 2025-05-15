@@ -38,9 +38,9 @@ def interpret_with_kvm(
         globs.rms_rope_intermediates,
         globs.rms_gate_intermediates,
         
-        globs.silu_out,
         globs.post_ln_rope_q,
         globs.attn_out,
+        globs.silu_out,
 
         globs.rms_lm_head_intermediates,
         globs.logits,

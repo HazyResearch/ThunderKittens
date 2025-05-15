@@ -198,9 +198,9 @@ namespace kittens::prototype::vm
         activations_t rms_rope_intermediates;
         activations_t rms_gate_intermediates;
 
-        activations_big_indim_t silu_out;
         activations_t q_post_rope;
         activations_t attn_out;
+        activations_big_indim_t silu_out;
         
         activations_t rms_lm_head_intermediates;
         logits_t logits;
