@@ -104,7 +104,7 @@ namespace kittens::prototype::vm
 
                 warp::sync();
                 asm volatile("fence.acq_rel.gpu;\n"); // possible we need sc here but I don't think so.
-                if (laneid == 0)
+                if (kittens::laneid() == 0)
                 {
                     atomicAdd(&g.Bar[{inst.layer, opcode - 1, inst.row, 0}], 1);
                 }
