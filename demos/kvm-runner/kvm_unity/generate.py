@@ -48,6 +48,7 @@ class ScriptConfig(pydra.Config):
     skip_rest: bool = False
     sched: str = "rr"
     setting: str = "latency"
+    memory_fraction: float | None = None
 
     def finalize(self):
         if self.setting == "latency" and self.mode in ["kvm", "pyvm"]:
@@ -126,7 +127,9 @@ def main(config: ScriptConfig):
 
     schedule_builder = make_schedule_builder(config.setting)
     schedule = schedule_builder.build(model)
-    assigned_to_sms = assign_to_sms(config.sched, schedule=schedule)
+    assigned_to_sms = assign_to_sms(
+        config.sched, schedule=schedule, memory_fraction=config.memory_fraction
+    )
     tensorize_instructions(schedule.globs, assigned_to_sms)
 
     match config.mode:
@@ -187,7 +190,9 @@ def main(config: ScriptConfig):
         print("More detailed output:")
         print(tabulate(table, headers=["output id", "position id", "token"]))
 
-    tokens_per_second = (config.ntok - 1) / elapsed
+    fwd_per_second = (config.ntok - 1) / elapsed
+    print(f"Fwd per second: {fwd_per_second:.2f}")
+    tokens_per_second = config.batch_size * fwd_per_second
     print(f"Tokens per second: {tokens_per_second:.2f}")
 
 

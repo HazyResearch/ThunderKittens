@@ -7,6 +7,8 @@ namespace kittens::prototype::vm
 {
     using globals = llama_8b_globals;
 
+    struct lm_head_gmem_waiter;
+
     template <typename Config, typename Globals>
     struct lm_head
     {
@@ -25,7 +27,7 @@ namespace kittens::prototype::vm
             __device__ inline parsed_instruction(state<config> &s) : parsed_instruction(s.instruction()) {}
         };
 
-        using matmul_pipeline = matmul_pipeline<config, globals, parsed_instruction, &Globals::rms_lm_head_intermediates, &Globals::lm_head_weights, NUM_ITERS>;
+        using matmul_pipeline = matmul_pipeline<config, globals, parsed_instruction, lm_head_gmem_waiter, &Globals::rms_lm_head_intermediates, &Globals::lm_head_weights, NUM_ITERS>;
 
         struct controller
         {
@@ -99,5 +101,15 @@ namespace kittens::prototype::vm
                 }
             }
         };
+    };
+
+    struct lm_head_gmem_waiter {
+        template <typename config, typename Globals, typename instruction_t>
+        static __device__ inline void gmem_wait(const Globals &g, state<config> &s, instruction_t &inst) {
+            while (*(volatile int *)&g.Bar[{0, OPCODE_LM_HeadNorm - 1, inst.row, 0}] < Globals::matmul_batch_block_size)
+            {
+                __nanosleep(20);
+            }
+        }
     };
 }

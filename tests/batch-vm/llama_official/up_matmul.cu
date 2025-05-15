@@ -9,6 +9,8 @@ namespace kittens::prototype::vm
     using globals = llama_8b_globals;
     using config = llama_config;
 
+    struct up_matmul_gmem_waiter;
+
     template <typename Config, typename Globals>
     struct up_matmul {
         static constexpr int opcode = OPCODE_UpMatmul;
@@ -29,7 +31,7 @@ namespace kittens::prototype::vm
             __device__ inline parsed_instruction(state<config> &s) : parsed_instruction(s.instruction()) {}
         };
 
-        using matmul_pipeline = matmul_pipeline<config, globals, parsed_instruction, &Globals::rms_gate_intermediates, &Globals::up_weights, NUM_ITERS>;
+        using matmul_pipeline = matmul_pipeline<config, globals, parsed_instruction, up_matmul_gmem_waiter, &Globals::rms_gate_intermediates, &Globals::up_weights, NUM_ITERS>;
 
         __device__ static inline semaphore &silu_arrived(state<config> &s, int laneid)      { return s.semaphores()[matmul_pipeline::SEM_COUNT + laneid]; }
 
@@ -144,6 +146,18 @@ namespace kittens::prototype::vm
                 }
             }
         };
+    };
+
+    struct up_matmul_gmem_waiter {
+        template <typename config, typename Globals, typename instruction_t>
+        static __device__ inline void gmem_wait(const Globals &g, state<config> &s, instruction_t &inst) {
+            // while (*(volatile int *)&g.Bar[{inst.layer, OPCODE_MlpNorm - 1, inst.row, 0}] < Globals::matmul_batch_block_size)
+            // TODO: Can we use OPCode_MlpNorm here?
+            while (*(volatile int *)&g.Bar[{inst.layer, OPCODE_GateSiLU - 1, inst.row, 0}] < Globals::matmul_batch_block_size)
+            {
+                __nanosleep(20);
+            }
+        }
     };
 }
 

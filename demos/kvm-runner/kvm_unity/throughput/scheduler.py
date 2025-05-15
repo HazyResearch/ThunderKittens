@@ -246,7 +246,7 @@ def schedule_down_proj_residual(
     return instructions
 
 
-def schedule_lm_head(
+def schedule_lm_head_norm(
     globs: Globals,
 ) -> tuple[list[Instruction], bool]:
     instructions: list[Instruction] = []
@@ -259,9 +259,16 @@ def schedule_lm_head(
             )
         )
 
-    for bidx in range(0, globs.batch_size, globs.matmul_batch_block_size):
-        num_logit_blocks = assert_div(globs.vocab_size, globs.matmul_output_block_size)
-        for logit_block_idx in range(num_logit_blocks):
+    return instructions
+
+
+def schedule_lm_head(
+    globs: Globals,
+) -> tuple[list[Instruction], bool]:
+    instructions: list[Instruction] = []
+
+    for bidx in range(globs.num_batch_blocks()):
+        for logit_block_idx in range(globs.num_vocab_blocks()):
             instructions.append(
                 LM_Head(
                     batch_start_idx=bidx,
@@ -294,16 +301,25 @@ def make_dag(
         last_outputs = new_outputs
 
     if nlayers == globs.num_hidden_layers:
-        lm_head_instructions = schedule_lm_head(globs)
-        lm_head_nodes: list[DAG_Node] = []
+        lm_head_norm_instructions = schedule_lm_head_norm(globs)
+        lm_head_norm_nodes: list[DAG_Node] = []
+        for ins in lm_head_norm_instructions:
+            lm_head_norm_nodes.append(DAG_Node(ins, last_outputs))
 
-        # TODO: these dependencies are broken bc
-        # the lm head norm and matmul is split into two instructions
-        for ins in lm_head_instructions:
-            lm_head_nodes.append(DAG_Node(ins, last_outputs))
+        nodes.extend(lm_head_norm_nodes)
+        last_outputs = lm_head_norm_nodes
 
-        nodes.extend(lm_head_nodes)
-        last_outputs = lm_head_nodes
+        if stop_after_op != "lm_head_norm":
+            lm_head_instructions = schedule_lm_head(globs)
+            lm_head_nodes: list[DAG_Node] = []
+
+            # TODO: these dependencies are broken bc
+            # the lm head norm and matmul is split into two instructions
+            for ins in lm_head_instructions:
+                lm_head_nodes.append(DAG_Node(ins, last_outputs))
+
+            nodes.extend(lm_head_nodes)
+            last_outputs = lm_head_nodes
 
     end_node = DAG_Node(NoOp(), last_outputs)
 

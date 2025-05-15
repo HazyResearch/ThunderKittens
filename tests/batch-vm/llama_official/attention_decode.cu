@@ -8,15 +8,13 @@ namespace kittens::prototype::vm {
     template <typename config, typename globals>
     struct attention_decode {
         static constexpr int opcode = OPCODE_GQA_AttentionDecode;
-        static constexpr int NUM_STAGES = 2;
+        static constexpr int NUM_STAGES = 6;
         static constexpr int GQA_RATIO = globals::num_attention_heads / globals::num_kv_heads;
-        static constexpr int QO_PAGE = 0;
-        static constexpr int KV_PAGE = 1;
         static constexpr int KV_INDICES_LEN = 0;
         static constexpr int MAX_KV_INDICES_LEN = 0;
 
         static_assert(GQA_RATIO == 4, "GQA_RATIO must be 4.");
-        static_assert(NUM_STAGES <= 2, "Modify page allocation for KVs.");
+        static_assert(NUM_STAGES <= config::NUM_PAGES, "Not enough pages. Time to actually use full pages.");
 
         static constexpr int head_dim = globals::head_dim;
         static constexpr int kv_block_size = globals::kv_block_size;
@@ -58,40 +56,28 @@ namespace kittens::prototype::vm {
         __device__ static inline semaphore &K_finished(state<config> &s, int stage) { return s.semaphores()[2 + NUM_STAGES * 2 + stage * 2]; }
         __device__ static inline semaphore &V_finished(state<config> &s, int stage) { return s.semaphores()[2 + NUM_STAGES * 2 + stage * 2 + 1]; }
 
-        __device__ static inline void wait_QO_page(state<config> &s) { s.wait_page_ready(s.pid(QO_PAGE)); }
-        __device__ static inline void wait_KV_page(state<config> &s) { s.wait_page_ready(s.pid(KV_PAGE)); }
-        __device__ static inline void finish_QO_page(state<config> &s)
-        {
-            if (warp::laneid() == 0)
-                s.finish_page(s.pid(QO_PAGE), config::NUM_CONSUMER_WARPS);
-        }
-        __device__ static inline void finish_KV_page(state<config> &s)
-        {
-            if (warp::laneid() == 0)
-                s.finish_page(s.pid(KV_PAGE), config::NUM_CONSUMER_WARPS);
-        }
+        __device__ static inline void wait_KV_page(state<config> &s, int stage) { s.wait_page_ready(s.pid(stage)); }
+        __device__ static inline void finish_KV_page(state<config> &s, int stage) { s.finish_page(s.pid(stage), config::NUM_CONSUMER_WARPS); }
         __device__ static inline q_st &get_Q_smem(state<config> &s)
         {
-            int pid = s.pid(QO_PAGE);
-            return *reinterpret_cast<q_st *>(s.pages[pid].data);
+            return *reinterpret_cast<q_st *>(s.scratch());
         }
         __device__ static inline o_sv (&get_O_smem(state<config> &s))[4]
         {
-            int pid = s.pid(QO_PAGE);
             return *reinterpret_cast<o_sv(*)[4]>(
-                reinterpret_cast<char *>(s.pages[pid].data) + sizeof(q_st));
+                reinterpret_cast<char *>(s.scratch()) + sizeof(q_st));
         }
         __device__ static inline kv_st &get_K_smem(state<config> &s, int stage)
         {
-            int pid = s.pid(KV_PAGE);
+            int pid = s.pid(stage);
             return *reinterpret_cast<kv_st *>(
-                reinterpret_cast<char *>(s.pages[pid].data) + sizeof(kv_st) * (stage * 2));
+                reinterpret_cast<char *>(s.pages[pid].data));
         }
         __device__ static inline kv_st &get_V_smem(state<config> &s, int stage)
         {
-            int pid = s.pid(KV_PAGE);
+            int pid = s.pid(stage);
             return *reinterpret_cast<kv_st *>(
-                reinterpret_cast<char *>(s.pages[pid].data) + sizeof(kv_st) * (1 + stage * 2));
+                reinterpret_cast<char *>(s.pages[pid].data) + sizeof(kv_st));
         }
 
         template <ducks::sv::all SV, ducks::rt::all RT>
@@ -205,7 +191,7 @@ namespace kittens::prototype::vm {
         {
             static __device__ int release_lid(const globals &g, typename config::instruction_t &instruction, int &query)
             {
-                int ret_order[13] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 0};
+                int ret_order[config::NUM_PAGES] = {0, 1, 2, 3, 4, 5};
                 return ret_order[query];
             }
             static __device__ int init_semaphores(const globals &g, state<config> &s)
@@ -229,6 +215,8 @@ namespace kittens::prototype::vm {
                 if (warp::laneid() == 0) s.record(TEVENT_LOADER_START);
                 parsed_instruction inst{s};
                 auto laneid = warp::laneid();
+                int seq_len = g.pos_id + 1;
+                int total_attn_blocks = (seq_len + globals::kv_block_size - 1) / globals::kv_block_size;
 
                 if (laneid == 0)
                 {
@@ -236,24 +224,9 @@ namespace kittens::prototype::vm {
 
                     int batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
 
-                    // K
-                    while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, batch_block_idx, globals::num_attention_heads + inst.kv_head_idx}] < 1) {
-                        __nanosleep(20);
-                    }
-
-                    // V
-                    while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, batch_block_idx, (int)globals::num_attention_heads + (int)globals::num_kv_heads + inst.kv_head_idx}] < 1) {
-                        __nanosleep(20);
-                    }
-
                     s.record(TEVENT_DONE_GMEM_WAIT);
 
-                    // Wait for the KV page
-                    wait_KV_page(s);
-
                     // Run the pipeline!
-                    int seq_len = g.pos_id + 1;
-                    int total_attn_blocks = (seq_len + globals::kv_block_size - 1) / globals::kv_block_size;
                     for (int i = 0; i < total_attn_blocks; ++i)
                     {
                         int stage = i % NUM_STAGES;
@@ -264,15 +237,24 @@ namespace kittens::prototype::vm {
                         {
                             wait(K_finished(s, stage), (i / NUM_STAGES - 1) % 2);
                             wait(V_finished(s, stage), (i / NUM_STAGES - 1) % 2);
+                        } else {
+                            wait_KV_page(s, stage);
                         }
-                        
+
+                        if (i == 0)
+                            while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, batch_block_idx, globals::num_attention_heads + inst.kv_head_idx}] < 1)
+                                __nanosleep(20);
                         tma::expect(K_arrived(s, stage), K_smem);
                         tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(K_smem, g.k_cache, {(int)g.batch_size*inst.layer_idx + inst.batch_idx, i, inst.kv_head_idx, 0}, K_arrived(s, stage));
+
+                        if (i == 0) 
+                            while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_QKV_RopeAppend - 1, batch_block_idx, (int)globals::num_attention_heads + (int)globals::num_kv_heads + inst.kv_head_idx}] < 1)
+                                __nanosleep(20);
                         tma::expect(V_arrived(s, stage), V_smem);
                         tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(V_smem, g.v_cache, {(int)g.batch_size*inst.layer_idx + inst.batch_idx, i, inst.kv_head_idx, 0}, V_arrived(s, stage));
                     }
                 }
-                else if (laneid >= 2 && laneid < config::NUM_PAGES)
+                else if (laneid >= min(NUM_STAGES, total_attn_blocks) && laneid < config::NUM_PAGES)
                 {
                     int unused_page = s.pid(laneid);
                     s.wait_page_ready(unused_page);
@@ -301,7 +283,7 @@ namespace kittens::prototype::vm {
                 parsed_instruction inst{s};
                 if (warp::laneid() == 0) s.record(TEVENT_CONSUMER_START + warpid());
 
-                if (warpid() == 0)
+                if (group<config::NUM_CONSUMER_WARPS>::warpid() == 0)
                 {
 
                     int batch_block_idx = inst.batch_idx / globals::matmul_batch_block_size;
@@ -314,7 +296,6 @@ namespace kittens::prototype::vm {
                     // Initiate the load on Q
                     int q_head_start_idx = inst.kv_head_idx * GQA_RATIO;
 
-                    wait_QO_page(s);
                     q_st &Q_smem = get_Q_smem(s);
                     load_Q_async(Q_smem, g.q_post_rope, inst.batch_idx, q_head_start_idx);
 
@@ -396,12 +377,15 @@ namespace kittens::prototype::vm {
 
                         // Save for next iteration
                         warp::copy(last_scaled_max_vec_reg, scaled_max_vec_reg);
+
+                        if ((total_attn_blocks - i <= NUM_STAGES) && (warp::laneid() == 0)) {
+                            finish_KV_page(s, stage);
+                        }
                     }
 
                     // Finish
                     warp::sync();
                     if (warp::laneid() == 0) s.record(TEVENT_CONSUMER_START + 64);
-                    finish_KV_page(s);
                     warp::div_row(O_reg, O_reg, norm_vec_reg);
 
                     // Store the results
@@ -438,7 +422,6 @@ namespace kittens::prototype::vm {
                 {
                     tma::store_async_wait();
                     if (laneid == 0) s.record(123);
-                    finish_QO_page(s);
                 }
                 warp::sync(); // ensure all writes are committed
                 asm volatile("{fence.acq_rel.gpu;}");
