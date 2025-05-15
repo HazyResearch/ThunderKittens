@@ -181,10 +181,6 @@ for i in range(2):
         hidden_states,
         rms_rope_intermediates,
         rms_gate_intermediates,
-<<<<<<< HEAD
-=======
-        gate_silu_intermediates,
->>>>>>> bvm-llama-unity
         q_post_rope,
         attn_out,
         silu_out,
@@ -221,10 +217,6 @@ for i in range(NUM_ITERS):
         hidden_states,
         rms_rope_intermediates,
         rms_gate_intermediates,
-<<<<<<< HEAD
-=======
-        gate_silu_intermediates,
->>>>>>> bvm-llama-unity
         q_post_rope,
         attn_out,
         silu_out,

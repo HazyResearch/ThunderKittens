@@ -8,13 +8,13 @@ namespace kittens::prototype::vm {
     template <typename config, typename globals>
     struct attention_decode {
         static constexpr int opcode = OPCODE_GQA_AttentionDecode;
-        static constexpr int NUM_STAGES = 2;
+        static constexpr int NUM_STAGES = 6;
         static constexpr int GQA_RATIO = globals::num_attention_heads / globals::num_kv_heads;
         static constexpr int KV_INDICES_LEN = 0;
         static constexpr int MAX_KV_INDICES_LEN = 0;
 
         static_assert(GQA_RATIO == 4, "GQA_RATIO must be 4.");
-        static_assert(NUM_STAGES <= 2, "Modify page allocation for KVs.");
+        static_assert(NUM_STAGES <= config::NUM_PAGES, "Not enough pages. Time to actually use full pages.");
 
         static constexpr int head_dim = globals::head_dim;
         static constexpr int kv_block_size = globals::kv_block_size;
@@ -56,18 +56,8 @@ namespace kittens::prototype::vm {
         __device__ static inline semaphore &K_finished(state<config> &s, int stage) { return s.semaphores()[2 + NUM_STAGES * 2 + stage * 2]; }
         __device__ static inline semaphore &V_finished(state<config> &s, int stage) { return s.semaphores()[2 + NUM_STAGES * 2 + stage * 2 + 1]; }
 
-        __device__ static inline void wait_QO_page(state<config> &s) { s.wait_page_ready(s.pid(QO_PAGE)); }
-        __device__ static inline void wait_KV_page(state<config> &s) { s.wait_page_ready(s.pid(KV_PAGE)); }
-        __device__ static inline void finish_QO_page(state<config> &s)
-        {
-            if (warp::laneid() == 0)
-                s.finish_page(s.pid(QO_PAGE), config::NUM_CONSUMER_WARPS);
-        }
-        __device__ static inline void finish_KV_page(state<config> &s)
-        {
-            if (warp::laneid() == 0)
-                s.finish_page(s.pid(KV_PAGE), config::NUM_CONSUMER_WARPS);
-        }
+        __device__ static inline void wait_KV_page(state<config> &s, int stage) { s.wait_page_ready(s.pid(stage)); }
+        __device__ static inline void finish_KV_page(state<config> &s, int stage) { s.finish_page(s.pid(stage), config::NUM_CONSUMER_WARPS); }
         __device__ static inline q_st &get_Q_smem(state<config> &s)
         {
             return *reinterpret_cast<q_st *>(s.scratch());
@@ -79,13 +69,13 @@ namespace kittens::prototype::vm {
         }
         __device__ static inline kv_st &get_K_smem(state<config> &s, int stage)
         {
-            int pid = s.pid(KV_PAGE);
+            int pid = s.pid(stage);
             return *reinterpret_cast<kv_st *>(
                 reinterpret_cast<char *>(s.pages[pid].data));
         }
         __device__ static inline kv_st &get_V_smem(state<config> &s, int stage)
         {
-            int pid = s.pid(KV_PAGE);
+            int pid = s.pid(stage);
             return *reinterpret_cast<kv_st *>(
                 reinterpret_cast<char *>(s.pages[pid].data) + sizeof(kv_st));
         }
@@ -264,7 +254,7 @@ namespace kittens::prototype::vm {
                         tma::load_async<dim::DEPTH, cache_policy::EVICT_FIRST>(V_smem, g.v_cache, {(int)g.batch_size*inst.layer_idx + inst.batch_idx, i, inst.kv_head_idx, 0}, V_arrived(s, stage));
                     }
                 }
-                else if (laneid >= 2 && laneid < config::NUM_PAGES)
+                else if (laneid >= min(NUM_STAGES, total_attn_blocks) && laneid < config::NUM_PAGES)
                 {
                     int unused_page = s.pid(laneid);
                     s.wait_page_ready(unused_page);
@@ -387,6 +377,10 @@ namespace kittens::prototype::vm {
 
                         // Save for next iteration
                         warp::copy(last_scaled_max_vec_reg, scaled_max_vec_reg);
+
+                        if ((total_attn_blocks - i <= NUM_STAGES) && (warp::laneid() == 0)) {
+                            finish_KV_page(s, stage);
+                        }
                     }
 
                     // Finish
