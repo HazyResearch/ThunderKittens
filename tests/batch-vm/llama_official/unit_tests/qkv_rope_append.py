@@ -16,7 +16,7 @@ SM_COUNT = 148
 INSTRUCTION_WIDTH = 32
 TIMING_WIDTH = 128
 BATCH_SIZE = 1024
-BATCH_BLOCK_SIZE = 128
+BATCH_BLOCK_SIZE = 256
 RMS_NORM_OPCODE = 1
 QKV_ROPE_APPEND_OPCODE = 2
 NUM_OPS = 8
@@ -31,7 +31,7 @@ NUM_KV_HEADS = 8
 KV_BLOCK_SIZE = HEAD_DIM
 MAX_NUM_PAGES = 256
 PAGE_SIZE = 128
-QKV_BLOCK_SIZE = 128
+QKV_BLOCK_SIZE = 256
 LAYER_IDX = 0
 
 
@@ -45,30 +45,39 @@ torch.manual_seed(42)
 Bar = torch.zeros((NUM_LAYERS, NUM_OPS, NUM_ATTENTION_HEADS + 2 * NUM_KV_HEADS), dtype=torch.uint32, device=device)
 instructions = None # set below
 timings = None # set below
+
 qkv_weights = torch.randn(NUM_LAYERS, (NUM_ATTENTION_HEADS + 2 * NUM_KV_HEADS) * HEAD_DIM, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 attn_norm_weights = torch.zeros(NUM_LAYERS, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 o_weights = torch.zeros(NUM_LAYERS, HIDDEN_DIM, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 mlp_norm_weights = torch.zeros(NUM_LAYERS, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+
 up_weights = torch.zeros(NUM_LAYERS, INTERMEDIATE_DIM, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 gate_weights = torch.zeros(NUM_LAYERS, HIDDEN_DIM, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 down_weights = torch.zeros(NUM_LAYERS, HIDDEN_DIM, INTERMEDIATE_DIM, dtype=torch.bfloat16, device=device)
+
 lm_head_norm_weights = torch.zeros(HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 lm_head_weights = torch.zeros(VOCAB_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+
 k_cache = torch.zeros(NUM_LAYERS*BATCH_SIZE, MAX_SEQ_LEN, NUM_KV_HEADS, HEAD_DIM, dtype=torch.bfloat16, device=device)
 v_cache = torch.zeros(NUM_LAYERS*BATCH_SIZE, MAX_SEQ_LEN, NUM_KV_HEADS, HEAD_DIM, dtype=torch.bfloat16, device=device)
+
 rope_cos = torch.randn(MAX_SEQ_LEN, HEAD_DIM, dtype=torch.float32, device=device)
 rope_sin = torch.randn(MAX_SEQ_LEN, HEAD_DIM, dtype=torch.float32, device=device)
+
 hidden_states = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 rms_rope_intermediates = torch.randn(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 rms_gate_intermediates = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
-gate_silu_intermediates = torch.zeros(BATCH_SIZE, INTERMEDIATE_DIM, dtype=torch.bfloat16, device=device)
+rms_lm_head_intermediates = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
+
 q_post_rope = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 attn_out = torch.zeros(BATCH_SIZE, HIDDEN_DIM, dtype=torch.bfloat16, device=device)
 silu_out = torch.zeros(BATCH_SIZE, INTERMEDIATE_DIM, dtype=torch.bfloat16, device=device)
+
 logits = torch.zeros(BATCH_SIZE, VOCAB_SIZE, dtype=torch.bfloat16, device=device)
 pos_id = 10
 attn_scale = 1 / (HEAD_DIM ** 0.5)
 rms_norm_eps = 1e-5
+batch_size = BATCH_SIZE
 
 # Generate instructions
 instructions = [[] for _ in range(SM_COUNT)]
@@ -109,30 +118,40 @@ kvm_llama(
     Bar,
     instructions,
     timings,
+
     qkv_weights,
     attn_norm_weights,
     o_weights,
     mlp_norm_weights,
+
     up_weights,
     gate_weights,
     down_weights,
+
     lm_head_norm_weights,
     lm_head_weights,
+
     k_cache,
     v_cache,
+
     rope_cos,
     rope_sin,
+
     hidden_states,
     rms_rope_intermediates,
     rms_gate_intermediates,
-    gate_silu_intermediates,
+
     q_post_rope,
     attn_out,
     silu_out,
+
+    rms_lm_head_intermediates,
     logits,
+
     pos_id,
     attn_scale,
-    rms_norm_eps
+    rms_norm_eps,
+    batch_size
 )
 torch.cuda.synchronize()
 
