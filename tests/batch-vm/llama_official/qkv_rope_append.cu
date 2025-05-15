@@ -1,4 +1,5 @@
 #include "llama.cuh"
+#include "matmul_pipeline.cuh"
 
 using namespace kittens;
 using namespace kittens::prototype;
@@ -6,265 +7,205 @@ using namespace kittens::prototype;
 namespace kittens::prototype::vm {
 
 using globals = llama_8b_globals;
+using config = llama_config;
 
 template <typename Config, typename Globals>
 struct qkv_rope_append {
     static constexpr int opcode = OPCODE_QKV_RopeAppend;
-    static constexpr int PIPELINE_STAGES = 3;
-    static constexpr int REDUCTION_BLOCK_SIZE = 128;
     static constexpr int K_BLOCK_START = Globals::num_attention_heads;
     static constexpr int V_BLOCK_START = Globals::num_attention_heads + Globals::num_kv_heads;
-    static constexpr int NUM_ITERS = Globals::hidden_dim / REDUCTION_BLOCK_SIZE;
+    static constexpr int NUM_ITERS = Globals::hidden_dim / PIPELINE_K_DIM;
 
-    // static_assert(Globals::matmul_out_block_size==128 && Globals::head_dim==128);
-
-    using weight_tile = st_bf<Globals::head_dim, REDUCTION_BLOCK_SIZE>;
-    using activation_tile = st_bf<Globals::matmul_out_block_size, REDUCTION_BLOCK_SIZE>;
-    using output_tile = st_bf<Globals::matmul_out_block_size, Globals::head_dim>;
-    using output_vec = sv_bf<Globals::head_dim>;
-    using rope_vec = sv_fl<Globals::head_dim>;
+    using rope_vec = sv_fl<128>;
+    using rope_vec_256 = sv_fl<256>;
 
     struct parsed_instruction {
-        int layer_idx;
-        int batch_start_idx;
-        int block_idx;
+        int layer;
+        int row;
+        int col;
         __device__ inline parsed_instruction(typename Config::instruction_t &instruction) {
-            layer_idx = instruction[1];
-            batch_start_idx = instruction[2]; // batch start idx, in units of 128 (`Globals::matmul_out_block_size`)
-            block_idx = instruction[3]; // output block idx, in units of 128 (`Globals::head_dim`)
+            layer = instruction[1];
+            row = instruction[2];
+            col = instruction[3];
         }
         __device__ inline parsed_instruction(state<Config> &s) : parsed_instruction(s.instruction()) {}
     };
 
-    __device__ static inline int get_weight_page(state<Config> &s, int stage)     { return 0 + stage*2; } // 32 KB pages
-    __device__ static inline int get_activation_page(state<Config> &s, int stage) { return 6 + stage*2; } // 32 KB pages
+    using matmul_pipeline = matmul_pipeline<config, globals, parsed_instruction, &Globals::rms_rope_intermediates, &Globals::qkv_weights, NUM_ITERS>;
 
-    __device__ static inline semaphore &inputs_arrived(state<Config> &s, int stage)  { return s.semaphores()[PIPELINE_STAGES*0 + stage]; }
-    __device__ static inline semaphore &inputs_finished(state<Config> &s, int stage) { return s.semaphores()[PIPELINE_STAGES*1 + stage]; }
-    __device__ static inline semaphore &outputs_arrived(state<Config> &s, int stage) { return s.semaphores()[PIPELINE_STAGES*2 + stage]; }
-    __device__ static inline semaphore &outputs_shared(state<Config> &s)             { return s.semaphores()[PIPELINE_STAGES*3 + 0]; }
-    __device__ static inline semaphore &rope_arrived(state<Config> &s)               { return s.semaphores()[PIPELINE_STAGES*3 + 1]; }
-
+    __device__ static inline semaphore &rope_arrived(state<Config> &s)               { return s.semaphores()[matmul_pipeline::SEM_COUNT]; }
 
     struct controller {
         static __device__ int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query) {
-            return query;
+            return matmul_pipeline::release_lid(g, instruction, query);
         }
         static __device__ int init_semaphores(const Globals &g, state<Config> &s) {
-            for(int i = 0; i < PIPELINE_STAGES; i++) {
-                init_semaphore(inputs_arrived(s, i), 0, 2);
-                init_semaphore(inputs_finished(s, i), 0, 1);
-                init_semaphore(outputs_arrived(s, i), 0, 1);
-            }
-            init_semaphore(outputs_shared(s), 0, Config::NUM_CONSUMER_WARPS);
-            init_semaphore(rope_arrived(s), 0, 1);
-            return 3*PIPELINE_STAGES + 2;
+            init_semaphore(rope_arrived(s), 1);
+            return matmul_pipeline::init_semaphores(s) + 1;
         }
     };
 
     struct loader {
         static __device__ void run(const Globals &g, state<Config> &s) {
-            // static_assert(Config::SCRATCH_BYTES >= 2*sizeof(rope_vec), "Not enough scratch space for rope table");
-            // parsed_instruction inst{s};
-            // int laneid = warp::laneid();
+            parsed_instruction inst{s};
+            
+            matmul_pipeline::template loader_loop<1>(s, g, inst.layer);
+            warp::sync();
+            
+            // TODO: Should probably update to use scratch
+            if (laneid() == 0)
+            {
+                int unfreed_page_base = matmul_pipeline::get_used_page_at(4);
 
-            // if (laneid == 0) { // load weights
-            //     uint32_t phasebits = 0xFFFF0000;
-            //     for (int i = 0; i < NUM_ITERS; i++) {
-            //         int stage = i % PIPELINE_STAGES;
-            //         int weight_page = get_weight_page(s, stage);
-            //         weight_tile &weight = *reinterpret_cast<weight_tile *>(s.pages[weight_page].data);
+                // Only use last page, free other page right away
+                s.finish_page(unfreed_page_base, config::NUM_CONSUMER_WARPS);
 
-            //         wait(inputs_finished(s, stage), get_phasebit<1>(phasebits, stage));
-            //         update_phasebit<1>(phasebits, stage);
-            //         tma::expect(inputs_arrived(s, stage), weight);
+                rope_vec &rope_cos = *reinterpret_cast<rope_vec *>(
+                    s.pages[unfreed_page_base + 1].ptr());
+                
+                rope_vec &rope_sin = *reinterpret_cast<rope_vec *>(
+                    s.pages[unfreed_page_base + 1].ptr(1 * sizeof(rope_vec)));
 
-            //         if(i < PIPELINE_STAGES) {
-            //             s.wait_page_ready(weight_page);
-            //             s.wait_page_ready(weight_page + 1);
-            //         }
-            //         tma::load_async(weight, g.qkv_weights, {inst.layer_idx, inst.block_idx, i}, inputs_arrived(s, stage));
-            //     }
-            //     for (int i = 0; i < PIPELINE_STAGES; i++) {
-            //         int stage = (NUM_ITERS + i) % PIPELINE_STAGES;
-            //         wait(outputs_arrived(s, stage), 0);
-            //         int weight_page = get_weight_page(s, stage);
-            //         s.finish_page(weight_page, Config::NUM_CONSUMER_WARPS);
-            //         s.finish_page(weight_page + 1, Config::NUM_CONSUMER_WARPS);
-            //     }
-            // } else if (laneid == 1) { // load activations
-            //     while (*(volatile int *)&g.Bar[{inst.layer_idx, OPCODE_AttnNorm - 1, inst.batch_start_idx, 0}] < Globals::matmul_batch_block_size)
-            //         __nanosleep(20);
-
-            //     uint32_t phasebits = 0xFFFF0000;
-            //     for (int i = 0; i < NUM_ITERS; i++) {
-            //         int stage = i % PIPELINE_STAGES;
-            //         int activation_page = get_activation_page(s, stage);
-            //         activation_tile &activation = *reinterpret_cast<activation_tile *>(s.pages[activation_page].data);
-
-            //         wait(inputs_finished(s, stage), get_phasebit<1>(phasebits, stage));
-            //         update_phasebit<1>(phasebits, stage);
-            //         tma::expect(inputs_arrived(s, stage), activation);
-
-            //         if(i < PIPELINE_STAGES) {
-            //             s.wait_page_ready(activation_page);
-            //             s.wait_page_ready(activation_page + 1);
-            //         }
-            //         tma::load_async(activation, g.rms_rope_intermediates, {inst.batch_start_idx, i}, inputs_arrived(s, stage));
-            //     }
-            //     for (int i = 0; i < PIPELINE_STAGES - 1; i++) { // last stage is used as output page
-            //         int stage = (NUM_ITERS + i) % PIPELINE_STAGES;
-            //         wait(outputs_arrived(s, stage), 0);
-            //         int activation_page = get_activation_page(s, stage);
-            //         s.finish_page(activation_page, Config::NUM_CONSUMER_WARPS);
-            //         s.finish_page(activation_page + 1, Config::NUM_CONSUMER_WARPS);
-            //     }
-            // } else if (laneid == 2 && inst.block_idx < V_BLOCK_START) { // load rope table
-            //     rope_vec &rope_cos = *reinterpret_cast<rope_vec *>(s.scratch());
-            //     rope_vec &rope_sin = *reinterpret_cast<rope_vec *>(reinterpret_cast<char *>(s.scratch()) + sizeof(rope_vec));
-            //     tma::expect(rope_arrived(s), rope_cos, rope_sin);
-            //     tma::load_async(rope_cos, g.rope_cos, {(int)g.pos_id, 0}, rope_arrived(s));
-            //     tma::load_async(rope_sin, g.rope_sin, {(int)g.pos_id, 0}, rope_arrived(s));
-            // } else if (laneid == 12) {
-            //     s.wait_page_ready(laneid);
-            //     s.finish_page(laneid, Config::NUM_CONSUMER_WARPS); // release the unused page immediately
-            // }
+                tma::expect_bytes(rope_arrived(s), 2 * sizeof(rope_vec));
+                tma::load_async(rope_cos, g.rope_cos, {(int)g.pos_id, 0}, rope_arrived(s));
+                tma::load_async(rope_sin, g.rope_sin, {(int)g.pos_id, 0}, rope_arrived(s));
+            }
         }
     };
 
     struct launcher {
         static __device__ void run(const Globals &g, state<Config> &s) {
-            // parsed_instruction inst{s};
-            // int laneid = warp::laneid();
-            // uint32_t phasebits = 0xFFFF0000;
-
-            // s.wait_tensor_ready();
-
-            // if (laneid == 0) {
-            //     for (int i = 0; i < NUM_ITERS; i++) {
-            //         int stage = i % PIPELINE_STAGES;
-            //         wait(inputs_arrived(s, stage), get_phasebit<0>(phasebits, stage));
-            //         update_phasebit<0>(phasebits, stage);
-            //         auto accumulator = s.tensor_alloc.template allocate<tt<float, Globals::matmul_out_block_size, Globals::head_dim>>(stage*Globals::head_dim);
-            //         weight_tile &weight = *reinterpret_cast<weight_tile *>(s.pages[get_weight_page(s, stage)].data);
-            //         activation_tile &activation = *reinterpret_cast<activation_tile *>(s.pages[get_activation_page(s, stage)].data);
-            //         if (i < PIPELINE_STAGES)
-            //             mm<transpose::N, transpose::T>(accumulator, activation, weight, inputs_finished(s, stage));
-            //         else if (i >= NUM_ITERS - PIPELINE_STAGES)
-            //             mma<transpose::N, transpose::T>(accumulator, activation, weight, outputs_arrived(s, stage));
-            //         else
-            //             mma<transpose::N, transpose::T>(accumulator, activation, weight, inputs_finished(s, stage));
-            //     }
-            // }
+            matmul_pipeline::launcher_loop(s, g);
         }
     };
-
+    using half_consumer = group<config::NUM_CONSUMER_WARPS/2>;
+    using constorer = group<config::NUM_CONSUMER_WARPS + 1>;
+    using consumer_group = group<config::NUM_CONSUMER_WARPS>;
     struct consumer {
         static __device__ void run(const Globals &g, state<Config> &s) {
-            // static_assert(Config::NUM_CONSUMER_WARPS == 8, "NUM_CONSUMER_WARPS must be 8");
-            // using consumer = group<Config::NUM_CONSUMER_WARPS>;
+            parsed_instruction inst{s};
+            wait(matmul_pipeline::outputs_arrived(s), 0);
+            rt_fl<16, 128> out_fl[2], out_rotated_fl[2];
+            auto dt0 = s.tensor_alloc.template allocate<tt<float, 128, 128>>(half_consumer::groupid() * 256);
+            auto dt1 = s.tensor_alloc.template allocate<tt<float, 128, 128>>(half_consumer::groupid() * 256 + 128);
+            half_consumer::load_async(out_fl[0], dt0);
+            half_consumer::load_async(out_fl[1], dt1);
+            tensor_load_wait();
 
-            // parsed_instruction inst{s};
-            // rt_fl<Globals::matmul_out_block_size / Config::NUM_CONSUMER_WARPS, Globals::head_dim> output_fl;
-            // consumer::zero(output_fl);
+            rv_fl<128, ducks::rv_layout::align> rope_cos_vec;
+            rv_fl<128, ducks::rv_layout::align> rope_sin_vec;
+            
+            if ((inst.col * 2) < V_BLOCK_START) {
+                wait(rope_arrived(s), 0);
+                int rope_page = matmul_pipeline::get_used_page_at(5);
+                rope_vec &rope_cos = *reinterpret_cast<rope_vec *>(s.pages[rope_page].data);
+                rope_vec &rope_sin = *reinterpret_cast<rope_vec *>(
+                    reinterpret_cast<char *>(s.pages[rope_page].data) + sizeof(rope_vec));
+                
+                warp::load(rope_cos_vec, rope_cos);
+                warp::load(rope_sin_vec, rope_sin);
 
-            // for (int i = 0; i < PIPELINE_STAGES; i++) {
-            //     int stage = (NUM_ITERS + i) % PIPELINE_STAGES;
-            //     auto accumulator = s.tensor_alloc.template allocate<tt<float, Globals::matmul_out_block_size, Globals::head_dim>>(stage*Globals::head_dim);
-            //     wait(outputs_arrived(s, stage), 0);
-            //     rt_fl<Globals::matmul_out_block_size / Config::NUM_CONSUMER_WARPS, Globals::head_dim> acc_fl;
-            //     consumer::load_async(acc_fl, accumulator);
-            //     tensor_load_wait(); 
-            //     __syncwarp();
-            //     consumer::add(output_fl, output_fl, acc_fl);
-            // }
-            // warp::arrive(s.tensor_finished);
+                #pragma unroll
+                for(int tile = 0; tile < 2; tile++) {
+                    // Rotate
+                    static_assert(out_fl[tile].width >= 2 && out_fl[tile].width % 2 == 0);
+                    #pragma unroll
+                    for (int i = 0; i < out_fl[tile].height; i++) {
+                        // Build -y half 
+                        #pragma unroll
+                        for (int j = 0; j < out_fl[tile].width/2; j++) {
+                            #pragma unroll
+                            for (int k = 0; k < out_fl[tile].packed_per_tile; k++) { // -x2
+                                out_rotated_fl[tile].tiles[i][j].data[k] = out_fl[tile].tiles[i][j + out_fl[tile].width/2].data[k];
+                                out_rotated_fl[tile].tiles[i][j].data[k].x *= -1;
+                                out_rotated_fl[tile].tiles[i][j].data[k].y *= -1;
+                            }
+                        }
 
-            // if (inst.block_idx < V_BLOCK_START) {
-            //     // Load RoPE parameters
-            //     wait(rope_arrived(s), 0);
-            //     rope_vec &rope_cos = *reinterpret_cast<rope_vec *>(s.scratch());
-            //     rope_vec &rope_sin = *reinterpret_cast<rope_vec *>(reinterpret_cast<char *>(s.scratch()) + sizeof(rope_vec));
-            //     row_vec<rt_fl<Globals::matmul_out_block_size / Config::NUM_CONSUMER_WARPS, Globals::head_dim>> rope_cos_rv;
-            //     row_vec<rt_fl<Globals::matmul_out_block_size / Config::NUM_CONSUMER_WARPS, Globals::head_dim>> rope_sin_rv;
-            //     warp::load(rope_cos_rv, rope_cos);
-            //     warp::load(rope_sin_rv, rope_sin);
+                        // Build +x half 
+                        #pragma unroll
+                        for (int j = 0; j < out_fl[tile].width/2; j++) {
+                            #pragma unroll
+                            for (int k = 0; k < out_fl[tile].packed_per_tile; k++) { // x1
+                                out_rotated_fl[tile].tiles[i][j + out_fl[tile].width/2].data[k] = out_fl[tile].tiles[i][j].data[k];
+                            }
+                        }
+                    }
 
-            //     // Apply RoPE
-            //     rt_fl<Globals::matmul_out_block_size / Config::NUM_CONSUMER_WARPS, Globals::head_dim> output_rotated;
+                    warp::mul_col(out_fl[tile], out_fl[tile], rope_cos_vec);
+                    warp::mul_col(out_rotated_fl[tile], out_rotated_fl[tile], rope_sin_vec);
+                    warp::add(out_fl[tile], out_fl[tile], out_rotated_fl[tile]);     
+                }         
+            }
 
-            //     // Rotate
-            //     static_assert(output_fl.width >= 2 && output_fl.width % 2 == 0);
-            //     #pragma unroll
-            //     for (int i = 0; i < output_fl.height; i++) {
-            //         #pragma unroll
-            //         for (int j = 0; j < output_fl.width/2; j++) {
-            //             #pragma unroll
-            //             for (int k = 0; k < output_fl.packed_per_tile; k++) { // -x2
-            //                 output_rotated.tiles[i][j].data[k] = output_fl.tiles[i][j + output_fl.width/2].data[k];
-            //                 output_rotated.tiles[i][j].data[k].x *= -1;
-            //                 output_rotated.tiles[i][j].data[k].y *= -1;
-            //             }
-            //         }
-            //         #pragma unroll
-            //         for (int j = 0; j < output_fl.width/2; j++) {
-            //             #pragma unroll
-            //             for (int k = 0; k < output_fl.packed_per_tile; k++) { // x1
-            //                 output_rotated.tiles[i][j + output_fl.width/2].data[k] = output_fl.tiles[i][j].data[k];
-            //             }
-            //         }
-            //     }
-
-            //     warp::mul_col(output_fl, output_fl, rope_cos_rv);
-            //     warp::mul_col(output_rotated, output_rotated, rope_sin_rv);
-            //     consumer::add(output_fl, output_fl, output_rotated);
-            // }
-
-            // rt_bf<Globals::matmul_out_block_size / Config::NUM_CONSUMER_WARPS, Globals::head_dim> output_bf;
-            // consumer::copy(output_bf, output_fl);
-
-            // int last_stage = (NUM_ITERS - 1) % PIPELINE_STAGES;
-            // int output_page = get_activation_page(s, last_stage);
-            // output_tile &output = *reinterpret_cast<output_tile *>(s.pages[output_page].data);
-            // consumer::store(output, output_bf);
-            // __syncwarp();
-            // warp::arrive(outputs_shared(s));
+            __syncwarp();
+            warp::arrive(s.tensor_finished);
+            int store_bar = 10 + s.instruction_index%2;
+            auto *smem = reinterpret_cast<st_bf<16, 128>*>(s.scratch());
+            for(int i = 0; i < config::NUM_CONSUMER_WARPS; i++) {
+                if(warpid() == i) {
+                    warp::store(smem[0], out_fl[0]);
+                    warp::store(smem[1], out_fl[1]);
+                }
+                constorer::sync(store_bar); // arrive for storer
+                constorer::sync(store_bar); // await release from storer
+            }
         }
     };
 
     struct storer {
         static __device__ void run(const Globals &g, state<Config> &s) {
-            // parsed_instruction inst{s};
-            // int laneid = warp::laneid();
+            parsed_instruction inst{s};
+            int store_bar = 10 + s.instruction_index%2;
+            auto &smem = *reinterpret_cast<st_bf<16, 256>*>(s.scratch());
+            for(int i = 0; i < config::NUM_CONSUMER_WARPS; i++) {
+                constorer::sync(store_bar); // await arrive from consumer
 
-            // wait(outputs_shared(s), 0);
-            // int output_page = get_activation_page(s, (NUM_ITERS - 1) % PIPELINE_STAGES);
-            // output_tile &output = *reinterpret_cast<output_tile *>(s.pages[output_page].data);
+                if (inst.col < K_BLOCK_START)
+                {
+                    warp::tma::store_async(g.q_post_rope, smem, {16*inst.row + 8*(i>=8) + 2*(i%4) + ((i%8)/4), inst.col});
+                }
+                else if (inst.col < V_BLOCK_START)
+                {   
+                    warp::tma::store_async(g.k_cache, smem, 
+                        {
+                            inst.layer*(int)g.batch_size/(int)256 + (16*inst.row + 8*(i>=8) + 2*(i%4) + ((i%8)/4)), 
+                            (int)g.pos_id,
+                            inst.col - K_BLOCK_START, 
+                            0
+                        });
+                }
+                else
+                {
+                    warp::tma::store_async(g.v_cache, smem, 
+                        {
+                            inst.layer*(int)g.batch_size/(int)256 + (16*inst.row + 8*(i>=8) + 2*(i%4) + ((i%8)/4)), 
+                            (int)g.pos_id,
+                            inst.col - V_BLOCK_START, 
+                            0
+                        });
+                }
 
-            // if (laneid == 0) {
-            //     if (inst.block_idx < K_BLOCK_START) 
-            //         tma::store_async(g.q_post_rope, output, {inst.batch_start_idx, inst.block_idx});
-            //     else if (inst.block_idx < V_BLOCK_START) 
-            //         tma::store_async<dim::BATCH, cache_policy::NORMAL>(g.k_cache, output, 
-            //             {inst.layer_idx*(int)g.batch_size/(int)Globals::matmul_out_block_size + inst.batch_start_idx, 
-            //                 (int)g.pos_id, inst.block_idx - K_BLOCK_START, 0});
-            //     else
-            //         tma::store_async<dim::BATCH, cache_policy::NORMAL>(g.v_cache, output, 
-            //             {inst.layer_idx*(int)g.batch_size/(int)Globals::matmul_out_block_size + inst.batch_start_idx, 
-            //                 (int)g.pos_id, inst.block_idx - V_BLOCK_START, 0});
-            //     tma::store_async_wait();
-            //     s.finish_page(output_page, Config::NUM_CONSUMER_WARPS);
-            //     s.finish_page(output_page + 1, Config::NUM_CONSUMER_WARPS);
-                
-            //     int start_bar = (inst.block_idx * Globals::matmul_out_block_size) / Globals::head_dim;
-            //     int num_generated_heads = Globals::matmul_out_block_size / Globals::head_dim;
-            //     for (int i = 0; i < num_generated_heads; i++) {
-            //         atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, static_cast<int>(inst.batch_start_idx), start_bar + i}], 1);
-            //     }
-                
-            // }
+                tma::store_async_read_wait();
+                constorer::sync(store_bar); // release back to consumer
+            }
+            warp::sync();
+
+            if (kittens::laneid() == 0)
+            {
+                int rope_page = matmul_pipeline::get_used_page_at(5);
+                s.finish_page(rope_page, config::NUM_CONSUMER_WARPS);
+            }
         }
     };
 };
 
 }
+
+/*
+If I'm still working with the same head dim but Im now modifying my code to work with 256 x 256 tiles at a time, and each warp in the consumer has a 
+
+rt_fl<16, 256> out_fl, out_rotated_fl;
+
+16 x 256 tile. How can I modify this code to easily still apply rope to my 16 x 256 tile with the same vector of 128? 
+*/

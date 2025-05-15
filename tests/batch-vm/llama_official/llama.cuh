@@ -160,10 +160,10 @@ namespace kittens::prototype::vm
         using logits_t = gl<bf16, 1, 1, -1, -1, st_bf<16, 256>>;
 
         using norm_weights_t = gl<bf16, 1, 1, -1, hidden_dim, sv_bf<hidden_dim>>;
-        using rope_table_t = gl<float, 1, 1, -1, head_dim>;
+        using rope_table_t = gl<float, 1, 1, -1, head_dim, sv_fl<head_dim>>;
         
         // KV Cache format: (num_layers * batch_size, sequence_length, num_heads, head_dim)
-        using kv_cache_t = gl<bf16, -1, -1, num_kv_heads, head_dim, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>>;
+        using kv_cache_t = gl<bf16, -1, -1, num_kv_heads, head_dim, tma::descriptor<st_bf<kv_block_size, head_dim>, 1>, st_bf<16, 256>>;
 
         using barriers = gl<uint, -1, -1, -1, -1>;
 

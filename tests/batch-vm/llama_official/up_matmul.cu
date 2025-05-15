@@ -53,9 +53,7 @@ namespace kittens::prototype::vm
                 matmul_pipeline::template loader_loop<2>(s, g, inst.layer);
 
                 // /*
-                // If specify one, now have TWO free pages here:
-                // - Get first unfreed page by calling: matmul_pipeline::release_lid(g, instruction, 4)
-                // - Next page is + 1 
+                // If specify two in loader_loop, now have FOUR free pages here:
                 // */
                 warp::sync(); // need to sync here 
                 if (laneid() < 2) {
