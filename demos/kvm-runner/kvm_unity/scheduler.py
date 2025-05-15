@@ -175,13 +175,7 @@ def zig_zag_assign_to_sms(
     return sm_queues
 
 
-def wave_assign_to_sms(
-    schedule: Schedule,
-) -> list[list[Instruction]]:
-    instructions = schedule.get_linear_instructions()
-    globs = schedule.globs
-    sm_count = globs.sm_count()
-
+def collect_into_waves(instructions: list[Instruction]):
     waves: list[list[Instruction]] = []
     cur = []
     for instruction in instructions:
@@ -193,6 +187,18 @@ def wave_assign_to_sms(
 
     if len(cur) > 0:
         waves.append(cur)
+
+    return waves
+
+
+def wave_assign_to_sms(
+    schedule: Schedule,
+) -> list[list[Instruction]]:
+    instructions = schedule.get_linear_instructions()
+    globs = schedule.globs
+    sm_count = globs.sm_count()
+
+    waves = collect_into_waves(instructions)
 
     sm_queues = [[] for _ in range(sm_count)]
 
@@ -211,11 +217,37 @@ def wave_assign_to_sms(
     return sm_queues
 
 
+def pool_assign_to_sms(
+    instructions: list[Instruction], sm_count: int, memory_fraction: float
+) -> list[list[Instruction]]:
+    memory_instructions = []
+    compute_instructions = []
+
+    for ins in instructions:
+        pool = ins.tags()["pool"]
+        match pool:
+            case "memory":
+                memory_instructions.append(ins)
+            case "compute":
+                compute_instructions.append(ins)
+            case _:
+                raise ValueError(f"Unknown pool: {pool}")
+
+    mem_sms = round(sm_count * memory_fraction)
+    compute_sms = sm_count - mem_sms
+
+    memory_queues = round_robin_assign_to_sms(memory_instructions, mem_sms)
+    compute_queues = round_robin_assign_to_sms(compute_instructions, compute_sms)
+
+    return memory_queues + compute_queues
+
+
 def assign_to_sms(
     mode: str,
     schedule: Schedule | None = None,
     instructions: list[Instruction] | None = None,
     sm_count: int | None = None,
+    memory_fraction: float | None = None,
 ):
     if schedule is not None:
         instructions = schedule.get_linear_instructions()
@@ -230,6 +262,11 @@ def assign_to_sms(
             return wave_assign_to_sms(schedule)
         case "dag":
             return assign_dag_to_sms(schedule)
+        case "pool":
+            assert memory_fraction is not None
+            return pool_assign_to_sms(
+                instructions, sm_count, memory_fraction=memory_fraction
+            )
         case _:
             raise ValueError(f"Unknown mode: {mode}")
 
@@ -244,20 +281,12 @@ def serialize_and_pad(instruction: Instruction):
 def tensorize_instructions(
     globs: BaseGlobals,
     instruction_queues: list[list[Instruction]],
-    barrier_init_val: int = 0,
 ):
     num_sms = globs.sm_count()
 
     max_queue_len = max(len(queue) for queue in instruction_queues)
     for queue in instruction_queues:
         queue.extend([NoOp()] * (max_queue_len - len(queue)))
-
-    max_opcode = max(
-        [
-            max(instruction.opcode() for instruction in queue)
-            for queue in instruction_queues
-        ]
-    )
 
     flattened = []
     for queue in instruction_queues:
