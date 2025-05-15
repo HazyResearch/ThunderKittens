@@ -149,7 +149,7 @@ template<typename config> struct state {
         for (int i = 0; i < config::INSTRUCTION_PIPELINE_STAGES_BITS; i++) {
             auto bit = (instruction_index >> i) & 1;
             careful_wait(page_finished[pid][i], bit);
-            wait(page_finished[pid][i], bit);
+            // wait(page_finished[pid][i], bit);
         }
     }
 
