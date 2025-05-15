@@ -49,23 +49,13 @@ struct qkv_rope_append {
         static __device__ void run(const Globals &g, state<Config> &s) {
             parsed_instruction inst{s};
             
-            matmul_pipeline::template loader_loop<1>(s, g, inst.layer);
+            matmul_pipeline::template loader_loop(s, g, inst.layer);
             warp::sync();
             
             // TODO: Should probably update to use scratch
-            if (laneid() == 0)
-            {
-                int unfreed_page_base = matmul_pipeline::get_used_page_at(4);
-
-                // Only use last page, free other page right away
-                s.finish_page(unfreed_page_base, config::NUM_CONSUMER_WARPS);
-
-                rope_vec &rope_cos = *reinterpret_cast<rope_vec *>(
-                    s.pages[unfreed_page_base + 1].ptr());
-                
-                rope_vec &rope_sin = *reinterpret_cast<rope_vec *>(
-                    s.pages[unfreed_page_base + 1].ptr(1 * sizeof(rope_vec)));
-
+            if ((inst.col * 2) < V_BLOCK_START && laneid() == 0) {
+                rope_vec &rope_cos = *reinterpret_cast<rope_vec*>((uint8_t*)(s.scratch()) + 8192);
+                rope_vec &rope_sin = *reinterpret_cast<rope_vec*>((uint8_t*)(s.scratch()) + 8192 + sizeof(rope_vec));
                 tma::expect_bytes(rope_arrived(s), 2 * sizeof(rope_vec));
                 tma::load_async(rope_cos, g.rope_cos, {(int)g.pos_id, 0}, rope_arrived(s));
                 tma::load_async(rope_sin, g.rope_sin, {(int)g.pos_id, 0}, rope_arrived(s));
@@ -84,71 +74,70 @@ struct qkv_rope_append {
     struct consumer {
         static __device__ void run(const Globals &g, state<Config> &s) {
             parsed_instruction inst{s};
-            wait(matmul_pipeline::outputs_arrived(s), 0);
-            rt_fl<16, 128> out_fl[2], out_rotated_fl[2];
-            auto dt0 = s.tensor_alloc.template allocate<tt<float, 128, 128>>(half_consumer::groupid() * 256);
-            auto dt1 = s.tensor_alloc.template allocate<tt<float, 128, 128>>(half_consumer::groupid() * 256 + 128);
-            half_consumer::load_async(out_fl[0], dt0);
-            half_consumer::load_async(out_fl[1], dt1);
-            tensor_load_wait();
-
-            rv_fl<128, ducks::rv_layout::align> rope_cos_vec;
-            rv_fl<128, ducks::rv_layout::align> rope_sin_vec;
-            
             if ((inst.col * 2) < V_BLOCK_START) {
+
+                rt_fl<16, 16> intermediate_out, intermediate_rotated_out;
+
+                rt_bf<16, 16> output[16]; // 64 registers for the final output.
+
                 wait(rope_arrived(s), 0);
-                int rope_page = matmul_pipeline::get_used_page_at(5);
-                rope_vec &rope_cos = *reinterpret_cast<rope_vec *>(s.pages[rope_page].data);
-                rope_vec &rope_sin = *reinterpret_cast<rope_vec *>(
-                    reinterpret_cast<char *>(s.pages[rope_page].data) + sizeof(rope_vec));
                 
-                warp::load(rope_cos_vec, rope_cos);
-                warp::load(rope_sin_vec, rope_sin);
-
+                wait(matmul_pipeline::outputs_arrived(s), 0);
+                
                 #pragma unroll
-                for(int tile = 0; tile < 2; tile++) {
-                    // Rotate
-                    static_assert(out_fl[tile].width >= 2 && out_fl[tile].width % 2 == 0);
-                    #pragma unroll
-                    for (int i = 0; i < out_fl[tile].height; i++) {
-                        // Build -y half 
-                        #pragma unroll
-                        for (int j = 0; j < out_fl[tile].width/2; j++) {
-                            #pragma unroll
-                            for (int k = 0; k < out_fl[tile].packed_per_tile; k++) { // -x2
-                                out_rotated_fl[tile].tiles[i][j].data[k] = out_fl[tile].tiles[i][j + out_fl[tile].width/2].data[k];
-                                out_rotated_fl[tile].tiles[i][j].data[k].x *= -1;
-                                out_rotated_fl[tile].tiles[i][j].data[k].y *= -1;
-                            }
-                        }
+                for(int i = 0; i < 16; i++) {
+                    auto dt = s.tensor_alloc.template allocate<tt<float, 128, 16>>(half_consumer::groupid() * 256 + 16 * i);
+                    half_consumer::load_async(intermediate_out, dt);
 
-                        // Build +x half 
-                        #pragma unroll
-                        for (int j = 0; j < out_fl[tile].width/2; j++) {
-                            #pragma unroll
-                            for (int k = 0; k < out_fl[tile].packed_per_tile; k++) { // x1
-                                out_rotated_fl[tile].tiles[i][j + out_fl[tile].width/2].data[k] = out_fl[tile].tiles[i][j].data[k];
-                            }
-                        }
+                    sv_fl<16> &rope_cos = *reinterpret_cast<sv_fl<16> *>((uint8_t*)(s.scratch()) + 8192 + (i%8)*64);
+                    sv_fl<16> &rope_sin = *reinterpret_cast<sv_fl<16> *>((uint8_t*)(s.scratch()) + 8192 + sizeof(sv_fl<128>) + (i%8)*64);
+                    rv_fl<16, ducks::rv_layout::align> rope_cos_vec, rope_sin_vec;
+
+                    warp::load(rope_cos_vec, rope_cos);
+                    warp::load(rope_sin_vec, rope_sin);
+
+                    // Rotate
+                    #pragma unroll
+                    for (int k = 0; k < intermediate_out.packed_per_tile; k++) {
+                        intermediate_rotated_out.tiles[0][0].data[k].x = -intermediate_out.tiles[0][0].data[k].y;
+                        intermediate_rotated_out.tiles[0][0].data[k].y =  intermediate_out.tiles[0][0].data[k].x;
                     }
 
-                    warp::mul_col(out_fl[tile], out_fl[tile], rope_cos_vec);
-                    warp::mul_col(out_rotated_fl[tile], out_rotated_fl[tile], rope_sin_vec);
-                    warp::add(out_fl[tile], out_fl[tile], out_rotated_fl[tile]);     
-                }         
-            }
+                    warp::mul_col(intermediate_out, intermediate_out, rope_cos_vec);
+                    warp::mul_col(intermediate_rotated_out, intermediate_rotated_out, rope_sin_vec);
+                    warp::add(intermediate_out, intermediate_out, intermediate_rotated_out);
 
-            __syncwarp();
-            warp::arrive(s.tensor_finished);
-            int store_bar = 10 + s.instruction_index%2;
-            auto *smem = reinterpret_cast<st_bf<16, 128>*>(s.scratch());
-            for(int i = 0; i < config::NUM_CONSUMER_WARPS; i++) {
-                if(warpid() == i) {
-                    warp::store(smem[0], out_fl[0]);
-                    warp::store(smem[1], out_fl[1]);
+                    warp::copy(output[i], intermediate_out);
+                }   
+
+                tensor_load_wait();
+                __syncwarp();
+                warp::arrive(s.tensor_finished);
+                int store_bar = 10 + s.instruction_index%2;
+                auto &smem = *reinterpret_cast<st_bf<16, 256>*>(s.scratch());
+                for(int i = 0; i < config::NUM_CONSUMER_WARPS; i++) {
+                    if(warpid() == i) {
+                        warp::store(smem, reinterpret_cast<rt_bf<16, 256>&>(output));
+                    }
+                    constorer::sync(store_bar); // arrive for storer
+                    constorer::sync(store_bar); // await release from storer
                 }
-                constorer::sync(store_bar); // arrive for storer
-                constorer::sync(store_bar); // await release from storer
+            }
+            else {
+                wait(matmul_pipeline::outputs_arrived(s), 0);
+                rt_bf<16, 256> out;
+                auto dt = s.tensor_alloc.template allocate<tt<float, 128, 256>>(half_consumer::groupid() * 256);
+                half_consumer::load_async(out, dt);
+                tensor_load_wait();
+                __syncwarp();
+                warp::arrive(s.tensor_finished);
+                int store_bar = 10 + s.instruction_index%2;
+                auto &smem = *reinterpret_cast<st_bf<16, 256>*>(s.scratch());
+                for(int i = 0; i < config::NUM_CONSUMER_WARPS; i++) {
+                    if(warpid() == i) warp::store(smem, out);
+                    constorer::sync(store_bar); // arrive for storer
+                    constorer::sync(store_bar); // await release from storer
+                }
             }
         }
     };
