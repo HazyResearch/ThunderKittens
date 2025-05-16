@@ -32,7 +32,6 @@ class ScriptConfig(pydra.Config):
     layer_limit: int | None = 1
     skip_pyvm: bool = False
     instruction_reps: int = 1
-    exec_reps: int = 1
     skip_starting_instructions: bool = False
     barrier_init_val: int = 0
     truncate_instructions: int | None = None
@@ -45,6 +44,9 @@ class ScriptConfig(pydra.Config):
     batch_size: int = 1
     skip_cost: bool = False
     interleave_rope: bool = True
+    num_warmup: int = 0
+    num_iters: int = 1
+    diff: bool = True
 
     def full(self):
         self.layer_limit = None
@@ -195,7 +197,10 @@ def main(config: ScriptConfig):
         gpy.instructions.zero_()
         gkvm.instructions.zero_()
 
-    for _ in tqdm(range(config.exec_reps)):
+    kvm_times = []
+    num_total_iters = config.num_warmup + config.num_iters
+
+    for _ in tqdm(range(num_total_iters)):
         if len(starting_instructions) > 0 and not config.skip_starting_instructions:
             print("running starting instructions...")
 
@@ -216,15 +221,19 @@ def main(config: ScriptConfig):
             print(f"pyvm time: {end - start}")
 
         print("interpreting with kvm...")
-        start = time.time()
-        kvm_interpreter.interpret(gkvm)
         torch.cuda.synchronize()
-        end = time.time()
-        print(f"kvm time: {end - start}")
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        start_event.record()
+        kvm_interpreter.interpret(gkvm)
+        end_event.record()
+        torch.cuda.synchronize()
+        kvm_time = start_event.elapsed_time(end_event)
+        print(f"kvm time: {kvm_time} ms")
+        kvm_times.append(kvm_time)
 
-        print("done! diffing tensors:")
-
-        gpy.diff(gkvm)
+        if config.diff:
+            gpy.diff(gkvm)
 
     if config.bp:
         breakpoint()
@@ -241,6 +250,10 @@ def main(config: ScriptConfig):
 
         with open(config.outfile, "wb") as f:
             pickle.dump(outdata, f)
+
+    non_warmup_kvm_times = kvm_times[config.num_warmup :]
+    mean_kvm_time = sum(non_warmup_kvm_times) / len(non_warmup_kvm_times)
+    print(f"mean kvm time: {mean_kvm_time} ms")
 
 
 if __name__ == "__main__":
