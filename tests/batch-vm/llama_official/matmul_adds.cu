@@ -51,8 +51,17 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const globals &g, state<config> &s)
             {
+                if (warp::laneid() == 0)
+                {
+                    s.record(TEVENT_LOADER_START);
+                }
                 parsed_instruction inst{s};
                 matmul_pipeline::loader_loop(s, g, inst.layer);
+                warp::sync();
+                if (warp::laneid() == 0)
+                {
+                    s.record(TEVENT_LOADER_END);
+                }
             }
         };
 
@@ -69,6 +78,10 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const globals &g, state<config> &s)
             {
+                if (warp::laneid() == 0)
+                {
+                    s.record(TEVENT_CONSUMER_START + warpid());
+                }
                 parsed_instruction inst{s};
                 wait(matmul_pipeline::outputs_arrived(s), 0);
                 rt_bf<16, 256> out;
@@ -84,6 +97,11 @@ namespace kittens::prototype::vm
                     constorer::sync(store_bar); // arrive for storer
                     constorer::sync(store_bar); // await release from storer
                 }
+                if (warp::laneid() == 0)
+                {
+                    s.record(TEVENT_CONSUMER_END - (Config::NUM_CONSUMER_WARPS) + 
+                            (kittens::group<Config::NUM_CONSUMER_WARPS>::warpid()));
+                }
             }
         };
 
@@ -91,6 +109,10 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const globals &g, state<config> &s)
             {
+                if (warp::laneid() == 0)
+                {
+                    s.record(TEVENT_STORE_START);
+                }
                 parsed_instruction inst{s};
                 int store_bar = 10 + s.instruction_index%2;
                 auto &smem = *reinterpret_cast<st_bf<16, 256>*>(s.scratch());
@@ -111,6 +133,10 @@ namespace kittens::prototype::vm
 
                 warp::sync();
                 if (kittens::laneid() == 0)
+                {
+                    s.record(TEVENT_STORE_END);
+                }
+                if (warp::laneid() == 0)
                 {
                     s.record(TEVENT_STORE_END);
                 }
