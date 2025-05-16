@@ -19,7 +19,6 @@ struct qkv_rope_append {
     static constexpr int NUM_ITERS = Globals::hidden_dim / PIPELINE_K_DIM;
 
     using rope_vec = sv_fl<128>;
-    using rope_vec_256 = sv_fl<256>;
 
     struct parsed_instruction {
         int layer;
@@ -198,10 +197,10 @@ struct qkv_gmem_waiter {
     template <typename config, typename Globals, typename instruction_t>
     static __device__ inline void gmem_wait(const Globals &g, state<config> &s, instruction_t &inst)
     {
-        while (*(volatile int *)&g.Bar[{inst.layer, OPCODE_AttnNorm - 1, inst.row, 0}] < Globals::matmul_batch_block_size)
-        {
-            __nanosleep(20);
-        }
+        // while (*(volatile int *)&g.Bar[{inst.layer, OPCODE_AttnNorm - 1, inst.row, 0}] < Globals::matmul_batch_block_size)
+        // {
+        //     __nanosleep(20);
+        // }
     }
 };
 
