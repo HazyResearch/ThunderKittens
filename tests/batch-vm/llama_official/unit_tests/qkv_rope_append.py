@@ -42,7 +42,7 @@ LAYER_IDX = 0
 print('\nGenerating inputs...')
 device = torch.device('cuda:0')
 torch.manual_seed(42)
-Bar = torch.zeros((NUM_LAYERS, NUM_OPS, NUM_ATTENTION_HEADS + 2 * NUM_KV_HEADS), dtype=torch.uint32, device=device)
+Bar = torch.zeros((NUM_LAYERS, NUM_OPS, NUM_ATTENTION_HEADS + 2 * NUM_KV_HEADS, INTERMEDIATE_DIM // BATCH_BLOCK_SIZE), dtype=torch.uint32, device=device)
 instructions = None # set below
 timings = None # set below
 
@@ -83,7 +83,7 @@ batch_size = BATCH_SIZE
 instructions = [[] for _ in range(SM_COUNT)]
 instruction_idx = 0
 for batch_start_idx in range(0, BATCH_SIZE // BATCH_BLOCK_SIZE):
-    for block_idx in range(NUM_ATTENTION_HEADS + NUM_KV_HEADS * 2):
+    for block_idx in range(0, ((NUM_ATTENTION_HEADS + NUM_KV_HEADS * 2) * HEAD_DIM) // BATCH_BLOCK_SIZE):
         instructions[instruction_idx%SM_COUNT].append([
             QKV_ROPE_APPEND_OPCODE, LAYER_IDX, batch_start_idx, block_idx
         ] + [0]*(INSTRUCTION_WIDTH - 4))
@@ -103,7 +103,7 @@ print(instructions.shape)
 
 # Set barrriers
 for batch_start_idx in range(0, BATCH_SIZE // BATCH_BLOCK_SIZE):
-    Bar[LAYER_IDX, RMS_NORM_OPCODE - 1, batch_start_idx] = BATCH_BLOCK_SIZE
+    Bar[LAYER_IDX, RMS_NORM_OPCODE - 1, batch_start_idx, 0] = BATCH_BLOCK_SIZE
 
 # Generate timings
 timings = torch.zeros((SM_COUNT, instructions.shape[1], TIMING_WIDTH), dtype=torch.int32, device=device)
@@ -159,6 +159,7 @@ torch.cuda.synchronize()
 ###
 #  Check correctness
 ###
+print("Running python reference...")
 q_post_rope_ref, k_post_rope_ref, v_ref = matvec_rope(
     rms_rope_intermediates,
     qkv_weights[LAYER_IDX],
