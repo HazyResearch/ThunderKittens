@@ -142,7 +142,7 @@ def schedule_attention_decode(
 ) -> tuple[list[Instruction], bool]:
     instructions: list[Instruction] = []
 
-    for bidx in range(0, globs.batch_size):
+    for bidx in range(0, globs.batch_size // 2): # FOR KVM ONLY!! WILL BE WRONG FOR PYVM
         for kv_head_idx in range(globs.num_kv_heads):
             instructions.append(
                 AttentionDecode(

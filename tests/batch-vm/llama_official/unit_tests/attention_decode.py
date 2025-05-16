@@ -38,6 +38,7 @@ MAX_NUM_PAGES = 256
 PAGE_SIZE = 128
 QKV_BLOCK_SIZE = 128
 LAYER_IDX = 0
+ATTN_BATCH_BLOCK_SIZE = 2
 
 ###
 #   Prepare inputs (follow the order & naming in llama.cuh)
@@ -79,7 +80,7 @@ batch_size = BATCH_SIZE
 # Generate instructions
 instructions = [[] for _ in range(SM_COUNT)]
 instruction_idx = 0
-for batch_idx in range(BATCH_SIZE):
+for batch_idx in range(BATCH_SIZE // ATTN_BATCH_BLOCK_SIZE):
     for kv_head_idx in range(NUM_KV_HEADS):
         instructions[instruction_idx%SM_COUNT].append([
             GQA_DECODE_OPCODE, LAYER_IDX, batch_idx, kv_head_idx
