@@ -38,7 +38,7 @@ MAX_NUM_PAGES = 256
 PAGE_SIZE = 128
 QKV_BLOCK_SIZE = 128
 LAYER_IDX = 0
-ATTN_BATCH_BLOCK_SIZE = 2
+ATTN_BATCH_BLOCK_SIZE = 4
 
 ###
 #   Prepare inputs (follow the order & naming in llama.cuh)

@@ -12,7 +12,7 @@ namespace kittens::prototype::vm {
         static constexpr int GQA_RATIO = globals::num_attention_heads / globals::num_kv_heads;
         static constexpr int KV_INDICES_LEN = 0;
         static constexpr int MAX_KV_INDICES_LEN = 0;
-        static constexpr int ATTN_BATCH_BLOCK_SIZE = 2;
+        static constexpr int ATTN_BATCH_BLOCK_SIZE = 4;
 
         static_assert(GQA_RATIO == 4, "GQA_RATIO must be 4.");
         static_assert(NUM_STAGES <= config::NUM_PAGES, "Not enough pages. Time to actually use full pages.");
@@ -61,13 +61,12 @@ namespace kittens::prototype::vm {
         __device__ static inline q_st &get_Q_smem(state<config> &s, int batch_idx)
         {
             return *reinterpret_cast<q_st *>(
-                reinterpret_cast<char *>(s.scratch()) + sizeof(q_st) * batch_idx
-            );
+                reinterpret_cast<char *>(s.scratch()) + sizeof(o_sv) * batch_idx * 4);
         }
         __device__ static inline o_sv (&get_O_smem(state<config> &s, int batch_idx))[4]
         {
             return *reinterpret_cast<o_sv(*)[4]>(
-                reinterpret_cast<char *>(s.scratch()) + sizeof(q_st) * ATTN_BATCH_BLOCK_SIZE + sizeof(o_sv) * batch_idx * 4);
+                reinterpret_cast<char *>(s.scratch()) + sizeof(o_sv) * batch_idx * 4);
         }
         __device__ static inline kv_st &get_K_smem(state<config> &s, int stage, int batch_idx)
         {
@@ -318,7 +317,6 @@ namespace kittens::prototype::vm {
                     warp::zero(last_scaled_max_vec_reg); // just not +-inf
                     warp::zero(norm_vec_reg);
                     warp::zero(O_reg);
-                    o_sv(&O_smem)[4] = get_O_smem(s, warpid);
                     
                     float softmax_temp = g.attn_scale * 1.44269504089f; // 1 / (sqrt(D_h) * ln(2))
 
@@ -394,6 +392,7 @@ namespace kittens::prototype::vm {
                     // Store the results
                     o_rt_bf O_reg_bf; 
                     warp::copy(O_reg_bf, O_reg);
+                    o_sv(&O_smem)[4] = get_O_smem(s, warpid);
                     store_4_rows(O_smem, O_reg_bf);
 
                     warp::sync();
@@ -410,20 +409,17 @@ namespace kittens::prototype::vm {
                 parsed_instruction inst{s};
                 int laneid = warp::laneid();
                 int q_head_start_idx = inst.kv_head_idx * GQA_RATIO;
-
-                if (laneid < ATTN_BATCH_BLOCK_SIZE) {
-                    o_sv(&O_smem)[4] = get_O_smem(s, laneid);
-                    wait(O_arrived(s), 0);
-                    #pragma unroll
-                    for (int i = 0; i < GQA_RATIO; i++)
-                        tma::store_async(g.attn_out, O_smem[i], {0, 0, inst.batch_block_idx*ATTN_BATCH_BLOCK_SIZE + laneid, q_head_start_idx + i});
+                
+                wait(O_arrived(s), 0);
+                if (laneid < ATTN_BATCH_BLOCK_SIZE * GQA_RATIO) {
+                    o_sv(&O_smem)[4] = get_O_smem(s, laneid/GQA_RATIO);
+                    tma::store_async(g.attn_out, O_smem[laneid%GQA_RATIO], {0, 0, inst.batch_block_idx*ATTN_BATCH_BLOCK_SIZE + (laneid/GQA_RATIO), q_head_start_idx + (laneid%GQA_RATIO)});
                 }
 
-                if (laneid == 0) tma::store_async_wait();
-                warp::sync(); // ensure all writes are committed
-                asm volatile("{fence.acq_rel.gpu;}");
                 if (laneid == 0) {
-                    int batch_block_idx = inst.batch_block_idx*2 / globals::matmul_batch_block_size;
+                    tma::store_async_wait();
+                    asm volatile("{fence.acq_rel.gpu;}");
+                    int batch_block_idx = (inst.batch_block_idx*ATTN_BATCH_BLOCK_SIZE) / globals::matmul_batch_block_size;
                     atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, batch_block_idx, 0}], ATTN_BATCH_BLOCK_SIZE); // this is sufficient
                 }
             }
