@@ -190,7 +190,7 @@ namespace kittens::prototype::vm {
         {
             static __device__ int release_lid(const globals &g, typename config::instruction_t &instruction, int &query)
             {
-                int ret_order[config::NUM_PAGES] = {0, 1, 2, 3, 4, 5};
+                int ret_order[config::NUM_PAGES] = {2, 3, 4, 5, 0, 1};
                 return ret_order[query];
             }
             static __device__ int init_semaphores(const globals &g, state<config> &s)
