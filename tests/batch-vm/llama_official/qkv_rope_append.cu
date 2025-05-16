@@ -48,6 +48,10 @@ struct qkv_rope_append {
 
     struct loader {
         static __device__ void run(const Globals &g, state<Config> &s) {
+            if (warp::laneid() == 0)
+            {
+                s.record(TEVENT_LOADER_START);
+            }
             parsed_instruction inst{s};
             
             matmul_pipeline::template loader_loop(s, g, inst.layer);
@@ -60,6 +64,12 @@ struct qkv_rope_append {
                 tma::expect_bytes(rope_arrived(s), 2 * sizeof(rope_vec));
                 tma::load_async(rope_cos, g.rope_cos, {(int)g.pos_id, 0}, rope_arrived(s));
                 tma::load_async(rope_sin, g.rope_sin, {(int)g.pos_id, 0}, rope_arrived(s));
+            }
+
+            warp::sync();
+            if (warp::laneid() == 0)
+            {
+                s.record(TEVENT_LOADER_END);
             }
         }
     };
@@ -74,6 +84,10 @@ struct qkv_rope_append {
     using consumer_group = group<config::NUM_CONSUMER_WARPS>;
     struct consumer {
         static __device__ void run(const Globals &g, state<Config> &s) {
+            if (warp::laneid() == 0)
+            {
+                s.record(TEVENT_CONSUMER_START + warpid());
+            }
             parsed_instruction inst{s};
             if ((inst.col * 2) < V_BLOCK_START) {
 
@@ -112,7 +126,7 @@ struct qkv_rope_append {
                 }   
 
                 tensor_load_wait();
-                __syncwarp();
+                warp::sync();
                 warp::arrive(s.tensor_finished);
                 int store_bar = 10 + s.instruction_index%2;
                 auto &smem = *reinterpret_cast<st_bf<16, 256>*>(s.scratch());
@@ -140,11 +154,20 @@ struct qkv_rope_append {
                     constorer::sync(store_bar); // await release from storer
                 }
             }
+            if (warp::laneid() == 0)
+            {
+                s.record(TEVENT_CONSUMER_END - (Config::NUM_CONSUMER_WARPS) + 
+                        (kittens::group<Config::NUM_CONSUMER_WARPS>::warpid()));
+            }
         }
     };
 
     struct storer {
         static __device__ void run(const Globals &g, state<Config> &s) {
+            if (warp::laneid() == 0)
+            {
+                s.record(TEVENT_STORE_START);
+            }
             parsed_instruction inst{s};
             int store_bar = 10 + s.instruction_index%2;
             auto &smem = *reinterpret_cast<st_bf<16, 256>*>(s.scratch());
@@ -188,6 +211,10 @@ struct qkv_rope_append {
                 for (int i = 0; i < num_generated_heads; i++) {
                     atomicAdd(&g.Bar[{inst.layer, opcode - 1, inst.row, start_bar + i}], 1);
                 }
+            }
+            if (warp::laneid() == 0)
+            {
+                s.record(TEVENT_STORE_END);
             }
         }
     };

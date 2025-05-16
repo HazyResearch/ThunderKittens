@@ -191,6 +191,12 @@ namespace kittens::prototype::vm
                 warp::store(activations_smem[warpid()], act_vec);
                 warp::sync();
                 warp::arrive(outputs_arrived(s));
+
+                if (warp::laneid() == 0)
+                {
+                    s.record(TEVENT_CONSUMER_END - (Config::NUM_CONSUMER_WARPS) +
+                            (kittens::group<Config::NUM_CONSUMER_WARPS>::warpid()));
+                }
             }
         };
         struct storer
@@ -200,7 +206,7 @@ namespace kittens::prototype::vm
             {
                 if (warp::laneid() == 0)
                 {
-                    s.record(TEVENT_TRIPLES_STORE_START);
+                    s.record(TEVENT_STORE_START);
                 }
 
                 parsed_instruction inst{s};
@@ -226,8 +232,10 @@ namespace kittens::prototype::vm
                 }
 
                 warp::sync();
-                if (laneid() == 0)
+                if (warp::laneid() == 0)
+                {
                     s.record(TEVENT_STORE_END);
+                }
             }
         };
     };
