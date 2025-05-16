@@ -75,10 +75,10 @@ namespace kittens::prototype::vm
 
             static __device__ void run(const globals &g, state<Config> &s)
             {
-                if (warp::laneid() == 0)
-                {
-                    s.record(TEVENT_LOADER_START);
-                }
+                // if (warp::laneid() == 0)
+                // {
+                //     s.record(TEVENT_LOADER_START);
+                // }
                 parsed_instruction inst{s};
                 // Need to clear the first few elements of the scratch buffer, since we are using atomicAdd later.
                 ((uint64_t *)s.scratch())[laneid()] = 0;
@@ -110,11 +110,11 @@ namespace kittens::prototype::vm
                     s.finish_page(s.pid(laneid()), Config::NUM_CONSUMER_WARPS);
                 }
 
-                warp::sync();
-                if (warp::laneid() == 0)
-                {
-                    s.record(TEVENT_LOADER_END);
-                }
+                // warp::sync();
+                // if (warp::laneid() == 0)
+                // {
+                //     s.record(TEVENT_LOADER_END);
+                // }
             }
         };
         struct launcher
@@ -132,10 +132,10 @@ namespace kittens::prototype::vm
         {
             static __device__ void run(const globals &g, state<Config> &s)
             {
-                if (warp::laneid() == 0)
-                {
-                    s.record(TEVENT_CONSUMER_START + warpid());
-                }
+                // if (warp::laneid() == 0)
+                // {
+                //     s.record(TEVENT_CONSUMER_START + warpid());
+                // }
 
                 // Setup
                 parsed_instruction inst{s};
@@ -192,11 +192,11 @@ namespace kittens::prototype::vm
                 warp::sync();
                 warp::arrive(outputs_arrived(s));
 
-                if (warp::laneid() == 0)
-                {
-                    s.record(TEVENT_CONSUMER_END - (Config::NUM_CONSUMER_WARPS) +
-                            (kittens::group<Config::NUM_CONSUMER_WARPS>::warpid()));
-                }
+                // if (warp::laneid() == 0)
+                // {
+                //     s.record(TEVENT_CONSUMER_END - (Config::NUM_CONSUMER_WARPS) +
+                //             (kittens::group<Config::NUM_CONSUMER_WARPS>::warpid()));
+                // }
             }
         };
         struct storer
@@ -204,10 +204,10 @@ namespace kittens::prototype::vm
             // Uses 4 full pages for outputs.
             static __device__ void run(const globals &g, state<Config> &s)
             {
-                if (warp::laneid() == 0)
-                {
-                    s.record(TEVENT_STORE_START);
-                }
+                // if (warp::laneid() == 0)
+                // {
+                //     s.record(TEVENT_STORE_START);
+                // }
 
                 parsed_instruction inst{s};
 
@@ -231,11 +231,11 @@ namespace kittens::prototype::vm
                     atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, batch_block_idx, 0}], 1);
                 }
 
-                warp::sync();
-                if (warp::laneid() == 0)
-                {
-                    s.record(TEVENT_STORE_END);
-                }
+                // warp::sync();
+                // if (warp::laneid() == 0)
+                // {
+                //     s.record(TEVENT_STORE_END);
+                // }
             }
         };
     };
