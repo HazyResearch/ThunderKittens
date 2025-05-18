@@ -12,13 +12,14 @@ TIMING_WIDTH = 128
 RMS_NORM_OPCODE = 1
 NUM_OPS = 7
 
-# Llama 70B Model Parameters
-HIDDEN_DIM = 8192
+# Llama 8B Model Parameters
+HIDDEN_DIM = 4096
 BATCH_SIZE = 128
 
 # Kernel parameters
 LAYER_IDX = 0
-BATCH_IDX = 0
+BATCH_START_IDX = 0
+BATCH_END_IDX = 24
 QKV_BLOCK_IDX = 0
 RMS_NORM_EPS = 1e-5
 
@@ -46,10 +47,10 @@ def generate_itb():
     """
     instructions = torch.zeros((NUM_BLOCKS, 1, INSTRUCTION_WIDTH), dtype=torch.int32, device=TORCH_DEVICE)
     timings = torch.zeros((NUM_BLOCKS, 1, TIMING_WIDTH), dtype=torch.int32, device=TORCH_DEVICE)
-    barriers = torch.zeros((7, NUM_OPS, 64 + 2 * 8), dtype=torch.uint32, device=TORCH_DEVICE)
+    barriers = torch.zeros((7, NUM_OPS, 48), dtype=torch.uint32, device=TORCH_DEVICE)
 
     # Fill instruction: [opcode, layer, qkv_block, batch_idx]
-    instruction_values = [RMS_NORM_OPCODE, LAYER_IDX, BATCH_IDX]
+    instruction_values = [RMS_NORM_OPCODE, LAYER_IDX, BATCH_START_IDX, BATCH_END_IDX]
     for i, val in enumerate(instruction_values):
         instructions[0, 0, i] = val
 
@@ -91,6 +92,8 @@ def main():
     print('Output shape:', output_tensor_kernel.shape)
 
     print('\nRunning the kernel...')
+    #while True:
+    torch.zero_(output_tensor_kernel)
     kvm_llama(
         barriers,
         instructions,
@@ -107,19 +110,23 @@ def main():
     output_tensor_ref = torch.zeros_like(output_tensor_kernel)
     output_tensor_ref = compute_rms_norm_reference(hidden_states, rms_weights, output_tensor_ref)
 
-    print(f"Output tensor kernel: {output_tensor_kernel}")
+    print(f"Output tensor kernel: {output_tensor_kernel[BATCH_START_IDX:BATCH_END_IDX]}")
     print("Shape of output tensor kernel: ", output_tensor_kernel.shape )
-    print(f"Output tensor ref: {output_tensor_ref}")
+    print(f"Output tensor ref: {output_tensor_ref[BATCH_START_IDX:BATCH_END_IDX]}")
     print("Shape of output tensor ref: ", output_tensor_ref.shape)
     # Verify the output
     print('\nComparing outputs...')
     # Extract only the batch row we're processing
-    kernel_output_row = output_tensor_kernel[BATCH_IDX]
-    reference_output_row = output_tensor_ref[BATCH_IDX]
+    kernel_output_row = output_tensor_kernel[BATCH_START_IDX:BATCH_END_IDX]
+    reference_output_row = output_tensor_ref[BATCH_START_IDX:BATCH_END_IDX]
 
-    print(f"Comparing batch row {BATCH_IDX}:")
+
+    print(f"Comparing batch row {BATCH_START_IDX}:{BATCH_END_IDX}:")
+
     diff = torch.abs(kernel_output_row.float() - reference_output_row.float())
+
     print(f"  Max absolute difference: {torch.max(diff).item()}")
+
     print(f"  Mean absolute difference: {torch.mean(diff).item()}")
     if torch.allclose(kernel_output_row.float(), reference_output_row.float(), atol=1e-2):
         print("  Test PASSED")
