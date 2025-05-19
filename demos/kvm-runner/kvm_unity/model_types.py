@@ -36,7 +36,7 @@ class BatchState:
 
     def __post_init__(self):
         if self.seq_len is None:
-            self.seq_len = self.input_ids.numel()
+            self.seq_len = self.input_ids.shape[1]
 
 
 @dataclass
