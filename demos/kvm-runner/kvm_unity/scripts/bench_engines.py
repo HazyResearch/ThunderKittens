@@ -7,6 +7,7 @@ from statistics import mean, stdev
 import psutil
 import pydra
 from openai import OpenAI
+from tqdm import tqdm
 from transformers import AutoTokenizer
 
 
@@ -114,7 +115,7 @@ def launch_server(config: ScriptConfig):
 def go(config: ScriptConfig, client: OpenAI, n_in: int, n_out: int, batch_size: int):
     times = []
 
-    for i in range(config.num_warmup + config.num_iters):
+    for i in tqdm(range(config.num_warmup + config.num_iters)):
         start = time.time()
         resp = client.completions.create(
             model=config.model,
