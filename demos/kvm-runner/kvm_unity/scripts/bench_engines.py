@@ -13,7 +13,7 @@ from transformers import AutoTokenizer
 
 class ScriptConfig(pydra.Config):
     model: str = "meta-llama/Llama-3.1-8B-Instruct"
-    prompt_len: int | None = None
+    prompt_len: int | None = 64
     prompt: str | None = None
     output_len: int = 128
     batch_size: int = 1
@@ -90,6 +90,9 @@ def launch_server(config: ScriptConfig):
     if config.launch is None:
         yield None
         return
+
+    if config.launch == "input":
+        config.launch = input("Enter the command to launch the server: ")
 
     command = config.launch
     if config.env is not None:
