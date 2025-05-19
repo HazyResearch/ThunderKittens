@@ -12,7 +12,7 @@ from transformers import AutoTokenizer
 
 
 class ScriptConfig(pydra.Config):
-    model: str = "meta-llama/Llama-3.1-8B-Instruct"
+    model: str = "meta-llama/Llama-3.2-1B-Instruct"
     prompt_len: int | None = 64
     prompt: str | None = None
     output_len: int = 128
@@ -31,6 +31,12 @@ class ScriptConfig(pydra.Config):
             assert self.prompt is not None
             tokenizer = AutoTokenizer.from_pretrained(self.model)
             self.prompt_len = len(tokenizer.encode(self.prompt))
+
+    def l1(self):
+        self.model = "meta-llama/Llama-3.2-1B-Instruct"
+
+    def l8(self):
+        self.model = "meta-llama/Llama-3.1-8B-Instruct"
 
 
 def prepend_conda_activate(command: str, activate_path: str, env: str):
