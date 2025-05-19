@@ -3,7 +3,7 @@ requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "blorc"
+name = "megakernels"
 version = "0.0.1"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -17,6 +17,8 @@ dependencies = [
     "matplotlib",
     "einops",
     "pyright",
+    "openai",
+    "psutil",
 ]
 
 [tool.setuptools]
