@@ -15,8 +15,8 @@ class ScriptConfig(pydra.Config):
     model: str = "meta-llama/Llama-3.1-8B-Instruct"
     prompt_len: int | None = None
     prompt: str | None = None
-    output_len: int = 1024
-    batch_size: int = 128
+    output_len: int = 128
+    batch_size: int = 1
     num_warmup: int = 5
     num_iters: int = 10
     env: str | None = None
@@ -135,6 +135,8 @@ def go(config: ScriptConfig, client: OpenAI, n_in: int, n_out: int, batch_size: 
 
 
 def main(config: ScriptConfig):
+    print(f"Running with config: {config}")
+
     with launch_server(config):
         client = OpenAI(
             api_key="fake-key",
