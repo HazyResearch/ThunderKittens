@@ -163,7 +163,7 @@ namespace kittens::prototype::vm
                     s.record(TEVENT_AT_GMEM_STORE);
 
                     tma::store_async_wait();
-                    asm volatile("fence.acq_rel.gpu;");
+                    // asm volatile("fence.acq_rel.gpu;");
 
                     parsed_instruction inst{s};
                     auto to_increment = inst.end_block_idx - inst.start_block_idx;

@@ -334,7 +334,7 @@ namespace kittens::prototype::vm
                 if (warp::laneid() == 0)
                 {
                     s.record(TEVENT_AT_GMEM_STORE);
-                    asm volatile("fence.acq_rel.gpu;");
+                    // asm volatile("fence.acq_rel.gpu;");
 
                     // simple signalling strat for now
                     atomicAdd(&g.Bar[{inst.layer_idx, opcode - 1, 0}], Q_HEADS_PER_INSTRUCTION);
