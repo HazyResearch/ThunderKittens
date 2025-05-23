@@ -76,12 +76,6 @@ namespace kittens::prototype::vm
 
                 matvec_reduce<Config, sv_fl<16>, rv_fl<16>, pipeline::SCRATCH_BYTES_PER_WARP>(output_scratch_start, qkv_proj);
 
-                // warp::load(rope_cos, g.rope_cos, {0, 0, static_cast<int>(g.pos_id), block_idx % 4});
-                // warp::load(rope_sin, g.rope_sin, {0, 0, static_cast<int>(g.pos_id), block_idx % 4});
-
-                // wait(sem, bit);
-                // warp::load(qkv_proj, qkv_proj_smem);
-
                 wait(rope_arrived(s), 0);
 
                 auto head_chunk = block_idx % 4;
@@ -89,13 +83,8 @@ namespace kittens::prototype::vm
                 sv_fl<16> &rope_cos_sv = *reinterpret_cast<sv_fl<16> *>(get_rope_cos_ptr(s) + head_chunk * 64);
                 sv_fl<16> &rope_sin_sv = *reinterpret_cast<sv_fl<16> *>(get_rope_sin_ptr(s) + head_chunk * 64);
 
-                // sv_fl<16> &rope_cos_sv = reinterpret_cast<sv_fl<16> *>(&(get_rope_cos(s)[0]))[block_idx % 4];
-                // sv_fl<16> &rope_sin_sv = reinterpret_cast<sv_fl<16> *>(&(get_rope_sin(s)[0]))[block_idx % 4];
-
                 warp::load(rope_cos, rope_cos_sv);
                 warp::load(rope_sin, rope_sin_sv);
-
-                // warp::load(qkv_proj, qkv_proj_smem);
 
                 if (block_idx < V_BLK_START)
                 { // only Q & K need RoPE
@@ -113,6 +102,7 @@ namespace kittens::prototype::vm
                     }
                 }
 
+                warp::sync();
                 warp::store(qkv_proj_smem_bf, qkv_proj);
                 warp::sync();
 
@@ -147,8 +137,6 @@ namespace kittens::prototype::vm
                     s.record(TEVENT_DONE_GMEM_STORE);
                 }
 
-                warp::sync();
-                // warp::zero(qkv_proj_smem);
                 warp::sync();
             }
         };

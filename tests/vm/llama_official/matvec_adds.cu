@@ -54,16 +54,13 @@ namespace kittens::prototype::vm
 
                 int block_idx = inst.start_block_idx + output_idx;
 
-                // sv_fl<16> &output_smem = *reinterpret_cast<sv_fl<16> *>((float *)s.scratch() + (32 * output_stage));
-                // sv_bf<16> &output_smem_bf = *reinterpret_cast<sv_bf<16> *>((float *)s.scratch() + (32 * output_stage));
-
                 uint8_t *output_scratch_start = pipeline::get_output_start(s, output_stage);
                 sv_bf<16> &output_smem_bf = *reinterpret_cast<sv_bf<16> *>(output_scratch_start);
 
                 rv_fl<16> output_rv;
-                // warp::load(output_rv, output_smem);
                 matvec_reduce<Config, sv_fl<16>, rv_fl<16>, pipeline::SCRATCH_BYTES_PER_WARP>(output_scratch_start, output_rv);
-                // warp::sync();
+                
+                warp::sync();
                 warp::store(output_smem_bf, output_rv);
                 warp::sync();
 
@@ -74,8 +71,6 @@ namespace kittens::prototype::vm
                     tma::store_async_read_wait();
                 }
 
-                warp::sync();
-                // warp::zero(output_smem);
                 warp::sync();
             }
         };

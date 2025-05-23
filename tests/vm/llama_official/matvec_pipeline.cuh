@@ -95,31 +95,6 @@ namespace kittens::prototype::vm
             return SEM_COUNT;
         }
 
-        // template <auto ActPtr>
-        // __device__ static inline void launcher_load_activations(state<Config> &s, const Globals &g)
-        // {
-        //     if (laneid() == 0)
-        //     {
-        //         s.wait_tensor_ready();
-        //         arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
-
-        //         parsed_instruction inst{s};
-
-        //         int activation_page = get_activation_page(s);
-
-        //         s.wait_page_ready(activation_page);
-        //         auto &activations = get_activations(s);
-
-        //         auto &sem = activations_arrived(s);
-
-        //         // Activation
-        //         s.record(TEVENT_AT_GMEM_WAIT);
-        //         pipeline_specifics::gmem_wait(g, s);
-        //         s.record(TEVENT_DONE_GMEM_WAIT);
-        //         tma::load_async(activations, g.*ActPtr, {}, sem);
-        //     }
-        // }
-
         __device__ static inline void loader_loop(state<Config> &s, const Globals &g)
         {
             parsed_instruction inst{s};
@@ -293,35 +268,6 @@ namespace kittens::prototype::vm
 
             pipeline::loader_loop(s, g);
         }
-
-        // template <auto ActPtr, auto RmsPtr>
-        // __device__ static inline void launcher_load_rms_and_activations(state<Config> &s, const Globals &g, int layer_idx)
-        // {
-        //     if (laneid() == 0)
-        //     {
-        //         s.wait_tensor_ready();
-        //         arrive(s.tensor_finished, Config::NUM_CONSUMER_WARPS);
-
-        //         parsed_instruction inst{s};
-
-        //         int activation_page = get_activation_page(s);
-
-        //         s.wait_page_ready(activation_page);
-        //         auto &activations = get_activations(s);
-        //         auto &rms_scale = get_rms_scale(s);
-
-        //         auto &sem = activations_arrived(s);
-
-        //         tma::expect(sem, activations, rms_scale);
-        //         tma::load_async(rms_scale, g.*RmsPtr, {layer_idx, 0}, sem);
-
-        //         // Activation
-        //         s.record(TEVENT_AT_GMEM_WAIT);
-        //         pipeline_specifics::gmem_wait(g, s);
-        //         s.record(TEVENT_DONE_GMEM_WAIT);
-        //         tma::load_async(activations, g.*ActPtr, {}, sem);
-        //     }
-        // }
 
         __device__ static inline void launcher_loop(state<Config> &s, const Globals &g)
         {
