@@ -383,6 +383,8 @@ def make_dag_layer(
     if stop_after_op == "downproj":
         return new_nodes, downproj_nodes
 
+    assert stop_after_op is None
+
     return new_nodes, downproj_nodes
 
 

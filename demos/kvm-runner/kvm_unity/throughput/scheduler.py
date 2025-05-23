@@ -392,6 +392,8 @@ def make_dag_layer(
     ins = schedule_down_proj_residual(globs, layer_idx)
     new_nodes.extend([DAG_Node(i, prev_layer_outputs) for i in ins])
 
+    assert stop_after_op is None
+
     return new_nodes, []
 
 
