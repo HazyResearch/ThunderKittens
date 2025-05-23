@@ -144,7 +144,7 @@ def go(config: ScriptConfig, client: OpenAI, n_in: int, n_out: int, batch_size: 
 
 
 def main(config: ScriptConfig):
-    print(f"Running with config: {config}")
+    print(f"Running with config: {config.to_dict()}")
 
     with launch_server(config):
         client = OpenAI(
