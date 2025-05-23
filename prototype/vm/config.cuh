@@ -38,7 +38,7 @@ namespace kittens
                 static constexpr int MAX_SHARED_MEMORY = kittens::MAX_SHARED_MEMORY;
 
                 // Shared memory declared statically
-                static constexpr int SCRATCH_BYTES = 1024;
+                static constexpr int SCRATCH_BYTES = 4096;
                 static constexpr int STATIC_SHARED_MEMORY = 512 + INSTRUCTION_PIPELINE_STAGES * (SCRATCH_BYTES + (INSTRUCTION_WIDTH + TIMING_WIDTH) * 4 + DYNAMIC_SEMAPHORES * 8);
                 static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - STATIC_SHARED_MEMORY;
 
