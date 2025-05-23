@@ -68,15 +68,22 @@ namespace kittens::prototype::vm
 
                 int block_idx = inst.start_block_idx + true_output_idx;
 
-                sv_fl<16> &up_out_smem = *reinterpret_cast<sv_fl<16> *>((float *)s.scratch() + (32 * prev_output_stage));
-                sv_fl<16> &gate_out_smem = *reinterpret_cast<sv_fl<16> *>((float *)s.scratch() + (32 * output_stage));
+                // sv_fl<16> &up_out_smem = *reinterpret_cast<sv_fl<16> *>((float *)s.scratch() + (32 * prev_output_stage));
+                // sv_fl<16> &gate_out_smem = *reinterpret_cast<sv_fl<16> *>((float *)s.scratch() + (32 * output_stage));
 
-                sv_bf<16> &out_smem = *reinterpret_cast<sv_bf<16> *>(&gate_out_smem);
+                uint8_t *output_scratch_start = pipeline::get_output_start(s, output_stage);
+                uint8_t *prev_output_scratch_start = pipeline::get_output_start(s, prev_output_stage);
+
+                sv_bf<16> &out_smem = *reinterpret_cast<sv_bf<16> *>(output_scratch_start);
 
                 rv_fl<16> up_out, gate_out, gate_scratch;
 
-                warp::load(up_out, up_out_smem);
-                warp::load(gate_out, gate_out_smem);
+                // warp::load(up_out, up_out_smem);
+                // warp::load(gate_out, gate_out_smem);
+
+                // TODO we can do better here and reduce up before gate is ready.
+                matvec_reduce<Config, sv_fl<16>, rv_fl<16>, pipeline::SCRATCH_BYTES_PER_WARP>(prev_output_scratch_start, up_out);
+                matvec_reduce<Config, sv_fl<16>, rv_fl<16>, pipeline::SCRATCH_BYTES_PER_WARP>(output_scratch_start, gate_out);
 
                 // neg
                 warp::mul(gate_scratch, gate_out, -1.f);
@@ -102,8 +109,8 @@ namespace kittens::prototype::vm
                 }
 
                 warp::sync();
-                warp::zero(up_out_smem);
-                warp::zero(gate_out_smem);
+                // warp::zero(up_out_smem);
+                // warp::zero(gate_out_smem);
                 warp::sync();
             }
         };

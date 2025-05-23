@@ -65,13 +65,31 @@ namespace kittens::prototype::vm
         {
             // this might be a bad idea but yolo, it's probably an okay start
             // and fortunately this is code where ncu will tell us if it's bad..
-            atomicAdd(&out_smem[laneid()], sum_vec[0][0]);
+            // atomicAdd(&out_smem[laneid()], sum_vec[0][0]);
+            
+            out_smem[laneid()] = sum_vec[0][0];
         }
         warp::sync();
     }
 
+
+    template <typename Config, kittens::ducks::sv::all sv_t, typename rv_t, int SCRATCH_BYTES_PER_WARP>
+    __device__ static inline void matvec_reduce(uint8_t *scratch, rv_t &sum_vec) {
+        rv_t part_vec;
+        warp::zero(sum_vec);
+    
+        for (int i = 0; i < Config::NUM_CONSUMER_WARPS; i++) {
+
+            // TODO: for now, deliberately not using sizeof(sv_t) here because we've had alignment issues before. 
+            sv_t &part = *reinterpret_cast<sv_t *>(scratch + (i * SCRATCH_BYTES_PER_WARP));
+
+            warp::load(part_vec, part);
+            warp::add(sum_vec, sum_vec, part_vec);
+        }
+    }
+
     template <typename Config, typename Globals, typename rv_t>
-    __device__ inline void rms_norm(Globals &g, state<Config> &s, rv_t &activations_vec, int rms_scale_activation_page, semaphore &activations_arrived, semaphore &rms_scale_arrived, int scratch_offset)
+    __device__ inline void old_rms_norm(Globals &g, state<Config> &s, rv_t &activations_vec, int rms_scale_activation_page, semaphore &activations_arrived, semaphore &rms_scale_arrived, int scratch_offset)
     {
 
         constexpr int REDUCTION_DIM_PER_WARP = Globals::hidden_dim / Config::NUM_CONSUMER_WARPS;
@@ -144,7 +162,7 @@ namespace kittens::prototype::vm
     }
 
     template <typename rt_t, int WARPS_PER_PAGE, typename Config, typename Globals, typename rv_t>
-    __device__ inline void matvec(Globals &g, state<Config> &s, rv_t &activations_vec, semaphore &weights_arrived, int weight_pid, int scratch_offset)
+    __device__ inline void old_matvec(Globals &g, state<Config> &s, rv_t &activations_vec, semaphore &weights_arrived, int weight_pid, int scratch_offset)
     {
 
         rt_t weights, broadcast_activations;

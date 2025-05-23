@@ -18,6 +18,11 @@ namespace kittens::prototype::vm
 
         static constexpr int SEM_COUNT = 1 + (INPUT_PIPELINE_STAGES + OUTPUT_PIPELINE_STAGES) * 2;
 
+        static constexpr int SCRATCH_BYTES_PER_WARP = 16 * sizeof(float);
+        static constexpr int SCRATCH_BYTES_PER_STAGE = SCRATCH_BYTES_PER_WARP * Config::NUM_CONSUMER_WARPS;
+        static constexpr int USED_SCRATCH_BYTES = OUTPUT_PIPELINE_STAGES * SCRATCH_BYTES_PER_STAGE;
+        static_assert(USED_SCRATCH_BYTES <= Config::SCRATCH_BYTES, "USED_SCRATCH_BYTES must be less than SCRATCH_BYTES");
+
         // Pages (very naive for now, no fine-grained usage)
         __device__ static inline int get_activation_page(state<Config> &s) { return s.pid(ACTIVATION_PAGE); }
 
@@ -30,6 +35,8 @@ namespace kittens::prototype::vm
         __device__ static inline semaphore &outputs_finished(state<Config> &s, int stage) { return s.semaphores()[1 + 2 * INPUT_PIPELINE_STAGES + OUTPUT_PIPELINE_STAGES + stage]; }
 
         __device__ static inline sv_bf<Globals::hidden_dim> &get_activations(state<Config> &s) { return *reinterpret_cast<sv_bf<Globals::hidden_dim> *>(s.pages[get_activation_page(s)].ptr()); }
+
+        __device__ static inline uint8_t *get_output_start(state<Config> &s, int stage) { return (uint8_t *)s.scratch() + (stage * SCRATCH_BYTES_PER_STAGE); }
 
         __device__ static inline int release_lid(const Globals &g, typename Config::instruction_t &instruction, int &query)
         {
@@ -180,7 +187,8 @@ namespace kittens::prototype::vm
                 wait(weights_arrived(s, input_stage), (i % (2 * INPUT_PIPELINE_STAGES)) >= INPUT_PIPELINE_STAGES);
                 wait(outputs_finished(s, output_stage), (i % (2 * OUTPUT_PIPELINE_STAGES)) < OUTPUT_PIPELINE_STAGES);
                 st_bf<16, REDUCTION_DIM_PER_WARP> &weights = reinterpret_cast<st_bf<16, REDUCTION_DIM_PER_WARP> *>(s.pages[weight_page].ptr())[warpid() % WARPS_PER_PAGE];
-                sv_fl<16> &out_smem = *reinterpret_cast<sv_fl<16> *>((float *)s.scratch() + (32 * output_stage));
+
+                sv_fl<16> &out_smem = *reinterpret_cast<sv_fl<16> *>(get_output_start(s, output_stage) + (warpid() * SCRATCH_BYTES_PER_WARP));
 
                 if (i == 0)
                 {
@@ -361,7 +369,7 @@ namespace kittens::prototype::vm
 
             wait(rms_scale_arrived(s), 0);
 
-            auto activations_vec = rms_norm<Config>(rms_scale_smem, activations_smem, g.rms_norm_eps, (void *)((float *)s.scratch() + (32 * pipeline::OUTPUT_PIPELINE_STAGES)));
+            auto activations_vec = rms_norm<Config>(rms_scale_smem, activations_smem, g.rms_norm_eps, pipeline::get_output_start(s, pipeline::OUTPUT_PIPELINE_STAGES));
 
             warp::sync();
             s.warp_finish_page(activation_page, 1);

@@ -21,8 +21,8 @@ namespace kittens::prototype::vm
 
         using rope_t = sv_fl<Globals::head_dim>;
 
-        __device__ static inline uint8_t *get_rope_cos_ptr(state<Config> &s) { return (uint8_t *)s.scratch() + 512; }
-        __device__ static inline uint8_t *get_rope_sin_ptr(state<Config> &s) { return (uint8_t *)s.scratch() + 512 + 256; }
+        __device__ static inline uint8_t *get_rope_cos_ptr(state<Config> &s) { return (uint8_t *)s.scratch() + Config::SCRATCH_BYTES - 512; }
+        __device__ static inline uint8_t *get_rope_sin_ptr(state<Config> &s) { return (uint8_t *)s.scratch() + Config::SCRATCH_BYTES - 256; }
         __device__ static inline rope_t &get_rope_cos(state<Config> &s) { return *reinterpret_cast<rope_t *>(get_rope_cos_ptr(s)); }
         __device__ static inline rope_t &get_rope_sin(state<Config> &s) { return *reinterpret_cast<rope_t *>(get_rope_sin_ptr(s)); }
 
@@ -67,10 +67,14 @@ namespace kittens::prototype::vm
                 // apply rope
 
                 // even for V, we need to cast from float to bf16
-                sv_fl<16> &qkv_proj_smem = *reinterpret_cast<sv_fl<16> *>((float *)s.scratch() + (32 * output_stage));
-                sv_bf<16> &qkv_proj_smem_bf = *reinterpret_cast<sv_bf<16> *>((float *)s.scratch() + (32 * output_stage));
+                uint8_t *output_scratch_start = pipeline::get_output_start(s, output_stage);
+
+                // sv_fl<16> &qkv_proj_smem = *reinterpret_cast<sv_fl<16> *>(output_scratch_start);
+                sv_bf<16> &qkv_proj_smem_bf = *reinterpret_cast<sv_bf<16> *>(output_scratch_start);
 
                 rv_fl<16> qkv_proj, rope_cos, rope_sin;
+
+                matvec_reduce<Config, sv_fl<16>, rv_fl<16>, pipeline::SCRATCH_BYTES_PER_WARP>(output_scratch_start, qkv_proj);
 
                 // warp::load(rope_cos, g.rope_cos, {0, 0, static_cast<int>(g.pos_id), block_idx % 4});
                 // warp::load(rope_sin, g.rope_sin, {0, 0, static_cast<int>(g.pos_id), block_idx % 4});
@@ -90,7 +94,8 @@ namespace kittens::prototype::vm
 
                 warp::load(rope_cos, rope_cos_sv);
                 warp::load(rope_sin, rope_sin_sv);
-                warp::load(qkv_proj, qkv_proj_smem);
+
+                // warp::load(qkv_proj, qkv_proj_smem);
 
                 if (block_idx < V_BLK_START)
                 { // only Q & K need RoPE
@@ -143,7 +148,7 @@ namespace kittens::prototype::vm
                 }
 
                 warp::sync();
-                warp::zero(qkv_proj_smem);
+                // warp::zero(qkv_proj_smem);
                 warp::sync();
             }
         };
