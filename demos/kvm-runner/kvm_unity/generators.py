@@ -74,7 +74,7 @@ class KVM_Generator(Generator):
             post_embedding: BatchState = self.model.model.embed_tokens(batch_state)
             hiddens = post_embedding.hidden_states
             assert hiddens is not None
-            self.schedule.globs.hidden_states[:] = hiddens
+            self.schedule.globs.hidden_states[:] = hiddens.squeeze(1)
 
         self.fill()
         self.schedule.globs.pos_id = pos_id
@@ -91,7 +91,7 @@ class KVM_Generator(Generator):
 
     def generate(self, output_tokens: Tensor, prompt_len: int, ntok: int):
         for i in tqdm(range(1, ntok)):
-            input_ids = output_tokens[:, i - 1]
+            input_ids = output_tokens[:, i - 1 : i]
             output_ids = self.run(input_ids, pos_id=prompt_len + i)
             output_tokens[:, i] = output_ids
 

@@ -104,12 +104,16 @@ def main(config: ScriptConfig):
     else:
         tok_inp = config.prompt
 
-    input_ids = tokenizer(tok_inp, return_tensors="pt")["input_ids"][0].to(model.device)
-    prompt_len = input_ids.shape[0]
+    input_ids = tokenizer(tok_inp, return_tensors="pt")["input_ids"].to(model.device)
+    prompt_len = input_ids.shape[-1]
 
     print(f"Prompt length: {prompt_len}")
 
-    position_ids = torch.arange(prompt_len).to(model.device)
+    position_ids = (
+        torch.arange(prompt_len).to(model.device)
+        # .unsqueeze(0)
+        # .expand(config.batch_size, -1)
+    )
 
     prefill_inp = BatchState(
         input_ids=input_ids,
