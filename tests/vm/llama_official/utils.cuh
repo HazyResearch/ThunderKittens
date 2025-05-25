@@ -39,9 +39,40 @@ namespace kittens::prototype::vm
         return activations_vec;
     }
 
+#ifdef KITTENS_BLACKWELL
     template <kittens::ducks::st::all st_t>
-    __device__ static inline void matvec(sv_fl<st_t::rows> &out_smem, st_t &weights_smem, rv_fl<st_t::cols> &activations)
-    {
+    __device__ static inline void matvec(sv_fl<st_t::rows> &out_smem, st_t &weights_smem, rv_fl<st_t::cols> &activations) {
+        using rt_t = rt_bf<st_t::rows, st_t::cols>;
+        using rrv_t = typename rt_t::row_vec;
+        using rcv_t = typename rt_fl<16,16>::col_vec;
+        // using rcv_t = typename rt_t::col_vec;
+        using rv_t = rv_fl<st_t::rows>;
+        using sv_t = sv_bf<st_t::rows>;
+
+        rrv_t row_activations;
+        warp::copy(row_activations, activations);
+
+        rt_t broadcast_activations, weights;
+        warp::broadcast_col(broadcast_activations, row_activations);
+        warp::load(weights, weights_smem);
+        rt_fl<16,16> out_activations;
+        warp::zero(out_activations);
+        warp::mma_ABt(out_activations, weights, broadcast_activations, out_activations);
+        rcv_t sum_col_vec;
+        warp::row_max(sum_col_vec, out_activations);
+
+        rv_t sum_vec;
+        warp::copy(sum_vec, sum_col_vec);
+
+        if (laneid() < 16)
+        {
+            out_smem[laneid()] = sum_vec[0][0];
+        }
+        warp::sync();
+    }
+#else
+    template <kittens::ducks::st::all st_t>
+    __device__ static inline void matvec(sv_fl<st_t::rows> &out_smem, st_t &weights_smem, rv_fl<st_t::cols> &activations) {
         using rt_t = rt_fl<st_t::rows, st_t::cols>;
         using rrv_t = typename rt_t::row_vec;
         using rcv_t = typename rt_t::col_vec;
@@ -62,15 +93,12 @@ namespace kittens::prototype::vm
         warp::copy(sum_vec, sum_col_vec);
 
         if (laneid() < 16)
-        {
-            // this might be a bad idea but yolo, it's probably an okay start
-            // and fortunately this is code where ncu will tell us if it's bad..
-            // atomicAdd(&out_smem[laneid()], sum_vec[0][0]);
-            
+        {            
             out_smem[laneid()] = sum_vec[0][0];
         }
         warp::sync();
     }
+#endif
 
 
     template <typename Config, kittens::ducks::sv::all sv_t, typename rv_t, int SCRATCH_BYTES_PER_WARP>
