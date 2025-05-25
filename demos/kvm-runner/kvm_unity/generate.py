@@ -107,7 +107,7 @@ def main(config: ScriptConfig):
     input_ids = tokenizer(tok_inp, return_tensors="pt")["input_ids"].to(model.device)
     prompt_len = input_ids.shape[-1]
 
-    print(f"Prompt length: {prompt_len}")
+    print(f"Input ids shape: {input_ids.shape}")
 
     position_ids = (
         torch.arange(prompt_len).to(model.device)
