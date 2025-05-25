@@ -127,7 +127,7 @@ namespace kittens::prototype::vm
                     s.wait_page_ready(activation_page);
 
                     s.record(TEVENT_AT_GMEM_WAIT);
-                    while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, 0}] < EXPECTED_ARRIVAL_COUNT)
+                    while (*(volatile int *)&g.Bar[{inst.layer, prev_opcode - 1, inst.reduction_block_idx}] < EXPECTED_ARRIVAL_COUNT)
                     {
                         __nanosleep(Config::GMEM_SPIN_LOOP_SLEEP_NANOS);
                     }
@@ -177,7 +177,7 @@ namespace kittens::prototype::vm
 
     template <typename Config, typename Globals>
     struct downproj : MatVecAddOp<
-                          llama_1b_globals::intermediate_dim / llama_1b_globals::matvec_block_size,
+                          llama_1b_globals::hidden_dim / llama_1b_globals::matvec_block_size,
                           &Globals::down_weights,
                           &Globals::silu_out,
                           &Globals::hidden_states,

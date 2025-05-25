@@ -140,9 +140,7 @@ def layer_norm_double_matvec_silu(
 
     barriers = globals.barriers[instruction.layer_idx, instruction.opcode() - 1]
 
-    for block_idx in range(
-        instruction.start_output_block_idx, instruction.end_output_block_idx
-    ):
+    for block_idx in instruction.block_idxs:
         start, end = get_start_end(block_size, block_idx)
 
         up_matvec, start, end = matvec(

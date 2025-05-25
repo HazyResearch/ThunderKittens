@@ -137,8 +137,7 @@ class LayerNormDoubleMatVecSiLU(Instruction):
     """
 
     layer_idx: int
-    start_output_block_idx: int
-    end_output_block_idx: int
+    block_idxs: list[int]
 
     @classmethod
     def opcode(cls) -> int:
@@ -150,7 +149,7 @@ class LayerNormDoubleMatVecSiLU(Instruction):
 
     def cost(self, globs: Globals):
         return (
-            (self.end_output_block_idx - self.start_output_block_idx)
+            len(self.block_idxs)
             * globs.up_gate_proj_block_size
             * globs.hidden_size
             * 2  # gate and up
