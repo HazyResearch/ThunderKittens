@@ -296,4 +296,6 @@ vllm serve meta-llama/Llama-3.2-1B-Instruct --port 10210
 # vllm
 
 
+python kvm_unity/generate.py mode=kvm ntok=128 prompt='(" a" * 31)'
+
 ```
