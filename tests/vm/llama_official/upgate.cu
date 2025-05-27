@@ -147,8 +147,6 @@ template <typename Config, typename Globals> struct rms_upgate_silu {
 
     struct loader {
         static __device__ void run(const Globals &g, state<Config> &s) {
-            s.template zero_scratch<1024>();
-
             parsed_instruction inst{s};
             pipeline::loader_loop(s, g, inst.layer_idx);
         }

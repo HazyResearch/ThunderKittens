@@ -98,9 +98,6 @@ template <typename Config, typename Globals> struct rms_lm_head {
     };
     struct loader {
         static __device__ void run(const Globals &g, state<Config> &s) {
-            // Need to clear the first few elements of the scratch buffer, since
-            // we are using atomicAdd later.
-            s.template zero_scratch<1024>();
             pipeline::loader_loop(s, g, 0);
         }
     };

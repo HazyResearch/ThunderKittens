@@ -193,10 +193,6 @@ template <typename Config, typename Globals> struct rms_qkv_rope_append {
     };
     struct loader {
         static __device__ void run(const Globals &g, state<Config> &s) {
-            // Need to clear the first few elements of the scratch buffer, since
-            // we are using atomicAdd later.
-            s.template zero_scratch<1024>();
-
             if (laneid() == 0) {
                 auto &rope_cos = get_rope_cos(s);
                 auto &rope_sin = get_rope_sin(s);
