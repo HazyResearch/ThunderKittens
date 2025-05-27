@@ -12,13 +12,13 @@ dependencies = [
     "pydra-config>=0.0.13",
     "accelerate",
     "tabulate",
-    "torch>=2.6.0",
     "tqdm",
     "matplotlib",
     "einops",
     "pyright",
     "openai",
     "psutil",
+    "art",
 ]
 
 [tool.setuptools]
