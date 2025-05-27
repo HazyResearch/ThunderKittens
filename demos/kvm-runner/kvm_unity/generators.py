@@ -89,11 +89,39 @@ class KVM_Generator(Generator):
 
         return output_ids
 
-    def generate(self, output_tokens: Tensor, prompt_len: int, ntok: int):
+    def generate(
+        self,
+        output_tokens: Tensor,
+        prompt_len: int,
+        ntok: int,
+        eos_token_ids: list[int] | None = None,
+        eos_token_check_interval: int | None = None,
+    ):
+        """
+        Return num tokens until stop seq, and total num tokens generated
+        """
         for i in tqdm(range(1, ntok)):
             input_ids = output_tokens[:, i - 1 : i]
             output_ids = self.run(input_ids, pos_id=prompt_len + i)
             output_tokens[:, i] = output_ids
+
+            if eos_token_check_interval is not None and (
+                i % eos_token_check_interval == 0 or i == ntok - 1
+            ):
+                assert output_tokens.shape[0] == 1, "batch size must be 1"
+
+                end = i
+                start = i - eos_token_check_interval
+                if start - eos_token_check_interval < 0:
+                    start = 0
+
+                to_cpu = output_tokens[0, start:end].cpu()
+                for j, token in enumerate(to_cpu):
+                    if token in eos_token_ids:
+                        # -1 because we didn't generate the first token
+                        return j + start, i - 1
+
+        return ntok, ntok - 1
 
 
 class PyVM_Generator(Generator):
