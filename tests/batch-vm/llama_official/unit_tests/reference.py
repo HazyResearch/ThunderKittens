@@ -1,0 +1,112 @@
+import torch
+from torch import Tensor
+from einops import einsum
+
+def get_start_end(block_size: int, block_idx: int):
+    start = block_size * block_idx
+    end = start + block_size
+    return start, end
+
+# For compatibility with our kernel
+# Inefficient but quick impl
+def uninterleave(x: Tensor):
+    assert(x.shape[-1] % 128 == 0)
+    y = torch.zeros_like(x)
+    for i in range(0, x.shape[-1], 128):
+        y[..., i:i+64] = x[..., i:i+128:2]
+        y[..., i+64:i+128] = x[..., i+1:i+128:2]
+    return y
+def interleave(x: Tensor):
+    assert(x.shape[-1] % 128 == 0)
+    y = torch.zeros_like(x)
+    for i in range(0, x.shape[-1], 128):
+        y[..., i:i+128:2] = x[..., i:i+64]
+        y[..., i+1:i+128:2] = x[..., i+64:i+128]
+    return y
+
+# From transformers
+def rotate_half(x):
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-x2, x1), dim=-1)
+
+# A little modification on the inputs
+def matvec_rope(
+    rms_rope_intermediates: Tensor,
+    qkv_weights: Tensor,
+    rope_cos: Tensor,
+    rope_sin: Tensor,
+    pos_id: int,
+    num_attention_heads: int,
+    num_kv_heads: int,
+    head_dim: int
+):
+    batch_size = rms_rope_intermediates.shape[0]
+
+    matmul_output = torch.matmul(
+        rms_rope_intermediates, # (B, D)
+        qkv_weights.T, # (D, (H_q + H_k + H_v) * D_h)
+    ) # (B, (H_q + H_k + H_v) * D_h)
+
+    k_start = num_attention_heads * head_dim
+    v_start = k_start + num_kv_heads * head_dim
+
+    q = matmul_output[:, :k_start] # (B, H_q * D_h)
+    k = matmul_output[:, k_start:v_start] # (B, H_k * D_h)
+    v = matmul_output[:, v_start:] # (B, H_v * D_h)
+
+    q_arr = torch.reshape(q, (batch_size, num_attention_heads, head_dim)) # (B, H_q, D_h)
+    k_arr = torch.reshape(k, (batch_size, num_kv_heads, head_dim)) # (B, H_k, D_h)
+
+    q_with_rope = q_arr * rope_cos[pos_id][torch.newaxis, torch.newaxis, :] + rotate_half(q_arr) * rope_sin[pos_id][torch.newaxis, torch.newaxis, :]
+    k_with_rope = k_arr * rope_cos[pos_id][torch.newaxis, torch.newaxis, :] + rotate_half(k_arr) * rope_sin[pos_id][torch.newaxis, torch.newaxis, :]
+
+    q_with_rope = q_with_rope.view(batch_size, -1) # (B, H_q * D_h)
+    k_with_rope = k_with_rope.view(batch_size, -1).reshape(batch_size, num_kv_heads, head_dim) # (B, H_k, D_h)
+    v = v.reshape(batch_size, num_kv_heads, head_dim) # (B, H_v, D_h)
+
+    return q_with_rope, k_with_rope, v
+
+def gqa_decode(q, k, v):
+    '''
+        q: (B, H_q=32, D_h=128)
+        k: (B, N, H_kv=8, D_h=128)
+        v: (B, N, H_vv=8, D_h=128)
+        out: (B, H_q, D_h)
+    '''
+    B, H_q, D_h = q.shape
+    _, N, H_kv, _ = k.shape
+    assert H_q % H_kv == 0
+
+    heads_per_group = H_q // H_kv
+    q = q.view(B, H_kv, heads_per_group, D_h)
+    k = k.permute(0, 2, 1, 3) # (B, H_kv, N, D_h)
+    v = v.permute(0, 2, 1, 3) # (B, H_kv, N, D_h)
+
+    QK = torch.matmul(q, k.transpose(-2, -1)).to(torch.float32) # (B, H_kv, heads_per_group, N)
+    QK /= (q.size(-1) ** 0.5)
+    QK = torch.nn.functional.softmax(QK, dim=-1)
+    out = torch.matmul(QK.to(torch.bfloat16), v)
+    return out.reshape(B, H_q, D_h)
+
+
+def rms_norm(hidden_states, weights, eps: float):
+    input_dtype = hidden_states.dtype
+    inp = hidden_states.to(torch.float32)
+    variance = inp.pow(2).mean(-1, keepdim=True)
+    inp = inp * torch.rsqrt(variance + eps)
+    return weights * inp.to(input_dtype)
+
+def matmul_adds(hidden_states, weights, acc):
+    matmul = einsum(hidden_states, weights, "m k, n k -> m n")
+    acc += matmul
+    return acc
+
+def up_matmul(rms_gate_intermediates, up_proj_weights, silu_out):
+    matmul = einsum(rms_gate_intermediates, up_proj_weights, "m k, n k -> m n")
+    matmul *= silu_out
+    return matmul
+
+
+
+
