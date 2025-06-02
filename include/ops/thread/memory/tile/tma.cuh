@@ -110,7 +110,7 @@ __device__ static inline void store_async(const GL &dst, const ST &src, const CO
     store_async<dim::ROW, cache_policy::NORMAL, ST, GL, COORD>(dst, src, idx);
 }
 template<int axis, cache_policy policy, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
-__device__ static inline void store_async(const PGL &dst, const ST &src, const COORD &idx, const int dev_idx) 
+__device__ static inline void store_async(const PGL &dst, const ST &src, const COORD &idx, const int dev_idx) {
     uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST, axis>(dev_idx));
     uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
     coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
