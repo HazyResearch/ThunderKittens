@@ -8,7 +8,9 @@ torch.manual_seed(1)
 
 # M, K, N = 3072, 4096, 3072
 # M, K, N = 512, 256, 256
-M, K, N = 16384, 3072, 16384
+M, K, N = 8192, 16384*3, 8192
+# M, K, N = 16384, 3072, 16384
+# M, K, N = 8192, 8192, 8192
 # M, K, N = 3072, 16384*2, 3072
 # M, K, N = 256, 4096, 256
 
@@ -56,18 +58,23 @@ t0 = t1 - (elapsed_time / 1000)  # Convert ms to seconds
 time_per_iter = ((t1-t0)*1e6)/5
 print(f'Time per iter: {time_per_iter} us')
 print(f'TFLOP/s: {(2*M*N*K*1e-12)/(time_per_iter*1e-6)}')
-
+print('numerator:', 2*M*N*K*1e-12)
+print('denominator:', time_per_iter*1e-6)
 
 print("Test completed successfully!")
 
 C = C.to(torch.float32).cpu().numpy()
 print(C.shape)
-print(C)
 
 C2 = (A.to(torch.float16)@B.to(torch.float16).T).to(torch.float8_e4m3fn)
 C2 = C2.to(torch.float32).cpu().numpy()
 print(C2.shape)
-print(C2)
+
+
+print('abs diff max:', abs(C-C2).max())
+print('abs diff mean:', abs(C-C2).mean())
+
+quit()
 
 print('TIMINGS')
 for i in range(128):
