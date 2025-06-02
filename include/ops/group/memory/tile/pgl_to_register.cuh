@@ -12,7 +12,7 @@ __device__ inline static void ld_reduce_op(RT &dst, const PGL &src, int dev_idx,
     static_assert(std::is_same_v<U, kittens::bf16> || std::is_same_v<U, half> || std::is_same_v<U, float>, 
         "Unsupported type for ld_reduce_op");
 
-    U *dst_mc_ptr = src.mc_ptr_at(idx.template unit_coord<axis, 3>(), dev_idx);
+    U *src_mc_ptr = src.mc_ptr_at(idx.template unit_coord<axis, 3>(), dev_idx);
     const int row_stride = src.template stride<axis>();
     int warp_laneid = threadIdx.x % WARP_THREADS;
     const int row_offset = dst.rows*warpid();
@@ -24,9 +24,9 @@ __device__ inline static void ld_reduce_op(RT &dst, const PGL &src, int dev_idx,
             int col = j*dst.tile_size_col + 2*(warp_laneid % 4);
             U2 dst_buf[2];
             multimem_ld_reduce_op<U2, OP>::apply(
-                &dst_buf[0], (U2*)&dst_mc_ptr[(row+0)*row_stride + (col+0)]);
+                &dst_buf[0], (U2*)&src_mc_ptr[(row+0)*row_stride + (col+0)]);
             multimem_ld_reduce_op<U2, OP>::apply(
-                &dst_buf[1], (U2*)&dst_mc_ptr[(row+0)*row_stride + (col+8)]);
+                &dst_buf[1], (U2*)&src_mc_ptr[(row+0)*row_stride + (col+8)]);
             dst.tiles[i][j].data[0] = base_types::convertor<T2, U2>::convert(dst_buf[0]);
             dst.tiles[i][j].data[2] = base_types::convertor<T2, U2>::convert(dst_buf[1]);
         }
@@ -35,9 +35,9 @@ __device__ inline static void ld_reduce_op(RT &dst, const PGL &src, int dev_idx,
             int col = j*dst.tile_size_col + 2*(warp_laneid % 4);
             U2 dst_buf[2];
             multimem_ld_reduce_op<U2, OP>::apply(
-                &dst_buf[0], (U2*)&dst_mc_ptr[(row+8)*row_stride + (col+0)]);
+                &dst_buf[0], (U2*)&src_mc_ptr[(row+8)*row_stride + (col+0)]);
             multimem_ld_reduce_op<U2, OP>::apply(
-                &dst_buf[1], (U2*)&dst_mc_ptr[(row+8)*row_stride + (col+8)]);
+                &dst_buf[1], (U2*)&src_mc_ptr[(row+8)*row_stride + (col+8)]);
             dst.tiles[i][j].data[1] = base_types::convertor<T2, U2>::convert(dst_buf[0]);
             dst.tiles[i][j].data[3] = base_types::convertor<T2, U2>::convert(dst_buf[1]);
         }
