@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "device/device.cuh"
 #include "register/register.cuh"
 #include "shared/shared.cuh"
 #include "global/global.cuh"
