@@ -393,6 +393,7 @@ template<typename T, typename... Args> inline constexpr uint32_t size_bytes<T, A
 } // namespace kittens
 
 #ifdef KITTENS_HOPPER
+#include "reduce.cuh"
 #include "tma.cuh"
 #endif
 
