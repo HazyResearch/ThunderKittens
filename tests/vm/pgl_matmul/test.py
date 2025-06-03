@@ -20,12 +20,19 @@ print('Starting test...')
 
 # Create input and output tensors
 torch.manual_seed(1)
+
+# A is broadcast to all devices
 A = (torch.randn((M, K), device=0, dtype=torch.float32) / K**.25).to(torch.float8_e4m3fn)
-As = [A.to(i) for i in range(NUM_DEVICES)] # broadcast to all devices
+As = [A.to(i) for i in range(NUM_DEVICES)]
+
+# B is column-wise sharded
 Bs = [(torch.randn((N//NUM_DEVICES, K), device=0, dtype=torch.float32) / K**.25).to(dtype=torch.float8_e4m3fn, device=i) for i in range(NUM_DEVICES)]
 B = torch.cat([_B.to(0) for _B in Bs], dim=0)
-Cs = [torch.zeros((M, N//NUM_DEVICES), device=i, dtype=torch.float8_e4m3fn) for i in range(NUM_DEVICES)]
 
+# Every device has the full C
+Cs = [torch.zeros((M, N), dtype=torch.float8_e4m3fn, device=i) for i in range(NUM_DEVICES)]
+
+# Generate instructions
 instructions = [[] for _ in range(SM_COUNT)]
 num_iters = K // K_BLOCK
 instruction_idx = 0
@@ -58,8 +65,10 @@ for i in range(NUM_DEVICES):
     torch.cuda.synchronize(i)
 
 # Check the results
-C = torch.cat([_C.to(torch.float32).cpu() for _C in Cs], dim=1).numpy()
 C_ref = (A.to(torch.float16) @ B.to(torch.float16).T).to(torch.float8_e4m3fn).to(torch.float32).cpu().numpy()
-assert C.shape == C_ref.shape
-print('abs diff max:', abs(C - C_ref).max())
-print('abs diff mean:', abs(C - C_ref).mean())
+for i, C in enumerate(Cs):
+    print(f'Device {i}:')
+    assert C.shape == C_ref.shape, f'Device {i} has shape {C.shape} but expected {C_ref.shape}'
+    C = C.to(torch.float32).cpu().numpy()
+    print('abs diff max:', abs(C - C_ref).max())
+    print('abs diff mean:', abs(C - C_ref).mean())

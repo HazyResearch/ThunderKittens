@@ -64,7 +64,9 @@ struct globals {
 
     using instruction_layout = pgl<gl<int, 1, -1, -1, config::INSTRUCTION_WIDTH>, num_devices, false>;
     using timing_layout = pgl<gl<int, 1, -1, -1, config::TIMING_WIDTH>, num_devices, false>;
-    using fp8_matrix = pgl<gl<fp8e4m3, 1, -1, -1, -1, a_tile, b_tile, c_tile>, num_devices, true, true>;
+
+    // A and B tiles are loaded using GL TMA descriptors, C is stored using PGL TMA descriptors
+    using fp8_matrix = pgl<gl<fp8e4m3, 1, -1, -1, -1, a_tile, b_tile>, num_devices, true, true, c_tile>;
 
     instruction_layout instructions;
     timing_layout timings;
@@ -215,7 +217,8 @@ template<typename config=config> struct MatmulOp {
                 wait(outputs_arrived(s, laneid), 0);
                 int store_page = get_store_page(s, laneid);
                 c_tile &store_buffer = *reinterpret_cast<c_tile *>(s.pages[store_page].data);
-                tma::store_async(g.C[g.dev_idx], store_buffer, {inst.row*2 + laneid, inst.col});
+                int start_col = g.C.cols() / N_BLOCK / g.num_devices * g.dev_idx;
+                tma::store_async(g.C, store_buffer, {inst.row*2 + laneid, inst.col + start_col}, g.dev_idx);
                 tma::store_async_read_wait();
                 s.finish_page(store_page, config::NUM_CONSUMER_WARPS);
             }
