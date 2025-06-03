@@ -12,7 +12,7 @@ namespace detail {
     // Returns size of the multicast granularity
     __host__ inline void init_mc_prop(CUmulticastObjectProp *mc_prop, int num_devices, size_t size) {
         mc_prop->numDevices = num_devices;
-        mc_prop->handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR; // single node
+        mc_prop->handleTypes = CU_MEM_HANDLE_TYPE_NONE; // single node
         mc_prop->flags = 0; // SBZ
 
         size_t granularity = 0;
@@ -24,7 +24,7 @@ namespace detail {
         mem_prop->type = CU_MEM_ALLOCATION_TYPE_PINNED;
         mem_prop->location.type = CU_MEM_LOCATION_TYPE_DEVICE;
         mem_prop->location.id = device_id;
-        mem_prop->requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+        mem_prop->requestedHandleTypes = CU_MEM_HANDLE_TYPE_NONE;
     }
 
     __host__ inline void init_mem_desc(CUmemAccessDesc *desc, int device_id) {

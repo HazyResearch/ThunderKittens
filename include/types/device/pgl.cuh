@@ -263,6 +263,33 @@ struct pgl {
     }
 };
 
+template<ducks::pgl::all PGL, bool safe=true> __host__ inline PGL make_pgl(
+    int device_ids[PGL::num_devices], uint64_t data[PGL::num_devices], int b, int d, int r, int c
+) {
+    if constexpr (safe) {
+        if(PGL::_GL::__b__ > 0 && b != PGL::_GL::__b__) {
+            throw std::runtime_error("Batch dimension mismatch. Expected: " + std::to_string(PGL::_GL::__b__) + ", Got: " + std::to_string(b));
+        }
+        if(PGL::_GL::__d__ > 0 && d != PGL::_GL::__d__) {
+            throw std::runtime_error("Depth dimension mismatch. Expected: " + std::to_string(PGL::_GL::__d__) + ", Got: " + std::to_string(d));
+        }
+        if(PGL::_GL::__r__ > 0 && r != PGL::_GL::__r__) {
+            throw std::runtime_error("Row dimension mismatch. Expected: " + std::to_string(PGL::_GL::__r__) + ", Got: " + std::to_string(r));
+        }
+        if(PGL::_GL::__c__ > 0 && c != PGL::_GL::__c__) {
+            throw std::runtime_error("Column dimension mismatch. Expected: " + std::to_string(PGL::_GL::__c__) + ", Got: " + std::to_string(c));
+        }
+    }
+    return PGL(
+        device_ids,
+        reinterpret_cast<typename PGL::dtype**>(data),
+        make_unsafe_gl_arg<PGL::_GL::__b__>(b),
+        make_unsafe_gl_arg<PGL::_GL::__d__>(d),
+        make_unsafe_gl_arg<PGL::_GL::__r__>(r),
+        make_unsafe_gl_arg<PGL::_GL::__c__>(c)
+    );
+}
+
 template <bool ROUND_UP = false, typename T>
 __host__ inline void pglCudaMalloc(int num_devices, int* device_ids, int device_id, T **ptr, size_t size) {
     CUDACHECK(cudaSetDevice(device_id));
