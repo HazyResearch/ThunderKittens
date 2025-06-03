@@ -82,8 +82,10 @@ template<ducks::pgl::all PGL> struct from_object<PGL> {
         size_t mem_granularity;
         CUmemAllocationProp mem_prop = {};
         CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, MEM_GRAN_TYPE));
-        if (sizeof(typename PGL::dtype) * shape[0] * shape[1] * shape[2] * shape[3] < mem_granularity)
-            throw std::runtime_error("PGL tensor size must be at least " + std::to_string(mem_granularity) + " bytes");
+        if constexpr (PGL::_INIT_MC) {
+            if (sizeof(typename PGL::dtype) * shape[0] * shape[1] * shape[2] * shape[3] < mem_granularity)
+                throw std::runtime_error("PGL tensor size must be at least " + std::to_string(mem_granularity) + " bytes");
+        }
         return make_pgl<PGL>(device_ids, data_ptrs, shape[0], shape[1], shape[2], shape[3]);
     }
 };

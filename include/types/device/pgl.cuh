@@ -54,7 +54,10 @@ struct pgl {
     using _GL = GL;
     using T = GL::dtype;
     using dtype = T;
-    
+
+    static constexpr bool _INIT_MC = INIT_MC;
+    static constexpr bool _INIT_TMA = INIT_TMA;
+
     GL gls[NUM_DEVICES];
     
     size_t mc_size;     // size of the multicast handle
