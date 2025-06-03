@@ -89,6 +89,10 @@ template<ducks::pgl::all PGL> struct from_object<PGL> {
 };
 
 template<typename T> concept has_dynamic_shared_memory = requires(T t) { { t.dynamic_shared_memory() } -> std::convertible_to<int>; };
+template<typename T> concept is_multigpu_globals = requires { 
+    { T::num_devices } -> std::convertible_to<std::size_t>;
+    { T::dev_idx } -> std::convertible_to<std::size_t>;
+} && T::num_devices >= 1;
 
 template<typename> struct trait;
 template<typename MT, typename T> struct trait<MT T::*> { using member_type = MT; using type = T; };
@@ -118,6 +122,7 @@ template<auto function, typename TGlobal> static void bind_function(auto m, auto
     });
 }
 template<auto kernel, typename TGlobal> static void bind_multigpu_kernel(auto m, auto name, auto TGlobal::*... member_ptrs) {
+    static_assert(is_multigpu_globals<TGlobal>, "Multigpu globals must have a member num_devices >= 1 and dev_idx");
     m.def("enable_all_p2p_access", [](const std::vector<int>& device_ids) {
         int device_count;
         CUDACHECK(cudaGetDeviceCount(&device_count));

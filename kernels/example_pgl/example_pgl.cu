@@ -11,6 +11,7 @@ struct globals {
     matrix_layout out_mat;
     int n;
 
+    int dev_idx;
     dim3 grid() { return dim3(4); }
     dim3 block() { return dim3(kittens::WARP_THREADS); }
     int dynamic_shared_memory() { return kittens::MAX_SHARED_MEMORY; }
