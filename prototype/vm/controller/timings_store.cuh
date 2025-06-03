@@ -13,13 +13,24 @@ template <typename config, typename globals>
 __device__ void inline store_timings(int *timings, int instruction_index, const globals &g) {
     constexpr int bytes = config::TIMING_WIDTH * sizeof(int);
     uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(timings));
-    uint64_t dst_ptr = (uint64_t)(&g.timings[kittens::coord<>{(int)(get_worker_id()), instruction_index, 0}]);
-    asm volatile("fence.proxy.async.shared::cta;\n" ::: "memory");
-    asm volatile(
-        "cp.async.bulk.global.shared::cta.bulk_group [%0], [%1], %2;\n"
-        :
-        : "l"(dst_ptr), "r"(src_ptr), "n"(bytes)
-        : "memory");
+
+    if constexpr (ducks::gl::all<decltype(g.instructions)>)  {
+        uint64_t dst_ptr = (uint64_t)(&g.timings[kittens::coord<>{(int)(get_worker_id()), instruction_index, 0}]);
+        asm volatile("fence.proxy.async.shared::cta;\n" ::: "memory");
+        asm volatile(
+            "cp.async.bulk.global.shared::cta.bulk_group [%0], [%1], %2;\n"
+            :
+            : "l"(dst_ptr), "r"(src_ptr), "n"(bytes)
+            : "memory");
+    } else if constexpr (ducks::pgl::all<decltype(g.instructions)>) {
+        uint64_t dst_ptr = (uint64_t)(&g.timings[g.dev_idx][kittens::coord<>{(int)(get_worker_id()), instruction_index, 0}]);
+        asm volatile("fence.proxy.async.shared::cta;\n" ::: "memory");
+        asm volatile(
+            "cp.async.bulk.global.shared::cta.bulk_group [%0], [%1], %2;\n"
+            :
+            : "l"(dst_ptr), "r"(src_ptr), "n"(bytes)
+            : "memory");
+    }
     kittens::tma::store_commit_group();
 }
 

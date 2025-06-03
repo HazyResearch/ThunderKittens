@@ -11,16 +11,19 @@ namespace controller {
 
 template <typename config, typename globals>
 __device__ void inline load_instructions(int *instruction, int instruction_index, const globals &g) {
+    static_assert(config::INSTRUCTION_WIDTH <= 32);
     auto laneid = ::kittens::laneid();
 
-    auto src_ptr = &g.instructions[kittens::coord<>{(int)(get_worker_id()), instruction_index, 0}];
-    // static assert it's an int*
-    static_assert(std::is_same<decltype(src_ptr), int *>::value, "src_ptr is not an int*");
-
-    static_assert(config::INSTRUCTION_WIDTH <= 32);
-
-    if (laneid < config::INSTRUCTION_WIDTH) {
-        instruction[laneid] = src_ptr[laneid];
+    if constexpr (ducks::gl::all<decltype(g.instructions)>)  {
+        auto src_ptr = &g.instructions[kittens::coord<>{(int)(get_worker_id()), instruction_index, 0}];
+        static_assert(std::is_same<decltype(src_ptr), int *>::value, "src_ptr is not an int*");
+        if (laneid < config::INSTRUCTION_WIDTH)
+            instruction[laneid] = src_ptr[laneid];
+    } else if constexpr (ducks::pgl::all<decltype(g.instructions)>) {
+        auto src_ptr = &g.instructions[g.dev_idx][kittens::coord<>{(int)(get_worker_id()), instruction_index, 0}];
+        static_assert(std::is_same<decltype(src_ptr), int *>::value, "src_ptr is not an int*");
+        if (laneid < config::INSTRUCTION_WIDTH)
+            instruction[laneid] = src_ptr[laneid];
     }
 }
 
