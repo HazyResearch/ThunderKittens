@@ -17,6 +17,8 @@ club = example_pgl.KittensClub(device_ids)
 kernel_globals = example_pgl.Globals(input_tensors, output_tensors, 1024 * 1024 * 2)
 
 example_pgl.example_pgl(kernel_globals, club)
+for i in range(4): 
+    torch.cuda.synchronize(i)
 
 print(output_tensors[0] - input_tensors[0])
 print(output_tensors[1] - input_tensors[1])

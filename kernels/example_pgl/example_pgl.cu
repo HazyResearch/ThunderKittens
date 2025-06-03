@@ -22,6 +22,8 @@ __global__ void example_pgl_kernel(const __grid_constant__ globals g) {
     int bid = blockIdx.x;
     int index = tid + bid * blockDim.x;
 
+    if (tid == 0 && bid == 0) printf("g.dev_idx = %d\n", g.dev_idx);
+
     if (index < g.n) {
         g.out_mat[0].raw_ptr[index] = g.in_mat[0].raw_ptr[index];
     }

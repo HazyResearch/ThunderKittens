@@ -147,23 +147,27 @@ template<auto kernel, typename TGlobal> static void bind_multigpu_kernel(auto m,
             if (device_count < device_ids.size())
                 throw std::runtime_error("Not enough CUDA devices available");
             auto club = std::make_shared<KittensClub>(device_ids.data(), device_ids.size());
-            club->execute([&](int worker_idx) {}); // warmup
+            club->execute([&](int dev_idx) {}); // warmup
             return club;
         }), pybind11::arg("device_ids"));
     pybind11::class_<TGlobal, std::shared_ptr<TGlobal>>(m, "Globals")
         .def(pybind11::init([](object<decltype(member_ptrs)>... args) {
             return std::make_shared<TGlobal>(from_object<typename trait<decltype(member_ptrs)>::member_type>::make(args)...);
         }));
-    m.def(name, [](std::shared_ptr<TGlobal> __g__, std::shared_ptr<KittensClub> club) {
+    m.def(name, [](std::shared_ptr<TGlobal> globals, std::shared_ptr<KittensClub> club) {
         if constexpr (has_dynamic_shared_memory<TGlobal>) {
-            int __dynamic_shared_memory__ = (int)__g__->dynamic_shared_memory();
-            cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, __dynamic_shared_memory__);
-            club->execute([&](int worker_idx) {
-                kernel<<<__g__->grid(), __g__->block(), __dynamic_shared_memory__>>>(*__g__);
+            club->execute([&](int dev_idx) {
+                TGlobal __g__ = *globals;
+                __g__.dev_idx = dev_idx;
+                int __dynamic_shared_memory__ = (int)__g__.dynamic_shared_memory();
+                cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, __dynamic_shared_memory__);
+                kernel<<<__g__.grid(), __g__.block(), __dynamic_shared_memory__>>>(__g__);
             });
         } else {
-            club->execute([&](int worker_idx) {
-                kernel<<<__g__->grid(), __g__->block(), 0>>>(*__g__);
+            club->execute([&](int dev_idx) {
+                TGlobal __g__ = *globals;
+                __g__.dev_idx = dev_idx;
+                kernel<<<__g__.grid(), __g__.block(), 0>>>(__g__);
             });
         }
     });
