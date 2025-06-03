@@ -4,7 +4,8 @@
 using namespace kittens;
 
 struct globals {
-    using matrix_layout = pgl<gl<float, -1, -1, -1, 1024 * 1024 * 2>, 4>;
+    static constexpr int num_devices = 4;
+    using matrix_layout = pgl<gl<float, -1, -1, -1, -1>, num_devices>;
 
     matrix_layout in_mat;
     matrix_layout out_mat;

@@ -79,7 +79,11 @@ template<ducks::pgl::all PGL> struct from_object<PGL> {
         int device_ids[PGL::num_devices];
         for (int i = 0; i < PGL::num_devices; i++)
             device_ids[i] = tensors[i].attr("device").attr("index").cast<int>();
-        // TODO: check granularity
+        size_t mem_granularity;
+        CUmemAllocationProp mem_prop = {};
+        CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, MEM_GRAN_TYPE));
+        if (sizeof(typename PGL::dtype) * shape[0] * shape[1] * shape[2] * shape[3] < mem_granularity)
+            throw std::runtime_error("PGL tensor size must be at least " + std::to_string(mem_granularity) + " bytes");
         return make_pgl<PGL>(device_ids, data_ptrs, shape[0], shape[1], shape[2], shape[3]);
     }
 };
@@ -145,7 +149,6 @@ template<auto kernel, typename TGlobal> static void bind_multigpu_kernel(auto m,
         .def(pybind11::init([](object<decltype(member_ptrs)>... args) {
             return std::make_shared<TGlobal>(from_object<typename trait<decltype(member_ptrs)>::member_type>::make(args)...);
         }));
-        // TODO: destory function
     m.def(name, [](std::shared_ptr<TGlobal> __g__, std::shared_ptr<KittensClub> club) {
         if constexpr (has_dynamic_shared_memory<TGlobal>) {
             int __dynamic_shared_memory__ = (int)__g__->dynamic_shared_memory();
@@ -159,6 +162,7 @@ template<auto kernel, typename TGlobal> static void bind_multigpu_kernel(auto m,
             });
         }
     });
+    // TODO: PGL destructor binding
 }
 
 } // namespace py

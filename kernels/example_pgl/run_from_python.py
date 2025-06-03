@@ -3,11 +3,11 @@ import torch
 import example_pgl
 
 input_tensors = [
-    (torch.randn(1024 * 1024 * 2, dtype=torch.float32, device=i) * 100).to(torch.int32)
+    torch.randn(1024 * 1024, dtype=torch.float32, device=i)
     for i in range(4)
 ]
 output_tensors = [
-    torch.zeros(1024 * 1024 * 2, dtype=torch.int32, device=i)
+    torch.zeros(1024 * 1024, dtype=torch.float32, device=i)
     for i in range(4)
 ]
 
