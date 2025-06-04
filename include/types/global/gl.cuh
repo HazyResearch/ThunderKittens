@@ -133,6 +133,7 @@ struct gl {
 
     detail::descriptor_dict<TMA_Types...> tma_descs;
 
+    __host__ inline gl() = default;
     __host__ inline gl(T *_data,
                         ducks::gl::make_arg_t<b> _batch,
                         ducks::gl::make_arg_t<d> _depth,
