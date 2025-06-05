@@ -11,6 +11,9 @@ template<typename T> struct from_object {
     static T make(pybind11::object obj) {
         return obj.cast<T>();
     }
+    static T unwrap(pybind11::object obj, int dev_idx) {
+        return make(obj); // Scalars should be passed in as a scalar
+    }
 };
 template<ducks::gl::all GL> struct from_object<GL> {
     static GL make(pybind11::object obj) {
@@ -44,6 +47,14 @@ template<ducks::gl::all GL> struct from_object<GL> {
             return make_gl<GL>(data_ptr, shape[0], shape[1], shape[2], shape[3]);
         }
         throw std::runtime_error("Expected a torch.Tensor");
+    }
+    static GL unwrap(pybind11::object obj, int dev_idx) {
+        if (!pybind11::isinstance<pybind11::list>(obj))
+            throw std::runtime_error("Expected a Python list.");
+        pybind11::list lst = pybind11::cast<pybind11::list>(obj);
+        if (dev_idx >= lst.size())
+            throw std::runtime_error("Device index out of bounds.");
+        return *lst[dev_idx].cast<std::shared_ptr<GL>>();
     }
 };
 template<ducks::pgl::all PGL> struct from_object<PGL> {
@@ -88,7 +99,39 @@ template<ducks::pgl::all PGL> struct from_object<PGL> {
         }
         return make_pgl<PGL>(device_ids, data_ptrs, shape[0], shape[1], shape[2], shape[3]);
     }
+    static PGL unwrap(pybind11::object obj, int dev_idx) {
+        return *obj.cast<std::shared_ptr<PGL>>();
+    }
 };
+
+static std::unordered_set<std::string> registered;
+template<typename T> static void register_pyclass(pybind11::module &m) {
+    if constexpr (ducks::gl::all<T> || ducks::pgl::all<T>) {
+        std::string _typename = typeid(T).name();
+        if (registered.find(_typename) == registered.end()) {
+            pybind11::class_<T, std::shared_ptr<T>>(m, _typename.c_str());
+            registered.insert(_typename);
+        }
+    }
+}
+template<typename T> static pybind11::object multigpu_make(pybind11::object obj) {
+    if constexpr (ducks::gl::all<T>) {
+        printf("Making GL\n");
+        if (!pybind11::isinstance<pybind11::list>(obj))
+            throw std::runtime_error("Expected a Python list.");
+        pybind11::list lst = pybind11::cast<pybind11::list>(obj);
+        std::vector<std::shared_ptr<T>> gls;
+        for (int i = 0; i < lst.size(); i++)
+            gls.push_back(std::make_shared<T>(from_object<T>::make(lst[i])));
+        return pybind11::cast(gls);
+    } else if constexpr (ducks::pgl::all<T>) {
+        printf("Making PGL\n");
+        return pybind11::cast(std::make_shared<T>(from_object<T>::make(obj)));
+    } else {
+        printf("Making scalar\n");
+        return pybind11::cast(from_object<T>::make(obj));
+    }
+}
 
 template<typename T> concept has_dynamic_shared_memory = requires(T t) { { t.dynamic_shared_memory() } -> std::convertible_to<int>; };
 template<typename T> concept is_multigpu_globals = requires { 
@@ -125,6 +168,7 @@ template<auto function, typename TGlobal> static void bind_function(auto m, auto
 }
 template<auto kernel, typename TGlobal> static void bind_multigpu_kernel(auto m, auto name, auto TGlobal::*... member_ptrs) {
     static_assert(is_multigpu_globals<TGlobal>, "Multigpu globals must have a member num_devices >= 1 and dev_idx");
+    (register_pyclass<typename trait<decltype(member_ptrs)>::member_type>(m), ...);
     m.def("enable_all_p2p_access", [](const std::vector<int>& device_ids) {
         int device_count;
         CUDACHECK(cudaGetDeviceCount(&device_count));
@@ -152,14 +196,13 @@ template<auto kernel, typename TGlobal> static void bind_multigpu_kernel(auto m,
             club->execute([&](int dev_idx) {}); // warmup
             return club;
         }), pybind11::arg("device_ids"));
-    pybind11::class_<TGlobal, std::shared_ptr<TGlobal>>(m, "Globals")
-        .def(pybind11::init([](object<decltype(member_ptrs)>... args) {
-            return std::make_shared<TGlobal>(from_object<typename trait<decltype(member_ptrs)>::member_type>::make(args)...);
-        }));
-    m.def(name, [](std::shared_ptr<TGlobal> globals, std::shared_ptr<KittensClub> club) {
+    m.def("make_globals", [](object<decltype(member_ptrs)>... args) -> std::vector<pybind11::object> {
+        return {multigpu_make<typename trait<decltype(member_ptrs)>::member_type>(args)...};
+    });
+    m.def(name, [](std::shared_ptr<KittensClub> club, object<decltype(member_ptrs)>... args) {
         if constexpr (has_dynamic_shared_memory<TGlobal>) {
             club->execute([&](int dev_idx) {
-                TGlobal __g__ = *globals;
+                TGlobal __g__ {from_object<typename trait<decltype(member_ptrs)>::member_type>::unwrap(args, dev_idx)...};
                 __g__.dev_idx = dev_idx;
                 int __dynamic_shared_memory__ = (int)__g__.dynamic_shared_memory();
                 cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, __dynamic_shared_memory__);
@@ -167,7 +210,7 @@ template<auto kernel, typename TGlobal> static void bind_multigpu_kernel(auto m,
             });
         } else {
             club->execute([&](int dev_idx) {
-                TGlobal __g__ = *globals;
+                TGlobal __g__ {from_object<typename trait<decltype(member_ptrs)>::member_type>::unwrap(args, dev_idx)...};
                 __g__.dev_idx = dev_idx;
                 kernel<<<__g__.grid(), __g__.block(), 0>>>(__g__);
             });
