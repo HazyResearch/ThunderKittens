@@ -198,7 +198,7 @@ template<auto kernel, typename TGlobal> static void bind_multigpu_kernel(auto m,
     });
     m.def(name, [](std::shared_ptr<KittensClub> club, object<decltype(member_ptrs)>... args) {
         std::vector<TGlobal> __g__;
-        for (int i = 0; i < 1; i++) {
+        for (int i = 0; i < TGlobal::num_devices; i++) {
             __g__.emplace_back(from_object<typename trait<decltype(member_ptrs)>::member_type>::unwrap(args, i)...);
             __g__.back().dev_idx = i;
         }
