@@ -197,19 +197,20 @@ template<auto kernel, typename TGlobal> static void bind_multigpu_kernel(auto m,
         return {multigpu_make<typename trait<decltype(member_ptrs)>::member_type>(args)...};
     });
     m.def(name, [](std::shared_ptr<KittensClub> club, object<decltype(member_ptrs)>... args) {
+        std::vector<TGlobal> __g__;
+        for (int i = 0; i < 1; i++) {
+            __g__.emplace_back(from_object<typename trait<decltype(member_ptrs)>::member_type>::unwrap(args, i)...);
+            __g__.back().dev_idx = i;
+        }
         if constexpr (has_dynamic_shared_memory<TGlobal>) {
             club->execute([&](int dev_idx) {
-                TGlobal __g__ {from_object<typename trait<decltype(member_ptrs)>::member_type>::unwrap(args, dev_idx)...};
-                __g__.dev_idx = dev_idx;
-                int __dynamic_shared_memory__ = (int)__g__.dynamic_shared_memory();
+                int __dynamic_shared_memory__ = (int)__g__[dev_idx].dynamic_shared_memory();
                 cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, __dynamic_shared_memory__);
-                kernel<<<__g__.grid(), __g__.block(), __dynamic_shared_memory__>>>(__g__);
+                kernel<<<__g__[dev_idx].grid(), __g__[dev_idx].block(), __dynamic_shared_memory__>>>(__g__[dev_idx]);
             });
         } else {
             club->execute([&](int dev_idx) {
-                TGlobal __g__ {from_object<typename trait<decltype(member_ptrs)>::member_type>::unwrap(args, dev_idx)...};
-                __g__.dev_idx = dev_idx;
-                kernel<<<__g__.grid(), __g__.block(), 0>>>(__g__);
+                kernel<<<__g__[dev_idx].grid(), __g__[dev_idx].block(), 0>>>(__g__[dev_idx]);
             });
         }
     });
