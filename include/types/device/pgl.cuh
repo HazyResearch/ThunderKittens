@@ -75,7 +75,6 @@ struct pgl {
         return &mc_vas[dev_idx][((idx.b*gl.depth() + idx.d)*gl.rows() + idx.r)*gl.cols() + idx.c];
     }
 
-    __host__ inline pgl() = default;
     __host__ inline pgl(int *_device_ids,  // an array of NUM_DEVS device IDs
                         T **_data,         // an array of NUM_DEVS pointers
                         ducks::gl::make_arg_t<GL::__b__> _batch,
