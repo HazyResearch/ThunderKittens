@@ -5,8 +5,10 @@ using namespace kittens;
 
 struct globals {
     static constexpr int num_devices = 4;
+    using plain_boring_gl_t = gl<float, -1, -1, -1, -1>;
     using matrix_layout = pgl<gl<float, -1, -1, -1, -1>, num_devices>;
 
+    plain_boring_gl_t boring_gl;
     matrix_layout in_mat;
     matrix_layout out_mat;
     int n;
@@ -34,6 +36,7 @@ PYBIND11_MODULE(example_pgl, m) {
     kittens::py::bind_multigpu_kernel<example_pgl_kernel>(
         m,
         "example_pgl",
+        &globals::boring_gl,
         &globals::in_mat,
         &globals::out_mat,
         &globals::n

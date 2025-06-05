@@ -1,5 +1,5 @@
 import torch
-from matmul import matmul, enable_all_p2p_access, KittensClub, Globals
+from matmul import matmul, enable_all_p2p_access, KittensClub, make_globals
 
 M, K, N = 8192, 16384, 8192
 
@@ -56,11 +56,11 @@ timings = [torch.zeros((SM_COUNT, instructions[i].shape[1], TIMING_WIDTH), dtype
 # Prepare for multigpu kernel
 device_ids = [i for i in range(NUM_DEVICES)]
 club = KittensClub(device_ids)
-kernel_globals = Globals(instructions, timings, As, Bs, Cs)
+kernel_globals = make_globals(instructions, timings, As, Bs, Cs)
 
 # Run the matmul kernel
 print('Launching kernel...')
-matmul(kernel_globals, club)
+matmul(club, *kernel_globals)
 for i in range(NUM_DEVICES): 
     torch.cuda.synchronize(i)
 

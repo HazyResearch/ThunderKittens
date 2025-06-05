@@ -2,6 +2,10 @@ import torch
 
 import example_pgl
 
+test_tensors = [
+    torch.randn(1024 * 1024, dtype=torch.float32, device=i)
+    for i in range(4)
+]
 input_tensors = [
     torch.randn(1024 * 1024, dtype=torch.float32, device=i)
     for i in range(4)
@@ -14,9 +18,9 @@ output_tensors = [
 device_ids = [0, 1, 2, 3]
 example_pgl.enable_all_p2p_access(device_ids)
 club = example_pgl.KittensClub(device_ids)
-kernel_globals = example_pgl.Globals(input_tensors, output_tensors, 1024 * 1024 * 2)
+kernel_globals = example_pgl.make_globals(test_tensors, input_tensors, output_tensors, 1024 * 1024 * 2)
 
-example_pgl.example_pgl(kernel_globals, club)
+example_pgl.example_pgl(club, *kernel_globals)
 for i in range(4): 
     torch.cuda.synchronize(i)
 

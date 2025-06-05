@@ -116,7 +116,6 @@ template<typename T> static void register_pyclass(pybind11::module &m) {
 }
 template<typename T> static pybind11::object multigpu_make(pybind11::object obj) {
     if constexpr (ducks::gl::all<T>) {
-        printf("Making GL\n");
         if (!pybind11::isinstance<pybind11::list>(obj))
             throw std::runtime_error("Expected a Python list.");
         pybind11::list lst = pybind11::cast<pybind11::list>(obj);
@@ -125,10 +124,8 @@ template<typename T> static pybind11::object multigpu_make(pybind11::object obj)
             gls.push_back(std::make_shared<T>(from_object<T>::make(lst[i])));
         return pybind11::cast(gls);
     } else if constexpr (ducks::pgl::all<T>) {
-        printf("Making PGL\n");
         return pybind11::cast(std::make_shared<T>(from_object<T>::make(obj)));
     } else {
-        printf("Making scalar\n");
         return pybind11::cast(from_object<T>::make(obj));
     }
 }
