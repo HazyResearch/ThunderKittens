@@ -53,6 +53,20 @@ __device__ static inline void store_async(const GL &dst, const SV &src, const CO
 }
 __KITTENS_TMA_DEFINE_DEFAULT_STORE_CACHE_VEC__(store_async)
 
+template<cache_policy policy, ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
+__device__ static inline void store_async(const PGL &dst, const SV &src, const COORD &idx, const int dev_idx) {
+    coord<> unit_coord = idx.template unit_coord<-1, 3>();
+    uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.template get_tma<SV, -1>(dev_idx));
+    uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+    for(int i = ::kittens::laneid(); i < ::kittens::detail::tma::sv_tma_dim2<SV>; i += WARP_THREADS) {
+        coord<> tma_coord = unit_coord;
+        tma_coord.c += i * ::kittens::detail::tma::sv_tma_dim1<SV>;
+        uint32_t src_i_ptr = src_ptr + i*::kittens::detail::tma::sv_tma_dim1<SV>*sizeof(typename SV::dtype);
+        ::kittens::detail::tma::vec_store_async_tma_internal<policy>(tma_ptr, src_i_ptr, tma_coord);
+    }
+    store_commit_group();
+}
+__KITTENS_TMA_DEFINE_PGL_DEFAULT_STORE_CACHE_VEC__(store_async)
 
 
 /**
@@ -79,6 +93,21 @@ __device__ static inline void store_add_async(const GL &dst, const SV &src, cons
     store_commit_group();
 }
 __KITTENS_TMA_DEFINE_DEFAULT_STORE_CACHE_VEC__(store_add_async)
+
+template<cache_policy policy, ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
+__device__ static inline void store_add_async(const PGL &dst, const SV &src, const COORD &idx, const int dev_idx) {
+    coord<> unit_coord = idx.template unit_coord<-1, 3>();
+    uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.template get_tma<SV, -1>(dev_idx));
+    uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+    for(int i = ::kittens::laneid(); i < ::kittens::detail::tma::sv_tma_dim2<SV>; i += WARP_THREADS) {
+        coord<> tma_coord = unit_coord;
+        tma_coord.c += i * ::kittens::detail::tma::sv_tma_dim1<SV>;
+        uint32_t src_i_ptr = src_ptr + i*::kittens::detail::tma::sv_tma_dim1<SV>*sizeof(typename SV::dtype);
+        ::kittens::detail::tma::vec_store_add_async_tma_internal<policy>(tma_ptr, src_i_ptr, tma_coord);
+    }
+    store_commit_group();
+}
+__KITTENS_TMA_DEFINE_PGL_DEFAULT_STORE_CACHE_VEC__(store_add_async)
 
 
 /**
@@ -107,6 +136,21 @@ __device__ static inline void store_min_async(const GL &dst, const SV &src, cons
 }
 __KITTENS_TMA_DEFINE_DEFAULT_STORE_CACHE_VEC__(store_min_async)
 
+template<cache_policy policy, ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
+__device__ static inline void store_min_async(const PGL &dst, const SV &src, const COORD &idx, const int dev_idx) {
+    static_assert(!std::is_same_v<typename SV::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
+    coord<> unit_coord = idx.template unit_coord<-1, 3>();
+    uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.template get_tma<SV, -1>(dev_idx));
+    uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+    for(int i = ::kittens::laneid(); i < ::kittens::detail::tma::sv_tma_dim2<SV>; i += WARP_THREADS) {
+        coord<> tma_coord = unit_coord;
+        tma_coord.c += i * ::kittens::detail::tma::sv_tma_dim1<SV>;
+        uint32_t src_i_ptr = src_ptr + i*::kittens::detail::tma::sv_tma_dim1<SV>*sizeof(typename SV::dtype);
+        ::kittens::detail::tma::vec_store_min_async_tma_internal<policy>(tma_ptr, src_i_ptr, tma_coord);
+    }
+    store_commit_group();
+}
+__KITTENS_TMA_DEFINE_PGL_DEFAULT_STORE_CACHE_VEC__(store_min_async)
 
 /**
 * @brief Asynchronously performs an max reduction and stores the result into global memory.
@@ -134,7 +178,21 @@ __device__ static inline void store_max_async(const GL &dst, const SV &src, cons
 }
 __KITTENS_TMA_DEFINE_DEFAULT_STORE_CACHE_VEC__(store_max_async)
 
-
+template<cache_policy policy, ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
+__device__ static inline void store_max_async(const PGL &dst, const SV &src, const COORD &idx, const int dev_idx) {
+    static_assert(!std::is_same_v<typename SV::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
+    coord<> unit_coord = idx.template unit_coord<-1, 3>();
+    uint64_t tma_ptr  = reinterpret_cast<uint64_t>(dst.template get_tma<SV, -1>(dev_idx));
+    uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+    for(int i = ::kittens::laneid(); i < ::kittens::detail::tma::sv_tma_dim2<SV>; i += WARP_THREADS) {
+        coord<> tma_coord = unit_coord;
+        tma_coord.c += i * ::kittens::detail::tma::sv_tma_dim1<SV>;
+        uint32_t src_i_ptr = src_ptr + i*::kittens::detail::tma::sv_tma_dim1<SV>*sizeof(typename SV::dtype);
+        ::kittens::detail::tma::vec_store_max_async_tma_internal<policy>(tma_ptr, src_i_ptr, tma_coord);
+    }
+    store_commit_group();
+}
+__KITTENS_TMA_DEFINE_PGL_DEFAULT_STORE_CACHE_VEC__(store_max_async)
 
 /**
  * @brief Asynchronously loads data from global memory into a shared memory vector.
