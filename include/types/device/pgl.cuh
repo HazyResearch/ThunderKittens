@@ -174,7 +174,7 @@ struct pgl {
         for (int i = 0; i < NUM_DEVICES; ++i) {
             CUDACHECK(cudaSetDevice(device_ids[i]));
             if ((size_t)gls[i].raw_ptr % mc_granularity != 0) {
-                std::cerr << "GL raw pointer must be aligned to the multicast granularity " << mc_granularity << std::endl;
+                std::cerr << "ERROR: GL raw pointer must be aligned to the multicast granularity of " << mc_granularity << " bytes." << std::endl;
                 std::exit(EXIT_FAILURE);
             }
             CUCHECK(cuMulticastBindAddr(mc_handle, 0, (CUdeviceptr)gls[i].raw_ptr, mem_handle_size(gl_size()), 0));
