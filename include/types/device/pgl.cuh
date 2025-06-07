@@ -170,8 +170,13 @@ struct pgl {
         }
 
         // Bind the underlying GLs (with memory alloc'ed by pglCudaMalloc) to the multicast handle
+        size_t mc_granularity = detail::get_mc_granularity(NUM_DEVICES);
         for (int i = 0; i < NUM_DEVICES; ++i) {
             CUDACHECK(cudaSetDevice(device_ids[i]));
+            if ((size_t)gls[i].raw_ptr % mc_granularity != 0) {
+                std::cerr << "GL raw pointer must be aligned to the multicast granularity " << mc_granularity << std::endl;
+                std::exit(EXIT_FAILURE);
+            }
             CUCHECK(cuMulticastBindAddr(mc_handle, 0, (CUdeviceptr)gls[i].raw_ptr, mem_handle_size(gl_size()), 0));
         }
     }
