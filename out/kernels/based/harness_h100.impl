@@ -1,0 +1,359 @@
+#define ONEAPI_BACKEND_LEVEL_ZERO_EXT
+#define DPCT_PROFILING_ENABLED
+#include <sycl/sycl.hpp>
+#include <dpct/dpct.hpp>
+#include <iostream>
+#include <string>
+#include <fstream>
+#include <sycl/ext/intel/math.hpp>
+
+#include <cmath>
+
+#define ATTN_B 16
+#define ATTN_H 16
+#define ATTN_N 1024
+#define ATTN_D 64 // hardcoded into this kernel
+#define ATTN_D_SMALL 16 // hardcoded into this kernel
+
+// Function to calculate the number of floating-point operations
+long long flops(int batch, int seqlen, int headdim, int nheads, int featuredim) {
+    long long expanded_dim = featuredim * featuredim + featuredim + 1;
+
+    // feature map
+    long long f = 2 * batch * static_cast<long long>(seqlen) * nheads * expanded_dim;
+
+    // (k * v)
+    f += batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;
+    // (cumsum)
+    f +=  batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;
+    // (q * (k * v))
+    f += batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;
+    // .sum(dim=-1)
+    f += batch * static_cast<long long>(seqlen) * nheads * headdim * expanded_dim;
+
+    return f;
+}
+
+// Function to calculate the efficiency in teraflops
+double efficiency(long long flop, double time) {
+    // Convert flop to teraflops and time to milliseconds
+    double tflops = flop / 1e12;
+    double time_ms = time / 1e6;
+    return tflops / time_ms;
+}
+
+
+#define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
+inline void __cudaCheckError(const char *file, const int line) try {
+    /*
+    DPCT1010:579: SYCL uses exceptions to report errors and does not use the
+    error codes. The cudaGetLastError function call was replaced with 0. You
+    need to rewrite this code.
+    */
+    dpct::err0 err = 0;
+
+    // More careful checking. However, this will affect performance.
+    // Comment away if needed.
+    err = DPCT_CHECK_ERROR(dpct::get_current_device().queues_wait_and_throw());
+}
+catch (sycl::exception const &exc) {
+  std::cerr << exc.what() << "Exception caught at file:" << __FILE__
+            << ", line:" << __LINE__ << std::endl;
+  std::exit(1);
+}
+
+int main(int argc, char **argv) {
+    // TODO: consider doing sequential kernel launches to force batches dimension element to execute sequentially,
+    // which may increase the probability of L2 cache hits on KV
+
+    std::cout << "Entered main!" << std::endl;
+
+    // create dummy variables that are the right size
+    constexpr int TOTAL_ELEMENTS_QK = ATTN_B*ATTN_H*ATTN_N*ATTN_D_SMALL;
+    constexpr int TOTAL_ELEMENTS_VO = ATTN_B*ATTN_H*ATTN_N*ATTN_D;
+
+    // kv state
+    constexpr int TOTAL_ELEMENTS_KV_A2 = ATTN_B*ATTN_H*ATTN_D_SMALL*ATTN_D_SMALL*ATTN_D;
+    constexpr int TOTAL_ELEMENTS_KV_A1 = ATTN_B*ATTN_H*ATTN_D_SMALL*ATTN_D;
+    constexpr int TOTAL_ELEMENTS_KV_A0 = ATTN_B*ATTN_H*1*ATTN_D;
+
+    // create pointers
+    float *q = new float[TOTAL_ELEMENTS_QK];
+    float *k = new float[TOTAL_ELEMENTS_QK];
+    float *v = new float[TOTAL_ELEMENTS_VO];
+    float *o_ref = new float[TOTAL_ELEMENTS_VO];
+    float *kv_a1_ref = new float[TOTAL_ELEMENTS_KV_A1];
+    float *kv_a2_ref = new float[TOTAL_ELEMENTS_KV_A2];
+
+    bf16 *q_bf = new bf16[TOTAL_ELEMENTS_QK];
+    bf16 *k_bf = new bf16[TOTAL_ELEMENTS_QK];
+    bf16 *v_bf = new bf16[TOTAL_ELEMENTS_VO];
+    bf16 *o_bf = new bf16[TOTAL_ELEMENTS_VO];
+    bf16 *kv_a1_bf = new bf16[TOTAL_ELEMENTS_KV_A1];             // to be filled
+    bf16 *kv_a2_bf = new bf16[TOTAL_ELEMENTS_KV_A2];             // to be filled
+
+    // on host after kernel
+    float *o = new float[TOTAL_ELEMENTS_VO];
+    float *kv_a1_state = new float[TOTAL_ELEMENTS_KV_A1];
+    float *kv_a2_state = new float[TOTAL_ELEMENTS_KV_A2];
+
+    if(argc > 1) {
+        std::ifstream infile(argv[1]);
+
+        std::cout << "Starting to enter!" << std::endl;
+
+        for(int i = 0; i < TOTAL_ELEMENTS_QK; i++) infile >> q[i];
+        std::cout << "Finished loading Q" << std::endl;
+        for(int i = 0; i < TOTAL_ELEMENTS_QK; i++) infile >> k[i];
+        std::cout << "Finished loading K" << std::endl;
+        for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) infile >> v[i];
+        std::cout << "Finished loading V" << std::endl;
+        for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) { infile >> o_ref[i]; }
+        std::cout << "Finished loading O_REF" << std::endl;
+
+        // kv states
+        for (int i = 0; i < TOTAL_ELEMENTS_KV_A1; i ++){  infile >> kv_a1_ref[i];  }
+        std::cout << "Finished loading KV_A1_REF" << std::endl;
+        for (int i = 0; i < TOTAL_ELEMENTS_KV_A2; i ++){  infile >> kv_a2_ref[i];  }
+        std::cout << "Finished loading KV_A2_REF" << std::endl;
+        std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
+
+        std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
+    }
+
+    // replicate into heads
+    for(int i = 0; i < TOTAL_ELEMENTS_QK; i++) {
+        q_bf[i] = sycl::ext::intel::math::float2bfloat16(q[i]);
+        k_bf[i] = sycl::ext::intel::math::float2bfloat16(k[i]);
+    }
+    for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
+        v_bf[i] = sycl::ext::intel::math::float2bfloat16(v[i]);
+    }
+
+    bf16 *d_q, *d_k, *d_v, *d_o, *d_kv_a2, *d_kv_a1, *d_kv_a0;
+    d_q = sycl::malloc_device<bf16>(TOTAL_ELEMENTS_QK,
+                                    dpct::get_in_order_queue());
+    d_k = sycl::malloc_device<bf16>(TOTAL_ELEMENTS_QK,
+                                    dpct::get_in_order_queue());
+    d_v = sycl::malloc_device<bf16>(TOTAL_ELEMENTS_VO,
+                                    dpct::get_in_order_queue());
+    d_o = sycl::malloc_device<bf16>(TOTAL_ELEMENTS_VO,
+                                    dpct::get_in_order_queue());
+    // kv state
+    d_kv_a2 = sycl::malloc_device<bf16>(TOTAL_ELEMENTS_KV_A2,
+                                        dpct::get_in_order_queue());
+    d_kv_a1 = sycl::malloc_device<bf16>(TOTAL_ELEMENTS_KV_A1,
+                                        dpct::get_in_order_queue());
+    d_kv_a0 = sycl::malloc_device<bf16>(TOTAL_ELEMENTS_KV_A0,
+                                        dpct::get_in_order_queue());
+
+    dpct::get_in_order_queue().memcpy(d_q, q_bf,
+                                      TOTAL_ELEMENTS_QK * sizeof(bf16));
+    dpct::get_in_order_queue().memcpy(d_k, k_bf,
+                                      TOTAL_ELEMENTS_QK * sizeof(bf16));
+    dpct::get_in_order_queue()
+        .memcpy(d_v, v_bf, TOTAL_ELEMENTS_VO * sizeof(bf16))
+        .wait();
+
+     /********************** Start of TK2 Changes ***********************/
+
+    based_globals g = based_init(
+        d_q, d_k, d_v, d_o, 
+        d_kv_a2, d_kv_a1, d_kv_a0, 
+        ATTN_B, ATTN_H, ATTN_N
+    );
+
+    /********************** End of TK2 Changes ***********************/
+
+    dpct::get_current_device().queues_wait_and_throw();
+    CudaCheckError();
+    
+    unsigned long mem_size = 98000; // have the flag tell us
+    std::cout << "Setting max block shared memory to " << mem_size << std::endl;
+    
+    using T = kittens::bf16;
+    using H = kittens::bf16;
+    /*
+    DPCT1026:582: The call to cudaFuncSetAttribute was removed because SYCL
+    currently does not support corresponding setting.
+    */
+
+    const int ITER = 10;
+    dpct::get_current_device().queues_wait_and_throw();
+    CudaCheckError();
+    std::cout << "Warmup!\n";
+    dpct::dim3 grid(ATTN_H, ATTN_B);
+    for(int i = 0; i < ITER; i++) {
+        /*
+        DPCT1129:403: The type "based_globals" is used in the SYCL kernel, but
+        it is not device copyable. The sycl::is_device_copyable specialization
+        has been added for this type. Please review the code.
+        */
+        {
+            auto exp_props = sycl::ext::oneapi::experimental::properties{
+                sycl::ext::oneapi::experimental::use_root_sync};
+            dpct::has_capability_or_fail(
+                dpct::get_in_order_queue().get_device(), {sycl::aspect::fp16});
+
+            dpct::get_in_order_queue().submit([&](sycl::handler &cgh) {
+                sycl::local_accessor<uint8_t, 1> dpct_local_acc_ct1(
+                    sycl::range<1>(mem_size), cgh);
+
+                cgh.depends_on(dpct::get_current_device()
+                                   .get_in_order_queues_last_events());
+
+                cgh.parallel_for(
+                    sycl::nd_range<3>(grid * sycl::range<3>(1, 1, NUM_THREADS),
+                                      sycl::range<3>(1, 1, NUM_THREADS)),
+                    exp_props,
+                    [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(
+                        32)]] {
+                        based_linear_attention(
+                            g, dpct_local_acc_ct1
+                                   .get_multi_ptr<sycl::access::decorated::no>()
+                                   .get());
+                    });
+            });
+        };
+    }
+    dpct::get_current_device().queues_wait_and_throw();
+    CudaCheckError();
+    std::cout << "Starting kernel\n";
+    const auto start = std::chrono::high_resolution_clock::now();
+    for(int i = 0; i < ITER; i++) {
+        /*
+        DPCT1129:404: The type "based_globals" is used in the SYCL kernel, but
+        it is not device copyable. The sycl::is_device_copyable specialization
+        has been added for this type. Please review the code.
+        */
+        auto exp_props = sycl::ext::oneapi::experimental::properties{
+            sycl::ext::oneapi::experimental::use_root_sync};
+        dpct::has_capability_or_fail(dpct::get_in_order_queue().get_device(),
+                                     {sycl::aspect::fp16});
+
+        dpct::get_in_order_queue().submit([&](sycl::handler &cgh) {
+            sycl::local_accessor<uint8_t, 1> dpct_local_acc_ct1(
+                sycl::range<1>(mem_size), cgh);
+
+            cgh.depends_on(
+                dpct::get_current_device().get_in_order_queues_last_events());
+
+            cgh.parallel_for(
+                sycl::nd_range<3>(grid * sycl::range<3>(1, 1, NUM_THREADS),
+                                  sycl::range<3>(1, 1, NUM_THREADS)),
+                exp_props,
+                [=](sycl::nd_item<3> item_ct1)
+                    [[sycl::reqd_sub_group_size(32)]] {
+                        based_linear_attention(
+                            g, dpct_local_acc_ct1
+                                   .get_multi_ptr<sycl::access::decorated::no>()
+                                   .get());
+                    });
+        });
+    }
+    dpct::get_current_device().queues_wait_and_throw();
+    const auto finish = std::chrono::high_resolution_clock::now();
+    CudaCheckError();
+    std::cout << "Finished kernel\n";
+
+
+    /*************************** Correctness Checks **************************** */
+    
+    // check correctness
+    dpct::get_in_order_queue()
+        .memcpy(o_bf, d_o, TOTAL_ELEMENTS_VO * sizeof(bf16))
+        .wait();
+    for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
+        o[i] = sycl::ext::intel::math::bfloat162float(o_bf[i]);
+    }
+
+    bool good = true;
+    std::ofstream o_ref_file("printouts/o_ref.txt");
+    std::ofstream o_file("printouts/o.txt");
+    std::ofstream diff_file("printouts/diff.txt");
+
+    std::cout << "Total elements: " << TOTAL_ELEMENTS_VO << std::endl;
+    std::cout << "Total unique elements: " << TOTAL_ELEMENTS_VO << std::endl;
+    for(int i = 0; i < TOTAL_ELEMENTS_VO; i++) {
+        float diff = o[i] - o_ref[i];
+        if(i < TOTAL_ELEMENTS_VO) {
+            o_ref_file << o_ref[i] << ' ';
+            o_file << o[i] << ' ';
+            diff_file << diff << ' ';
+        }
+        if(abs(diff) > 0.05 || isnan(diff)) {
+            good = false;
+        }
+    }
+    if(good) std::cout << "Correct output :)\n";
+    else std::cout << "Incorrect output :(\n";
+
+
+    // check kv-state
+    dpct::get_in_order_queue()
+        .memcpy(kv_a1_bf, d_kv_a1, TOTAL_ELEMENTS_KV_A1 * sizeof(bf16))
+        .wait();
+    for (int i = 0; i < TOTAL_ELEMENTS_KV_A1; i++) {
+        kv_a1_state[i] = sycl::ext::intel::math::bfloat162float(kv_a1_bf[i]);
+    }
+    std::ofstream kv_state_file("printouts/kv_a1_state.txt");
+    std::ofstream kv_state_ref_file("printouts/kv_a1_state_ref.txt");
+    std::ofstream kv_state_diff_file("printouts/kv_a1_state_diff.txt");
+    float total_kv_diff1 = 0;
+    for (int i = 0; i < TOTAL_ELEMENTS_KV_A1; i++) {
+        float diff = kv_a1_state[i] - kv_a1_ref[i];
+        total_kv_diff1 += abs(diff);
+        if (i < TOTAL_ELEMENTS_KV_A1) {
+            kv_state_ref_file << kv_a1_ref[i] << ' ';
+            kv_state_file << kv_a1_state[i] << ' ';
+            kv_state_diff_file << diff << ' ';
+        }
+        if( isnan(diff) ) {
+            printf("K1 NAN detected idx=%d,  diff = %f\n", i, diff);
+            break;
+        }
+    }
+    std::cout << "KV-State A1 | avg_diff=" << (total_kv_diff1/TOTAL_ELEMENTS_KV_A1) << std::endl;
+
+    dpct::get_in_order_queue()
+        .memcpy(kv_a2_bf, d_kv_a2, TOTAL_ELEMENTS_KV_A2 * sizeof(bf16))
+        .wait();
+    for (int i = 0; i < TOTAL_ELEMENTS_KV_A2; i++) {
+        kv_a2_state[i] = sycl::ext::intel::math::bfloat162float(kv_a2_bf[i]);
+    }
+    std::ofstream kv2_state_file("printouts/kv_a2_state.txt");
+    std::ofstream kv2_state_ref_file("printouts/kv_a2_state_ref.txt");
+    std::ofstream kv2_state_diff_file("printouts/kv_a2_state_diff.txt");
+    float total_kv_diff2=0;
+    for (int i = 0; i < TOTAL_ELEMENTS_KV_A2; i++) {
+        float diff = kv_a2_state[i] - kv_a2_ref[i];
+        total_kv_diff2 += abs(diff);
+        if (i < TOTAL_ELEMENTS_KV_A2) {
+            kv2_state_ref_file << kv_a2_ref[i] << ' ';
+            kv2_state_file << kv_a2_state[i] << ' ';
+            kv2_state_diff_file << diff << ' ';
+        }
+        if( isnan(diff) ) {
+            printf("K2 NAN detected idx=%d,  diff = %f\n", i, diff);
+            break;
+        }
+    }
+    std::cout << "KV-State A2 | avg_diff=" << (total_kv_diff2/TOTAL_ELEMENTS_KV_A2) << std::endl;
+
+    // calculate efficiency
+    std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
+    long long f = flops(ATTN_B, ATTN_N, ATTN_D, ATTN_H, ATTN_D_SMALL);
+    double e = efficiency(f, std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER);
+    std::cout << "Efficiency: " << e << " TFLOPS" << std::endl;
+
+    dpct::dpct_free(d_q, dpct::get_in_order_queue());
+    dpct::dpct_free(d_k, dpct::get_in_order_queue());
+    dpct::dpct_free(d_v, dpct::get_in_order_queue());
+    dpct::dpct_free(d_o, dpct::get_in_order_queue());
+
+    delete[] q, k, v, o, o_ref;
+    delete[] q_bf, k_bf, v_bf, o_bf;
+
+    return 0;
+}
+

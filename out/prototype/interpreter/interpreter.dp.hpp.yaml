@@ -1,0 +1,324 @@
+---
+MainSourceFile:  '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/out/prototype/interpreter/interpreter.dp.hpp'
+Replacements:
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          14
+    Length:          22
+    ReplacementText: "#define ONEAPI_BACKEND_LEVEL_ZERO_EXT\n#define DPCT_PROFILING_ENABLED\n#include <sycl/sycl.hpp>\n#include <dpct/dpct.hpp>\n#include \"kittens.dp.hpp\""
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          37
+    Length:          31
+    ReplacementText: '#include "../common/common.dp.hpp"'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          69
+    Length:          24
+    ReplacementText: '#include "templates.dp.hpp"'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          93
+    Length:          0
+    ReplacementText: "\n#include <time.h>\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          785
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          5931
+    Length:          0
+    ReplacementText: "            /*\n            DPCT1008:486: __nanosleep function is not defined in SYCL. This is a hardware-specific feature. Consult with your hardware vendor to find a replacement.\n            */\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          8947
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          16237
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          16484
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          16819
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          17066
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          17354
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          17706
+    Length:          74
+    ReplacementText: 'auto mbar_ptr = &bar;'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          17789
+    Length:          82
+    ReplacementText: 'auto dst_ptr = instructions;'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          17956
+    Length:          10
+    ReplacementText: 'sycl::ext::oneapi::this_work_item::get_nd_item<3>().get_group(2)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          17994
+    Length:          0
+    ReplacementText: "/*\n        DPCT1053:315: Migration of device assembly code is not supported.\n        */\n        "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          18294
+    Length:          74
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          18420
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          18449
+    Length:          18
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          18499
+    Length:          0
+    ReplacementText: ",\n            uint8_t *dpct_local"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          19008
+    Length:          74
+    ReplacementText: 'auto &instructions = *sycl::ext::oneapi::group_local_memory_for_overwrite<int[2][globals.instructions.cols()]>(sycl::ext::oneapi::this_work_item::get_work_group<3>()); '
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          19087
+    Length:          175
+    ReplacementText: "auto &inputs_arrived = *sycl::ext::oneapi::group_local_memory_for_overwrite<kittens::semaphore[8]>(sycl::ext::oneapi::this_work_item::get_work_group<3>()); \n    auto &inputs_finished = *sycl::ext::oneapi::group_local_memory_for_overwrite<kittens::semaphore[8]>(sycl::ext::oneapi::this_work_item::get_work_group<3>()); \n    auto &outputs_arrived = *sycl::ext::oneapi::group_local_memory_for_overwrite<kittens::semaphore[8]>(sycl::ext::oneapi::this_work_item::get_work_group<3>()); \n    auto &outputs_finished = *sycl::ext::oneapi::group_local_memory_for_overwrite<kittens::semaphore[8]>(sycl::ext::oneapi::this_work_item::get_work_group<3>()); \n    auto &finish_finished = *sycl::ext::oneapi::group_local_memory_for_overwrite<kittens::semaphore>(sycl::ext::oneapi::this_work_item::get_work_group<3>()); \n    auto &instruction_arrived = *sycl::ext::oneapi::group_local_memory_for_overwrite<kittens::semaphore[2]>(sycl::ext::oneapi::this_work_item::get_work_group<3>()); \n    auto &instruction_finished = *sycl::ext::oneapi::group_local_memory_for_overwrite<kittens::semaphore[2]>(sycl::ext::oneapi::this_work_item::get_work_group<3>()); "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          19531
+    Length:          30
+    ReplacementText: 'auto __shm = (int *)dpct_local;'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          22422
+    Length:          12
+    ReplacementText: 'sycl::group_barrier(sycl::ext::oneapi::this_work_item::get_sub_group())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          23346
+    Length:          0
+    ReplacementText: "    /*\n    DPCT1049:316: The work-group size passed to the SYCL kernel may exceed the limit. To get the device limit, query info::device::max_work_group_size. Adjust the work-group size if needed.\n    */\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          23350
+    Length:          101
+    ReplacementText: "{\n      auto exp_props = sycl::ext::oneapi::experimental::properties{sycl::ext::oneapi::experimental::use_root_sync};\n\n      dpct::get_in_order_queue().submit(\n        [&](sycl::handler &cgh) {\n          sycl::local_accessor<uint8_t, 1> dpct_local_acc_ct1(sycl::range<1>(globals.dynamic_shared_memory()), cgh);\n\n          cgh.depends_on(dpct::get_current_device().get_in_order_queues_last_events());\n\n          cgh.parallel_for(\n            sycl::nd_range<3>(sycl::range<3>(1, 1, globals.grid()) * sycl::range<3>(1, 1, globals.block()), sycl::range<3>(1, 1, globals.block())), \nexp_props,             [=](sycl::nd_item<3> item_ct1) {\n              kernel<config, ops...>(globals, dpct_local_acc_ct1.get_multi_ptr<sycl::access::decorated::no>().get());\n            });\n        });\n    }"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: true
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/interpreter/interpreter.cuh'
+    Offset:          23451
+    Length:          1
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+MainSourceFilesDigest:
+  - MainSourceFile:  ''
+    Digest:          ''
+    HasCUDASyntax:   false
+DpctVersion:     21.0.0
+SDKVersionMajor: '12'
+SDKVersionMinor: '3'
+MainHelperFileName: ''
+USMLevel:        ''
+FeatureMap:      {}
+CompileTargets:  {}
+OptionMap:
+  AnalysisScopePath:
+    Value:           ''
+    ValueVec:
+      - '/export/nvme0n1/zhiweij1/workspace/ThunderKittens'
+    Specified:       false
+  AsyncHandler:
+    Value:           'false'
+    Specified:       false
+  BuildScript:
+    Value:           '0'
+    Specified:       false
+  CodePinEnabled:
+    Value:           'false'
+    Specified:       false
+  CommentsEnabled:
+    Value:           'false'
+    Specified:       false
+  CompilationsDir:
+    Value:           '/export/nvme0n1/zhiweij1/workspace/ThunderKittens'
+    Specified:       true
+  CtadEnabled:
+    Value:           'false'
+    Specified:       false
+  EnablepProfiling:
+    Value:           'false'
+    Specified:       false
+  ExperimentalFlag:
+    Value:           '4294967295'
+    Specified:       true
+  ExplicitNamespace:
+    Value:           '20'
+    Specified:       false
+  ExtensionDDFlag:
+    Value:           '4294967295'
+    Specified:       true
+  ExtensionDEFlag:
+    Value:           '4294967295'
+    Specified:       false
+  HelperFuncPreferenceFlag:
+    Value:           '0'
+    Specified:       false
+  NDRangeDim:
+    Value:           '3'
+    Specified:       false
+  NoDRYPattern:
+    Value:           'false'
+    Specified:       false
+  OptimizeMigration:
+    Value:           'false'
+    Specified:       false
+  ProcessAll:
+    Value:           'false'
+    Specified:       false
+  RuleFile:
+    Value:           ''
+    Specified:       false
+  SyclNamedLambda:
+    Value:           'false'
+    Specified:       false
+  UseSYCLCompat:
+    Value:           'false'
+    Specified:       false
+  UsmLevel:
+    Value:           '1'
+    Specified:       false
+...

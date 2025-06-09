@@ -1,0 +1,270 @@
+---
+MainSourceFile:  '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/out/include/ops/group/memory/vec/global_to_shared.dp.hpp'
+Replacements:
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          0
+    Length:          0
+    ReplacementText: "#define ONEAPI_BACKEND_LEVEL_ZERO_EXT\n#define DPCT_PROFILING_ENABLED\n#include <sycl/sycl.hpp>\n#include <dpct/dpct.hpp>\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          903
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          1032
+    Length:          6
+    ReplacementText: 'sycl::float4'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          1386
+    Length:          11
+    ReplacementText: 'sycl::ext::oneapi::this_work_item::get_nd_item<3>().get_local_id(2)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          1511
+    Length:          6
+    ReplacementText: 'sycl::float4'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          1540
+    Length:          6
+    ReplacementText: 'sycl::float4'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          1559
+    Length:          6
+    ReplacementText: 'sycl::float4'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          1616
+    Length:          6
+    ReplacementText: 'sycl::float4'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          2523
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          2653
+    Length:          6
+    ReplacementText: 'sycl::float4'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          3007
+    Length:          11
+    ReplacementText: 'sycl::ext::oneapi::this_work_item::get_nd_item<3>().get_local_id(2)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          3132
+    Length:          6
+    ReplacementText: 'sycl::float4'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          3161
+    Length:          6
+    ReplacementText: 'sycl::float4'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          3255
+    Length:          6
+    ReplacementText: 'sycl::float4'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          3269
+    Length:          6
+    ReplacementText: 'sycl::float4'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          3415
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          3550
+    Length:          6
+    ReplacementText: 'sycl::float4'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          3904
+    Length:          11
+    ReplacementText: 'sycl::ext::oneapi::this_work_item::get_nd_item<3>().get_local_id(2)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          4029
+    Length:          0
+    ReplacementText: "/*\n            DPCT1053:284: Migration of device assembly code is not supported.\n            */\n            "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          4313
+    Length:          53
+    ReplacementText: "/*\n    DPCT1026:283: The call to \"cp.async.commit_group;\n\" was removed because current \"cp.async\" is migrated to synchronous copy operation. You may need to adjust the code to tune the performance.\n    */\n    "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: true
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/memory/vec/global_to_shared.cuh'
+    Offset:          4366
+    Length:          1
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+MainSourceFilesDigest:
+  - MainSourceFile:  ''
+    Digest:          ''
+    HasCUDASyntax:   false
+DpctVersion:     21.0.0
+SDKVersionMajor: '12'
+SDKVersionMinor: '3'
+MainHelperFileName: ''
+USMLevel:        ''
+FeatureMap:      {}
+CompileTargets:  {}
+OptionMap:
+  AnalysisScopePath:
+    Value:           ''
+    ValueVec:
+      - '/export/nvme0n1/zhiweij1/workspace/ThunderKittens'
+    Specified:       false
+  AsyncHandler:
+    Value:           'false'
+    Specified:       false
+  BuildScript:
+    Value:           '0'
+    Specified:       false
+  CodePinEnabled:
+    Value:           'false'
+    Specified:       false
+  CommentsEnabled:
+    Value:           'false'
+    Specified:       false
+  CompilationsDir:
+    Value:           '/export/nvme0n1/zhiweij1/workspace/ThunderKittens'
+    Specified:       true
+  CtadEnabled:
+    Value:           'false'
+    Specified:       false
+  EnablepProfiling:
+    Value:           'false'
+    Specified:       false
+  ExperimentalFlag:
+    Value:           '4294967295'
+    Specified:       true
+  ExplicitNamespace:
+    Value:           '20'
+    Specified:       false
+  ExtensionDDFlag:
+    Value:           '4294967295'
+    Specified:       true
+  ExtensionDEFlag:
+    Value:           '4294967295'
+    Specified:       false
+  HelperFuncPreferenceFlag:
+    Value:           '0'
+    Specified:       false
+  NDRangeDim:
+    Value:           '3'
+    Specified:       false
+  NoDRYPattern:
+    Value:           'false'
+    Specified:       false
+  OptimizeMigration:
+    Value:           'false'
+    Specified:       false
+  ProcessAll:
+    Value:           'false'
+    Specified:       false
+  RuleFile:
+    Value:           ''
+    Specified:       false
+  SyclNamedLambda:
+    Value:           'false'
+    Specified:       false
+  UseSYCLCompat:
+    Value:           'false'
+    Specified:       false
+  UsmLevel:
+    Value:           '1'
+    Specified:       false
+...

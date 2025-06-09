@@ -1,0 +1,414 @@
+---
+MainSourceFile:  '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/out/include/ops/group/wgmma/base/64x96.impl'
+Replacements:
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          0
+    Length:          0
+    ReplacementText: "#define ONEAPI_BACKEND_LEVEL_ZERO_EXT\n#define DPCT_PROFILING_ENABLED\n#include <sycl/sycl.hpp>\n#include <dpct/dpct.hpp>\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          139
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          515
+    Length:          4
+    ReplacementText: 'sycl::half'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          558
+    Length:          4
+    ReplacementText: 'sycl::half'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          589
+    Length:          4
+    ReplacementText: 'sycl::half'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          786
+    Length:          4
+    ReplacementText: 'sycl::half'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          863
+    Length:          4
+    ReplacementText: 'sycl::half'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          1189
+    Length:          0
+    ReplacementText: "/*\n            DPCT1053:179: Migration of device assembly code is not supported.\n            */\n            "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          4220
+    Length:          4
+    ReplacementText: 'sycl::half'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          4241
+    Length:          0
+    ReplacementText: "/*\n            DPCT1053:180: Migration of device assembly code is not supported.\n            */\n            "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          7239
+    Length:          4
+    ReplacementText: 'sycl::half'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          7269
+    Length:          4
+    ReplacementText: 'sycl::half'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          7290
+    Length:          0
+    ReplacementText: "/*\n            DPCT1053:181: Migration of device assembly code is not supported.\n            */\n            "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          9693
+    Length:          0
+    ReplacementText: "/*\n            DPCT1053:182: Migration of device assembly code is not supported.\n            */\n            "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          12795
+    Length:          0
+    ReplacementText: "/*\n            DPCT1053:183: Migration of device assembly code is not supported.\n            */\n            "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          15842
+    Length:          4
+    ReplacementText: 'sycl::half'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          15896
+    Length:          0
+    ReplacementText: "/*\n            DPCT1053:184: Migration of device assembly code is not supported.\n            */\n            "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          18295
+    Length:          4
+    ReplacementText: 'sycl::half'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          18349
+    Length:          0
+    ReplacementText: "/*\n            DPCT1053:185: Migration of device assembly code is not supported.\n            */\n            "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          20702
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          21053
+    Length:          4
+    ReplacementText: 'sycl::half'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          21096
+    Length:          4
+    ReplacementText: 'sycl::half'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          21127
+    Length:          4
+    ReplacementText: 'sycl::half'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          21324
+    Length:          4
+    ReplacementText: 'sycl::half'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          21401
+    Length:          4
+    ReplacementText: 'sycl::half'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          21727
+    Length:          0
+    ReplacementText: "/*\n            DPCT1053:186: Migration of device assembly code is not supported.\n            */\n            "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          24707
+    Length:          4
+    ReplacementText: 'sycl::half'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          24728
+    Length:          0
+    ReplacementText: "/*\n            DPCT1053:187: Migration of device assembly code is not supported.\n            */\n            "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          27675
+    Length:          4
+    ReplacementText: 'sycl::half'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          27705
+    Length:          4
+    ReplacementText: 'sycl::half'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          27726
+    Length:          0
+    ReplacementText: "/*\n            DPCT1053:188: Migration of device assembly code is not supported.\n            */\n            "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          30078
+    Length:          0
+    ReplacementText: "/*\n            DPCT1053:189: Migration of device assembly code is not supported.\n            */\n            "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          33076
+    Length:          0
+    ReplacementText: "/*\n            DPCT1053:190: Migration of device assembly code is not supported.\n            */\n            "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          36019
+    Length:          4
+    ReplacementText: 'sycl::half'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          36073
+    Length:          0
+    ReplacementText: "/*\n            DPCT1053:191: Migration of device assembly code is not supported.\n            */\n            "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          38368
+    Length:          4
+    ReplacementText: 'sycl::half'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/group/wgmma/base/64x96.impl'
+    Offset:          38422
+    Length:          0
+    ReplacementText: "/*\n            DPCT1053:192: Migration of device assembly code is not supported.\n            */\n            "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+MainSourceFilesDigest:
+  - MainSourceFile:  ''
+    Digest:          ''
+    HasCUDASyntax:   false
+DpctVersion:     21.0.0
+SDKVersionMajor: '12'
+SDKVersionMinor: '3'
+MainHelperFileName: ''
+USMLevel:        ''
+FeatureMap:      {}
+CompileTargets:  {}
+OptionMap:
+  AnalysisScopePath:
+    Value:           ''
+    ValueVec:
+      - '/export/nvme0n1/zhiweij1/workspace/ThunderKittens'
+    Specified:       false
+  AsyncHandler:
+    Value:           'false'
+    Specified:       false
+  BuildScript:
+    Value:           '0'
+    Specified:       false
+  CodePinEnabled:
+    Value:           'false'
+    Specified:       false
+  CommentsEnabled:
+    Value:           'false'
+    Specified:       false
+  CompilationsDir:
+    Value:           '/export/nvme0n1/zhiweij1/workspace/ThunderKittens'
+    Specified:       true
+  CtadEnabled:
+    Value:           'false'
+    Specified:       false
+  EnablepProfiling:
+    Value:           'false'
+    Specified:       false
+  ExperimentalFlag:
+    Value:           '4294967295'
+    Specified:       true
+  ExplicitNamespace:
+    Value:           '20'
+    Specified:       false
+  ExtensionDDFlag:
+    Value:           '4294967295'
+    Specified:       true
+  ExtensionDEFlag:
+    Value:           '4294967295'
+    Specified:       false
+  HelperFuncPreferenceFlag:
+    Value:           '0'
+    Specified:       false
+  NDRangeDim:
+    Value:           '3'
+    Specified:       false
+  NoDRYPattern:
+    Value:           'false'
+    Specified:       false
+  OptimizeMigration:
+    Value:           'false'
+    Specified:       false
+  ProcessAll:
+    Value:           'false'
+    Specified:       false
+  RuleFile:
+    Value:           ''
+    Specified:       false
+  SyclNamedLambda:
+    Value:           'false'
+    Specified:       false
+  UseSYCLCompat:
+    Value:           'false'
+    Specified:       false
+  UsmLevel:
+    Value:           '1'
+    Specified:       false
+...

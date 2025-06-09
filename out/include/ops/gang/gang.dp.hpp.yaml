@@ -1,0 +1,549 @@
+---
+MainSourceFile:  '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/out/include/ops/gang/gang.dp.hpp'
+Replacements:
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          123
+    Length:          0
+    ReplacementText: "#define ONEAPI_BACKEND_LEVEL_ZERO_EXT\n#define DPCT_PROFILING_ENABLED\n#include <sycl/sycl.hpp>\n#include <dpct/dpct.hpp>\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          161
+    Length:          46
+    ReplacementText: '#include "../../types/device/sync_manager.dp.hpp"'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          621
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          720
+    Length:          13
+    ReplacementText: DPCT_COMPATIBILITY_TEMP
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          747
+    Length:          0
+    ReplacementText: "auto item_ct1 = sycl::ext::oneapi::this_work_item::get_nd_item<3>();\n            "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          761
+    Length:          13
+    ReplacementText: DPCT_COMPATIBILITY_TEMP
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          1312
+    Length:          22
+    ReplacementText: "/*\n        DPCT1078:304: Consider replacing memory_order::acq_rel with memory_order::seq_cst for correctness if strong memory order restrictions are needed.\n        */\n        sycl::atomic_fence(sycl::memory_order::acq_rel, sycl::memory_scope::system)"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          1344
+    Length:          15
+    ReplacementText: "/*\n        DPCT1065:476: Consider replacing sycl::nd_item::barrier() with sycl::nd_item::barrier(sycl::access::fence_space::local_space) for better performance if there is no access to global memory.\n        */\n        item_ct1.barrier()"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          1374
+    Length:          11
+    ReplacementText: 'item_ct1.get_local_id(2)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          1394
+    Length:          11
+    ReplacementText: 'item_ct1.get_local_id(1)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          1414
+    Length:          11
+    ReplacementText: 'item_ct1.get_local_id(0)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          1747
+    Length:          10
+    ReplacementText: 'item_ct1.get_group(2)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          1760
+    Length:          10
+    ReplacementText: 'item_ct1.get_group(1)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          1773
+    Length:          9
+    ReplacementText: 'item_ct1.get_group_range(2)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          1785
+    Length:          10
+    ReplacementText: 'item_ct1.get_group(0)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          1798
+    Length:          9
+    ReplacementText: 'item_ct1.get_group_range(2)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          1810
+    Length:          9
+    ReplacementText: 'item_ct1.get_group_range(1)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          1892
+    Length:          9
+    ReplacementText: 'item_ct1.get_group_range(2)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          1904
+    Length:          9
+    ReplacementText: 'item_ct1.get_group_range(1)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          1916
+    Length:          9
+    ReplacementText: 'item_ct1.get_group_range(0)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          2302
+    Length:          0
+    ReplacementText: "/*\n                DPCT1053:305: Migration of device assembly code is not supported.\n                */\n                "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          2446
+    Length:          0
+    ReplacementText: "/*\n                DPCT1053:306: Migration of device assembly code is not supported.\n                */\n                "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          3233
+    Length:          15
+    ReplacementText: "/*\n        DPCT1065:477: Consider replacing sycl::nd_item::barrier() with sycl::nd_item::barrier(sycl::access::fence_space::local_space) for better performance if there is no access to global memory.\n        */\n        item_ct1.barrier()"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          3813
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          3912
+    Length:          13
+    ReplacementText: DPCT_COMPATIBILITY_TEMP
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          3939
+    Length:          0
+    ReplacementText: "auto item_ct1 = sycl::ext::oneapi::this_work_item::get_nd_item<3>();\n            "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          3953
+    Length:          13
+    ReplacementText: DPCT_COMPATIBILITY_TEMP
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          4457
+    Length:          10
+    ReplacementText: 'item_ct1.get_group(2)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          4470
+    Length:          10
+    ReplacementText: 'item_ct1.get_group(1)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          4483
+    Length:          9
+    ReplacementText: 'item_ct1.get_group_range(2)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          4495
+    Length:          10
+    ReplacementText: 'item_ct1.get_group(0)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          4508
+    Length:          9
+    ReplacementText: 'item_ct1.get_group_range(2)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          4520
+    Length:          9
+    ReplacementText: 'item_ct1.get_group_range(1)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          4648
+    Length:          22
+    ReplacementText: "/*\n        DPCT1078:307: Consider replacing memory_order::acq_rel with memory_order::seq_cst for correctness if strong memory order restrictions are needed.\n        */\n        sycl::atomic_fence(sycl::memory_order::acq_rel, sycl::memory_scope::system)"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          4680
+    Length:          15
+    ReplacementText: "/*\n        DPCT1065:478: Consider replacing sycl::nd_item::barrier() with sycl::nd_item::barrier(sycl::access::fence_space::local_space) for better performance if there is no access to global memory.\n        */\n        item_ct1.barrier()"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          4710
+    Length:          11
+    ReplacementText: 'item_ct1.get_local_id(2)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          4730
+    Length:          11
+    ReplacementText: 'item_ct1.get_local_id(1)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          4750
+    Length:          11
+    ReplacementText: 'item_ct1.get_local_id(0)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          5013
+    Length:          0
+    ReplacementText: "/*\n            DPCT1053:308: Migration of device assembly code is not supported.\n            */\n            "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          5149
+    Length:          0
+    ReplacementText: "/*\n            DPCT1053:309: Migration of device assembly code is not supported.\n            */\n            "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          5447
+    Length:          15
+    ReplacementText: "/*\n        DPCT1065:479: Consider replacing sycl::nd_item::barrier() with sycl::nd_item::barrier(sycl::access::fence_space::local_space) for better performance if there is no access to global memory.\n        */\n        item_ct1.barrier()"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          6026
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          6173
+    Length:          13
+    ReplacementText: DPCT_COMPATIBILITY_TEMP
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          6200
+    Length:          0
+    ReplacementText: "auto item_ct1 = sycl::ext::oneapi::this_work_item::get_nd_item<3>();\n            "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          6214
+    Length:          13
+    ReplacementText: DPCT_COMPATIBILITY_TEMP
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          6709
+    Length:          22
+    ReplacementText: "/*\n        DPCT1078:310: Consider replacing memory_order::acq_rel with memory_order::seq_cst for correctness if strong memory order restrictions are needed.\n        */\n        sycl::atomic_fence(sycl::memory_order::acq_rel, sycl::memory_scope::system)"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          6741
+    Length:          15
+    ReplacementText: "/*\n        DPCT1065:480: Consider replacing sycl::nd_item::barrier() with sycl::nd_item::barrier(sycl::access::fence_space::local_space) for better performance if there is no access to global memory.\n        */\n        item_ct1.barrier()"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          6771
+    Length:          11
+    ReplacementText: 'item_ct1.get_local_id(2)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          6791
+    Length:          11
+    ReplacementText: 'item_ct1.get_local_id(1)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          6811
+    Length:          11
+    ReplacementText: 'item_ct1.get_local_id(0)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          7410
+    Length:          0
+    ReplacementText: "/*\n                    DPCT1053:311: Migration of device assembly code is not supported.\n                    */\n                    "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/ops/gang/gang.cuh'
+    Offset:          7993
+    Length:          15
+    ReplacementText: "/*\n        DPCT1065:481: Consider replacing sycl::nd_item::barrier() with sycl::nd_item::barrier(sycl::access::fence_space::local_space) for better performance if there is no access to global memory.\n        */\n        item_ct1.barrier()"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+MainSourceFilesDigest:
+  - MainSourceFile:  ''
+    Digest:          ''
+    HasCUDASyntax:   false
+DpctVersion:     21.0.0
+SDKVersionMajor: '12'
+SDKVersionMinor: '3'
+MainHelperFileName: ''
+USMLevel:        ''
+FeatureMap:      {}
+CompileTargets:  {}
+OptionMap:
+  AnalysisScopePath:
+    Value:           ''
+    ValueVec:
+      - '/export/nvme0n1/zhiweij1/workspace/ThunderKittens'
+    Specified:       false
+  AsyncHandler:
+    Value:           'false'
+    Specified:       false
+  BuildScript:
+    Value:           '0'
+    Specified:       false
+  CodePinEnabled:
+    Value:           'false'
+    Specified:       false
+  CommentsEnabled:
+    Value:           'false'
+    Specified:       false
+  CompilationsDir:
+    Value:           '/export/nvme0n1/zhiweij1/workspace/ThunderKittens'
+    Specified:       true
+  CtadEnabled:
+    Value:           'false'
+    Specified:       false
+  EnablepProfiling:
+    Value:           'false'
+    Specified:       false
+  ExperimentalFlag:
+    Value:           '4294967295'
+    Specified:       true
+  ExplicitNamespace:
+    Value:           '20'
+    Specified:       false
+  ExtensionDDFlag:
+    Value:           '4294967295'
+    Specified:       true
+  ExtensionDEFlag:
+    Value:           '4294967295'
+    Specified:       false
+  HelperFuncPreferenceFlag:
+    Value:           '0'
+    Specified:       false
+  NDRangeDim:
+    Value:           '3'
+    Specified:       false
+  NoDRYPattern:
+    Value:           'false'
+    Specified:       false
+  OptimizeMigration:
+    Value:           'false'
+    Specified:       false
+  ProcessAll:
+    Value:           'false'
+    Specified:       false
+  RuleFile:
+    Value:           ''
+    Specified:       false
+  SyclNamedLambda:
+    Value:           'false'
+    Specified:       false
+  UseSYCLCompat:
+    Value:           'false'
+    Specified:       false
+  UsmLevel:
+    Value:           '1'
+    Specified:       false
+...

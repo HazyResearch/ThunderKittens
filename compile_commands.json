@@ -1,0 +1,107 @@
+[
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/torch_scaled/scaled_matmul.cu",
+        "directory": ".",
+        "file": "./kernels/torch_scaled/scaled_matmul.cu"
+    },
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/fftconv/pc/pc.cu",
+        "directory": ".",
+        "file": "./kernels/fftconv/pc/pc.cu"
+    },
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/fftconv/non_pc/fftconv_tk.cu",
+        "directory": ".",
+        "file": "./kernels/fftconv/non_pc/fftconv_tk.cu"
+    },
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/layernorm/non_pc/layer_norm.cu",
+        "directory": ".",
+        "file": "./kernels/layernorm/non_pc/layer_norm.cu"
+    },
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/matmul/H100_mma_ABt/matmul.cu",
+        "directory": ".",
+        "file": "./kernels/matmul/H100_mma_ABt/matmul.cu"
+    },
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/matmul/H100/matmul.cu",
+        "directory": ".",
+        "file": "./kernels/matmul/H100/matmul.cu"
+    },
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/matmul/baselines/cublas_lt/matmul.cu",
+        "directory": ".",
+        "file": "./kernels/matmul/baselines/cublas_lt/matmul.cu"
+    },
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/matmul/baselines/cublas_fp8/matmul.cu",
+        "directory": ".",
+        "file": "./kernels/matmul/baselines/cublas_fp8/matmul.cu"
+    },
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/matmul/baselines/cublas/matmul.cu",
+        "directory": ".",
+        "file": "./kernels/matmul/baselines/cublas/matmul.cu"
+    },
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/matmul/FP8/matmul.cu",
+        "directory": ".",
+        "file": "./kernels/matmul/FP8/matmul.cu"
+    },
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/hedgehog/hh.cu",
+        "directory": ".",
+        "file": "./kernels/hedgehog/hh.cu"
+    },
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/all_reduce/H100/all_reduce.cu",
+        "directory": ".",
+        "file": "./kernels/all_reduce/H100/all_reduce.cu"
+    },
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/ring_attention/tk_ring_attention.cu",
+        "directory": ".",
+        "file": "./kernels/ring_attention/tk_ring_attention.cu"
+    },
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/attn/h100/h100.cu",
+        "directory": ".",
+        "file": "./kernels/attn/h100/h100.cu"
+    },
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/mamba2/pc.cu",
+        "directory": ".",
+        "file": "./kernels/mamba2/pc.cu"
+    },
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/based/lin_attn_h100.cu",
+        "directory": ".",
+        "file": "./kernels/based/lin_attn_h100.cu"
+    },
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/based/lcsf/linear_prefill.cu",
+        "directory": ".",
+        "file": "./kernels/based/lcsf/linear_prefill.cu"
+    },
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/based/lin_attn_4090.cu",
+        "directory": ".",
+        "file": "./kernels/based/lin_attn_4090.cu"
+    },
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/rotary/pc.cu",
+        "directory": ".",
+        "file": "./kernels/rotary/pc.cu"
+    },
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/flux/flux_gate.cu",
+        "directory": ".",
+        "file": "./kernels/flux/flux_gate.cu"
+    },
+    {
+        "command": "nvcc -c -DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -I./include -I./prototype ./kernels/flux/flux_gelu.cu",
+        "directory": ".",
+        "file": "./kernels/flux/flux_gelu.cu"
+    }
+]

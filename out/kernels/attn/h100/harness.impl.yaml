@@ -1,0 +1,864 @@
+---
+MainSourceFile:  '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/out/kernels/attn/h100/harness.impl'
+Replacements:
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          0
+    Length:          0
+    ReplacementText: "#define ONEAPI_BACKEND_LEVEL_ZERO_EXT\n#define DPCT_PROFILING_ENABLED\n#include <sycl/sycl.hpp>\n#include <dpct/dpct.hpp>\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          56
+    Length:          0
+    ReplacementText: "\n#include <sycl/ext/intel/math.hpp>\n\n#include <cmath>\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          583
+    Length:          0
+    ReplacementText: ' try '
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          585
+    Length:          0
+    ReplacementText: "    /*\n    DPCT1010:619: SYCL uses exceptions to report errors and does not use the error codes. The cudaGetLastError function call was replaced with 0. You need to rewrite this code.\n    */\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          589
+    Length:          9
+    ReplacementText: 'dpct::err0'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          605
+    Length:          18
+    ReplacementText: '0'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          629
+    Length:          183
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          923
+    Length:          23
+    ReplacementText: 'DPCT_CHECK_ERROR(dpct::get_current_device().queues_wait_and_throw())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          952
+    Length:          192
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          1146
+    Length:          0
+    ReplacementText: "\ncatch (sycl::exception const &exc) {\n  std::cerr << exc.what() << \"Exception caught at file:\" << __FILE__ << \", line:\" << __LINE__ << std::endl;\n  std::exit(1);\n}"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          5235
+    Length:          51
+    ReplacementText: 'sycl::ext::intel::math::float2bfloat16(q[i % (TOTAL_ELEMENTS_QO/ATTN_B)])'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          5307
+    Length:          52
+    ReplacementText: 'sycl::ext::intel::math::float2bfloat16(og[i % (TOTAL_ELEMENTS_QO/ATTN_B)])'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          5461
+    Length:          51
+    ReplacementText: 'sycl::ext::intel::math::float2bfloat16(k[i % (TOTAL_ELEMENTS_KV/ATTN_B)])'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          5532
+    Length:          51
+    ReplacementText: 'sycl::ext::intel::math::float2bfloat16(v[i % (TOTAL_ELEMENTS_KV/ATTN_B)])'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          5742
+    Length:          52
+    ReplacementText: 'd_q = sycl::malloc_device<bf16>((TOTAL_ELEMENTS_QO), dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          5800
+    Length:          52
+    ReplacementText: 'd_k = sycl::malloc_device<bf16>((TOTAL_ELEMENTS_KV), dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          5858
+    Length:          52
+    ReplacementText: 'd_v = sycl::malloc_device<bf16>((TOTAL_ELEMENTS_KV), dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          5916
+    Length:          52
+    ReplacementText: 'd_o = sycl::malloc_device<bf16>((TOTAL_ELEMENTS_QO), dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          5979
+    Length:          60
+    ReplacementText: 'd_l = sycl::malloc_device<float>((TOTAL_ELEMENTS_QO/ATTN_D), dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          6045
+    Length:          60
+    ReplacementText: 'd_d = sycl::malloc_device<float>((TOTAL_ELEMENTS_QO/ATTN_D), dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          6113
+    Length:          53
+    ReplacementText: 'd_og = sycl::malloc_device<bf16>((TOTAL_ELEMENTS_QO), dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          6172
+    Length:          54
+    ReplacementText: 'd_qg = sycl::malloc_device<float>((TOTAL_ELEMENTS_QO), dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          6232
+    Length:          54
+    ReplacementText: 'd_kg = sycl::malloc_device<float>((TOTAL_ELEMENTS_KV), dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          6292
+    Length:          54
+    ReplacementText: 'd_vg = sycl::malloc_device<float>((TOTAL_ELEMENTS_KV), dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          6353
+    Length:          79
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_q, q_bf, TOTAL_ELEMENTS_QO * sizeof(bf16))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          6438
+    Length:          79
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_k, k_bf, TOTAL_ELEMENTS_KV * sizeof(bf16))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          6523
+    Length:          79
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_v, v_bf, TOTAL_ELEMENTS_KV * sizeof(bf16))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          6609
+    Length:          81
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_og, og_bf, TOTAL_ELEMENTS_QO * sizeof(bf16))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          6697
+    Length:          82
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_qg, qg_fl, TOTAL_ELEMENTS_QO * sizeof(float))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          6785
+    Length:          82
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_kg, kg_fl, TOTAL_ELEMENTS_KV * sizeof(float))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          6873
+    Length:          82
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_vg, vg_fl, TOTAL_ELEMENTS_KV * sizeof(float)).wait()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          8486
+    Length:          143
+    ReplacementText: "    /*\n    DPCT1026:622: The call to cudaFuncSetAttribute was removed because SYCL currently does not support corresponding setting.\n    */\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          8691
+    Length:          4
+    ReplacementText: 'dpct::dim3'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          8870
+    Length:          23
+    ReplacementText: 'dpct::get_current_device().queues_wait_and_throw()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          8984
+    Length:          0
+    ReplacementText: "        /*\n        DPCT1049:435: The work-group size passed to the SYCL kernel may exceed the limit. To get the device limit, query info::device::max_work_group_size. Adjust the work-group size if needed.\n        */\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          8992
+    Length:          65
+    ReplacementText: "/*\n        DPCT1129:434: The type \"fwd_globals<128>\" is used in the SYCL kernel, but it is not device copyable. The sycl::is_device_copyable specialization has been added for this type. Please review the code.\n        */\n          auto exp_props = sycl::ext::oneapi::experimental::properties{sycl::ext::oneapi::experimental::use_root_sync};\n          dpct::has_capability_or_fail(dpct::get_in_order_queue().get_device(), {sycl::aspect::fp16});\n\n          dpct::get_in_order_queue().submit(\n            [&](sycl::handler &cgh) {\n              sycl::local_accessor<uint8_t, 1> dpct_local_acc_ct1(sycl::range<1>(mem_size), cgh);\n\n              cgh.depends_on(dpct::get_current_device().get_in_order_queues_last_events());\n\n              cgh.parallel_for(\n                sycl::nd_range<3>(grid * sycl::range<3>(1, 1, BLOCK_SIZE), sycl::range<3>(1, 1, BLOCK_SIZE)), \nexp_props,                 [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(32)]] {\n                  fwd_attend_ker<ATTN_D, causal>(g, dpct_local_acc_ct1.get_multi_ptr<sycl::access::decorated::no>().get());\n                });\n            });"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: true
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          9057
+    Length:          1
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          9069
+    Length:          23
+    ReplacementText: 'dpct::get_current_device().queues_wait_and_throw()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          9245
+    Length:          0
+    ReplacementText: "        /*\n        DPCT1049:437: The work-group size passed to the SYCL kernel may exceed the limit. To get the device limit, query info::device::max_work_group_size. Adjust the work-group size if needed.\n        */\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          9253
+    Length:          65
+    ReplacementText: "/*\n        DPCT1129:436: The type \"fwd_globals<128>\" is used in the SYCL kernel, but it is not device copyable. The sycl::is_device_copyable specialization has been added for this type. Please review the code.\n        */\n          auto exp_props = sycl::ext::oneapi::experimental::properties{sycl::ext::oneapi::experimental::use_root_sync};\n          dpct::has_capability_or_fail(dpct::get_in_order_queue().get_device(), {sycl::aspect::fp16});\n\n          dpct::get_in_order_queue().submit(\n            [&](sycl::handler &cgh) {\n              sycl::local_accessor<uint8_t, 1> dpct_local_acc_ct1(sycl::range<1>(mem_size), cgh);\n\n              cgh.depends_on(dpct::get_current_device().get_in_order_queues_last_events());\n\n              cgh.parallel_for(\n                sycl::nd_range<3>(grid * sycl::range<3>(1, 1, BLOCK_SIZE), sycl::range<3>(1, 1, BLOCK_SIZE)), \nexp_props,                 [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(32)]] {\n                  fwd_attend_ker<ATTN_D, causal>(g, dpct_local_acc_ct1.get_multi_ptr<sycl::access::decorated::no>().get());\n                });\n            });"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: true
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          9318
+    Length:          1
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          9330
+    Length:          23
+    ReplacementText: 'dpct::get_current_device().queues_wait_and_throw()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          9545
+    Length:          79
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(o_bf, d_o, TOTAL_ELEMENTS_QO * sizeof(bf16)).wait()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          9690
+    Length:          25
+    ReplacementText: 'sycl::ext::intel::math::bfloat162float(o_bf[i])'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          9727
+    Length:          87
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(l_fl, d_l, TOTAL_ELEMENTS_QO/ATTN_D * sizeof(float)).wait()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          12077
+    Length:          140
+    ReplacementText: "    /*\n    DPCT1026:623: The call to cudaFuncSetAttribute was removed because SYCL currently does not support corresponding setting.\n    */\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          12279
+    Length:          4
+    ReplacementText: 'dpct::dim3'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          12426
+    Length:          23
+    ReplacementText: 'dpct::get_current_device().queues_wait_and_throw()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          12553
+    Length:          66
+    ReplacementText: "/*\n        DPCT1129:441: The type \"bwd_prep_globals<128>\" is used in the SYCL kernel, but it is not device copyable. The sycl::is_device_copyable specialization has been added for this type. Please review the code.\n        */\n          auto exp_props = sycl::ext::oneapi::experimental::properties{sycl::ext::oneapi::experimental::use_root_sync};\n          dpct::has_capability_or_fail(dpct::get_in_order_queue().get_device(), {sycl::aspect::fp16});\n\n          dpct::get_in_order_queue().submit(\n            [&](sycl::handler &cgh) {\n              sycl::local_accessor<uint8_t, 1> dpct_local_acc_ct1(sycl::range<1>(mem_size), cgh);\n\n              cgh.depends_on(dpct::get_current_device().get_in_order_queues_last_events());\n\n              cgh.parallel_for(\n                sycl::nd_range<3>(grid_bwd * sycl::range<3>(1, 1, (32*4)), sycl::range<3>(1, 1, (32*4))), \nexp_props,                 [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(32)]] {\n                  bwd_attend_prep_ker<ATTN_D>(bwd_g, dpct_local_acc_ct1.get_multi_ptr<sycl::access::decorated::no>().get());\n                });\n            });"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: true
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          12619
+    Length:          1
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          12631
+    Length:          23
+    ReplacementText: 'dpct::get_current_device().queues_wait_and_throw()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          12828
+    Length:          66
+    ReplacementText: "/*\n        DPCT1129:442: The type \"bwd_prep_globals<128>\" is used in the SYCL kernel, but it is not device copyable. The sycl::is_device_copyable specialization has been added for this type. Please review the code.\n        */\n          auto exp_props = sycl::ext::oneapi::experimental::properties{sycl::ext::oneapi::experimental::use_root_sync};\n          dpct::has_capability_or_fail(dpct::get_in_order_queue().get_device(), {sycl::aspect::fp16});\n\n          dpct::get_in_order_queue().submit(\n            [&](sycl::handler &cgh) {\n              sycl::local_accessor<uint8_t, 1> dpct_local_acc_ct1(sycl::range<1>(mem_size), cgh);\n\n              cgh.depends_on(dpct::get_current_device().get_in_order_queues_last_events());\n\n              cgh.parallel_for(\n                sycl::nd_range<3>(grid_bwd * sycl::range<3>(1, 1, (32*4)), sycl::range<3>(1, 1, (32*4))), \nexp_props,                 [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(32)]] {\n                  bwd_attend_prep_ker<ATTN_D>(bwd_g, dpct_local_acc_ct1.get_multi_ptr<sycl::access::decorated::no>().get());\n                });\n            });"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: true
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          12894
+    Length:          1
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          12906
+    Length:          23
+    ReplacementText: 'dpct::get_current_device().queues_wait_and_throw()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          13076
+    Length:          87
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_fl, d_d, TOTAL_ELEMENTS_QO/ATTN_D * sizeof(float)).wait()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          16292
+    Length:          151
+    ReplacementText: "    /*\n    DPCT1026:624: The call to cudaFuncSetAttribute was removed because SYCL currently does not support corresponding setting.\n    */\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          16443
+    Length:          141
+    ReplacementText: "    /*\n    DPCT1026:625: The call to cudaFuncSetAttribute was removed because SYCL currently does not support corresponding setting.\n    */\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          16589
+    Length:          4
+    ReplacementText: 'dpct::dim3'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          16783
+    Length:          23
+    ReplacementText: 'dpct::get_current_device().queues_wait_and_throw()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          16906
+    Length:          82
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_qg, qg_fl, TOTAL_ELEMENTS_QO * sizeof(float))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          16998
+    Length:          82
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_kg, kg_fl, TOTAL_ELEMENTS_KV * sizeof(float))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          17090
+    Length:          82
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_vg, vg_fl, TOTAL_ELEMENTS_KV * sizeof(float)).wait()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          17174
+    Length:          0
+    ReplacementText: "        /*\n        DPCT1049:449: The work-group size passed to the SYCL kernel may exceed the limit. To get the device limit, query info::device::max_work_group_size. Adjust the work-group size if needed.\n        */\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          17182
+    Length:          98
+    ReplacementText: "/*\n        DPCT1129:448: The type \"bwd_globals<128>\" is used in the SYCL kernel, but it is not device copyable. The sycl::is_device_copyable specialization has been added for this type. Please review the code.\n        */\n        {\n          auto exp_props = sycl::ext::oneapi::experimental::properties{sycl::ext::oneapi::experimental::use_root_sync};\n          dpct::has_capability_or_fail(dpct::get_in_order_queue().get_device(), {sycl::aspect::fp16});\n\n          dpct::get_in_order_queue().submit(\n            [&](sycl::handler &cgh) {\n              sycl::local_accessor<uint8_t, 1> dpct_local_acc_ct1(sycl::range<1>(carveout_memsize), cgh);\n\n              cgh.depends_on(dpct::get_current_device().get_in_order_queues_last_events());\n\n              cgh.parallel_for(\n                sycl::nd_range<3>(grid_bwd_2 * sycl::range<3>(1, 1, (32*BWD_NUM_WORKERS)), sycl::range<3>(1, 1, (32*BWD_NUM_WORKERS))), \nexp_props,                 [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(32)]] {\n                  bwd_attend_ker<ATTN_D, causal>(bwd_global, dpct_local_acc_ct1.get_multi_ptr<sycl::access::decorated::no>().get());\n                });\n            });\n        }"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: true
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          17280
+    Length:          1
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          17293
+    Length:          23
+    ReplacementText: 'dpct::get_current_device().queues_wait_and_throw()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          17442
+    Length:          82
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_qg, qg_fl, TOTAL_ELEMENTS_QO * sizeof(float))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          17534
+    Length:          82
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_kg, kg_fl, TOTAL_ELEMENTS_KV * sizeof(float))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          17626
+    Length:          82
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_vg, vg_fl, TOTAL_ELEMENTS_KV * sizeof(float)).wait()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          17718
+    Length:          23
+    ReplacementText: 'dpct::get_current_device().queues_wait_and_throw()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          17819
+    Length:          0
+    ReplacementText: "        /*\n        DPCT1049:451: The work-group size passed to the SYCL kernel may exceed the limit. To get the device limit, query info::device::max_work_group_size. Adjust the work-group size if needed.\n        */\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          17827
+    Length:          98
+    ReplacementText: "/*\n        DPCT1129:450: The type \"bwd_globals<128>\" is used in the SYCL kernel, but it is not device copyable. The sycl::is_device_copyable specialization has been added for this type. Please review the code.\n        */\n        {\n          auto exp_props = sycl::ext::oneapi::experimental::properties{sycl::ext::oneapi::experimental::use_root_sync};\n          dpct::has_capability_or_fail(dpct::get_in_order_queue().get_device(), {sycl::aspect::fp16});\n\n          dpct::get_in_order_queue().submit(\n            [&](sycl::handler &cgh) {\n              sycl::local_accessor<uint8_t, 1> dpct_local_acc_ct1(sycl::range<1>(carveout_memsize), cgh);\n\n              cgh.depends_on(dpct::get_current_device().get_in_order_queues_last_events());\n\n              cgh.parallel_for(\n                sycl::nd_range<3>(grid_bwd_2 * sycl::range<3>(1, 1, (32*BWD_NUM_WORKERS)), sycl::range<3>(1, 1, (32*BWD_NUM_WORKERS))), \nexp_props,                 [=](sycl::nd_item<3> item_ct1) [[sycl::reqd_sub_group_size(32)]] {\n                  bwd_attend_ker<ATTN_D, causal>(bwd_global, dpct_local_acc_ct1.get_multi_ptr<sycl::access::decorated::no>().get());\n                });\n            });\n        }"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: true
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          17925
+    Length:          1
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          17936
+    Length:          23
+    ReplacementText: 'dpct::get_current_device().queues_wait_and_throw()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          18249
+    Length:          82
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(qg_fl, d_qg, TOTAL_ELEMENTS_QO * sizeof(float))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          18337
+    Length:          82
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(kg_fl, d_kg, TOTAL_ELEMENTS_KV * sizeof(float))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          18425
+    Length:          82
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(vg_fl, d_vg, TOTAL_ELEMENTS_KV * sizeof(float)).wait()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          21939
+    Length:          13
+    ReplacementText: 'dpct::dpct_free(d_q, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          21958
+    Length:          13
+    ReplacementText: 'dpct::dpct_free(d_k, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          21977
+    Length:          13
+    ReplacementText: 'dpct::dpct_free(d_v, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          21996
+    Length:          13
+    ReplacementText: 'dpct::dpct_free(d_o, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          22016
+    Length:          13
+    ReplacementText: 'dpct::dpct_free(d_l, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          22035
+    Length:          13
+    ReplacementText: 'dpct::dpct_free(d_d, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          22055
+    Length:          14
+    ReplacementText: 'dpct::dpct_free(d_og, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          22075
+    Length:          14
+    ReplacementText: 'dpct::dpct_free(d_qg, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          22095
+    Length:          14
+    ReplacementText: 'dpct::dpct_free(d_kg, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/attn/h100/harness.impl'
+    Offset:          22115
+    Length:          14
+    ReplacementText: 'dpct::dpct_free(d_vg, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+MainSourceFilesDigest:
+  - MainSourceFile:  ''
+    Digest:          ''
+    HasCUDASyntax:   false
+DpctVersion:     21.0.0
+SDKVersionMajor: '12'
+SDKVersionMinor: '3'
+MainHelperFileName: ''
+USMLevel:        ''
+FeatureMap:      {}
+CompileTargets:  {}
+OptionMap:
+  AnalysisScopePath:
+    Value:           ''
+    ValueVec:
+      - '/export/nvme0n1/zhiweij1/workspace/ThunderKittens'
+    Specified:       false
+  AsyncHandler:
+    Value:           'false'
+    Specified:       false
+  BuildScript:
+    Value:           '0'
+    Specified:       false
+  CodePinEnabled:
+    Value:           'false'
+    Specified:       false
+  CommentsEnabled:
+    Value:           'false'
+    Specified:       false
+  CompilationsDir:
+    Value:           '/export/nvme0n1/zhiweij1/workspace/ThunderKittens'
+    Specified:       true
+  CtadEnabled:
+    Value:           'false'
+    Specified:       false
+  EnablepProfiling:
+    Value:           'false'
+    Specified:       false
+  ExperimentalFlag:
+    Value:           '4294967295'
+    Specified:       true
+  ExplicitNamespace:
+    Value:           '20'
+    Specified:       false
+  ExtensionDDFlag:
+    Value:           '4294967295'
+    Specified:       true
+  ExtensionDEFlag:
+    Value:           '4294967295'
+    Specified:       false
+  HelperFuncPreferenceFlag:
+    Value:           '0'
+    Specified:       false
+  NDRangeDim:
+    Value:           '3'
+    Specified:       false
+  NoDRYPattern:
+    Value:           'false'
+    Specified:       false
+  OptimizeMigration:
+    Value:           'false'
+    Specified:       false
+  ProcessAll:
+    Value:           'false'
+    Specified:       false
+  RuleFile:
+    Value:           ''
+    Specified:       false
+  SyclNamedLambda:
+    Value:           'false'
+    Specified:       false
+  UseSYCLCompat:
+    Value:           'false'
+    Specified:       false
+  UsmLevel:
+    Value:           '1'
+    Specified:       false
+...

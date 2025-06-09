@@ -1,0 +1,486 @@
+---
+MainSourceFile:  '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/out/kernels/layernorm/non_pc/harness.impl'
+Replacements:
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          0
+    Length:          0
+    ReplacementText: "#define ONEAPI_BACKEND_LEVEL_ZERO_EXT\n#define DPCT_PROFILING_ENABLED\n#include <sycl/sycl.hpp>\n#include <dpct/dpct.hpp>\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          56
+    Length:          0
+    ReplacementText: "\n#include <sycl/ext/intel/math.hpp>\n\n#include <cmath>\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          444
+    Length:          0
+    ReplacementText: ' try '
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          446
+    Length:          0
+    ReplacementText: "    /*\n    DPCT1010:551: SYCL uses exceptions to report errors and does not use the error codes. The cudaGetLastError function call was replaced with 0. You need to rewrite this code.\n    */\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          450
+    Length:          9
+    ReplacementText: 'dpct::err0'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          466
+    Length:          18
+    ReplacementText: '0'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          490
+    Length:          183
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          784
+    Length:          23
+    ReplacementText: 'DPCT_CHECK_ERROR(dpct::get_current_device().queues_wait_and_throw())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          813
+    Length:          192
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          1007
+    Length:          0
+    ReplacementText: "\ncatch (sycl::exception const &exc) {\n  std::cerr << exc.what() << \"Exception caught at file:\" << __FILE__ << \", line:\" << __LINE__ << std::endl;\n  std::exit(1);\n}"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          4628
+    Length:          41
+    ReplacementText: 'sycl::ext::intel::math::float2bfloat16(x[i % TOTAL_ELEMENTS_X])'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          4696
+    Length:          48
+    ReplacementText: 'sycl::ext::intel::math::float2bfloat16(residual[i % TOTAL_ELEMENTS_X])'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          4830
+    Length:          32
+    ReplacementText: 'sycl::ext::intel::math::float2bfloat16(norm_weight[i])'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          4942
+    Length:          30
+    ReplacementText: 'sycl::ext::intel::math::float2bfloat16(norm_bias[i])'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          5027
+    Length:          49
+    ReplacementText: 'd_x = sycl::malloc_device<bf16>(TOTAL_ELEMENTS_X, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          5082
+    Length:          56
+    ReplacementText: 'd_residual = sycl::malloc_device<bf16>(TOTAL_ELEMENTS_X, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          5144
+    Length:          49
+    ReplacementText: 'd_o = sycl::malloc_device<bf16>(TOTAL_ELEMENTS_O, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          5199
+    Length:          55
+    ReplacementText: 'd_o_resid = sycl::malloc_device<bf16>(TOTAL_ELEMENTS_O, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          5265
+    Length:          78
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_x, x_bf, TOTAL_ELEMENTS_X * sizeof(bf16))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          5349
+    Length:          92
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_residual, residual_bf, TOTAL_ELEMENTS_X * sizeof(bf16))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          5447
+    Length:          78
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_o, o_bf, TOTAL_ELEMENTS_O * sizeof(bf16))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          5531
+    Length:          90
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_o_resid, o_resid_bf, TOTAL_ELEMENTS_O * sizeof(bf16)).wait()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          5667
+    Length:          69
+    ReplacementText: 'd_norm_weight = sycl::malloc_device<bf16>(TOTAL_ELEMENTS_NORM_WEIGHT, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          5742
+    Length:          65
+    ReplacementText: 'd_norm_bias = sycl::malloc_device<bf16>(TOTAL_ELEMENTS_NORM_BIAS, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          5813
+    Length:          108
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_norm_weight, norm_weight_bf, TOTAL_ELEMENTS_NORM_WEIGHT * sizeof(bf16))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          5927
+    Length:          102
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_norm_bias, norm_bias_bf, TOTAL_ELEMENTS_NORM_BIAS * sizeof(bf16)).wait()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          6075
+    Length:          55
+    ReplacementText: 'd_mean = sycl::malloc_device<bf16>(TOTAL_ELEMENTS_MEAN, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          6136
+    Length:          87
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_mean, mean_bf, TOTAL_ELEMENTS_MEAN * sizeof(bf16)).wait()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          6229
+    Length:          54
+    ReplacementText: 'd_var = sycl::malloc_device<bf16>(TOTAL_ELEMENTS_MEAN, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          6289
+    Length:          85
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(d_var, var_bf, TOTAL_ELEMENTS_MEAN * sizeof(bf16)).wait()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          6381
+    Length:          23
+    ReplacementText: 'dpct::get_current_device().queues_wait_and_throw()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          6736
+    Length:          23
+    ReplacementText: 'dpct::get_current_device().queues_wait_and_throw()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          6826
+    Length:          23
+    ReplacementText: 'dpct::get_current_device().queues_wait_and_throw()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          7208
+    Length:          23
+    ReplacementText: 'dpct::get_current_device().queues_wait_and_throw()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          7394
+    Length:          78
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(o_bf, d_o, TOTAL_ELEMENTS_O * sizeof(bf16)).wait()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          7538
+    Length:          25
+    ReplacementText: 'sycl::ext::intel::math::bfloat162float(o_bf[i])'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          8690
+    Length:          90
+    ReplacementText: 'dpct::get_in_order_queue().memcpy(o_resid_bf, d_o_resid, TOTAL_ELEMENTS_O * sizeof(bf16)).wait()'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          8843
+    Length:          31
+    ReplacementText: 'sycl::ext::intel::math::bfloat162float(o_resid_bf[i])'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          10397
+    Length:          13
+    ReplacementText: 'dpct::dpct_free(d_x, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          10416
+    Length:          20
+    ReplacementText: 'dpct::dpct_free(d_residual, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          10442
+    Length:          13
+    ReplacementText: 'dpct::dpct_free(d_o, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          10461
+    Length:          23
+    ReplacementText: 'dpct::dpct_free(d_norm_weight, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          10490
+    Length:          21
+    ReplacementText: 'dpct::dpct_free(d_norm_bias, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          10517
+    Length:          16
+    ReplacementText: 'dpct::dpct_free(d_mean, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/kernels/layernorm/non_pc/harness.impl'
+    Offset:          10539
+    Length:          15
+    ReplacementText: 'dpct::dpct_free(d_var, dpct::get_in_order_queue())'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+MainSourceFilesDigest:
+  - MainSourceFile:  ''
+    Digest:          ''
+    HasCUDASyntax:   false
+DpctVersion:     21.0.0
+SDKVersionMajor: '12'
+SDKVersionMinor: '3'
+MainHelperFileName: ''
+USMLevel:        ''
+FeatureMap:      {}
+CompileTargets:  {}
+OptionMap:
+  AnalysisScopePath:
+    Value:           ''
+    ValueVec:
+      - '/export/nvme0n1/zhiweij1/workspace/ThunderKittens'
+    Specified:       false
+  AsyncHandler:
+    Value:           'false'
+    Specified:       false
+  BuildScript:
+    Value:           '0'
+    Specified:       false
+  CodePinEnabled:
+    Value:           'false'
+    Specified:       false
+  CommentsEnabled:
+    Value:           'false'
+    Specified:       false
+  CompilationsDir:
+    Value:           '/export/nvme0n1/zhiweij1/workspace/ThunderKittens'
+    Specified:       true
+  CtadEnabled:
+    Value:           'false'
+    Specified:       false
+  EnablepProfiling:
+    Value:           'false'
+    Specified:       false
+  ExperimentalFlag:
+    Value:           '4294967295'
+    Specified:       true
+  ExplicitNamespace:
+    Value:           '20'
+    Specified:       false
+  ExtensionDDFlag:
+    Value:           '4294967295'
+    Specified:       true
+  ExtensionDEFlag:
+    Value:           '4294967295'
+    Specified:       false
+  HelperFuncPreferenceFlag:
+    Value:           '0'
+    Specified:       false
+  NDRangeDim:
+    Value:           '3'
+    Specified:       false
+  NoDRYPattern:
+    Value:           'false'
+    Specified:       false
+  OptimizeMigration:
+    Value:           'false'
+    Specified:       false
+  ProcessAll:
+    Value:           'false'
+    Specified:       false
+  RuleFile:
+    Value:           ''
+    Specified:       false
+  SyclNamedLambda:
+    Value:           'false'
+    Specified:       false
+  UseSYCLCompat:
+    Value:           'false'
+    Specified:       false
+  UsmLevel:
+    Value:           '1'
+    Specified:       false
+...

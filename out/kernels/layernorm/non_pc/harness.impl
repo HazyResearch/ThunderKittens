@@ -1,0 +1,307 @@
+#define ONEAPI_BACKEND_LEVEL_ZERO_EXT
+#define DPCT_PROFILING_ENABLED
+#include <sycl/sycl.hpp>
+#include <dpct/dpct.hpp>
+#include <iostream>
+#include <string>
+#include <fstream>
+#include <sycl/ext/intel/math.hpp>
+
+#include <cmath>
+
+#define ATTN_B 4
+#define ATTN_N  1024
+#define N_TILE_SIZE 1024  //  N / 2, since 2 workers. Num launches.
+#define N_PER_TILE 2
+#define ATTN_D 1024 // hardcoded into this kernel
+
+#define ITERS 10
+
+#define dropout_p 0.00
+#define test_with_intermediates 0
+
+#define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
+inline void __cudaCheckError(const char *file, const int line) try {
+    /*
+    DPCT1010:551: SYCL uses exceptions to report errors and does not use the
+    error codes. The cudaGetLastError function call was replaced with 0. You
+    need to rewrite this code.
+    */
+    dpct::err0 err = 0;
+
+    // More careful checking. However, this will affect performance.
+    // Comment away if needed.
+    err = DPCT_CHECK_ERROR(dpct::get_current_device().queues_wait_and_throw());
+}
+catch (sycl::exception const &exc) {
+  std::cerr << exc.what() << "Exception caught at file:" << __FILE__
+            << ", line:" << __LINE__ << std::endl;
+  std::exit(1);
+}
+
+int main(int argc, char **argv) {
+    // TODO: consider doing sequential kernel launches to force batches dimension element to execute sequentially,
+    // which may increase the probability of L2 cache hits on KV
+
+    std::cout << "Entered main!" << std::endl;
+
+    // create dummy variables that are the right size
+    constexpr int TOTAL_ELEMENTS_X = ATTN_B*ATTN_N*ATTN_D;
+    constexpr int TOTAL_ELEMENTS_O = ATTN_B*ATTN_N*ATTN_D;
+
+    constexpr int TOTAL_ELEMENTS_NORM_WEIGHT = ATTN_D;
+    constexpr int TOTAL_ELEMENTS_NORM_BIAS   = ATTN_D;
+
+    float *x            = new float[TOTAL_ELEMENTS_X];
+    float *residual     = new float[TOTAL_ELEMENTS_X];
+    float *o_ref        = new float[TOTAL_ELEMENTS_O];
+    float *o_resid_ref  = new float[TOTAL_ELEMENTS_O];
+    bf16 *x_bf          = new bf16[TOTAL_ELEMENTS_X];
+    bf16 *residual_bf   = new bf16[TOTAL_ELEMENTS_X];
+    bf16 *o_bf          = new bf16[TOTAL_ELEMENTS_O];
+    bf16 *o_resid_bf    = new bf16[TOTAL_ELEMENTS_O];
+
+    float *o            = new float[TOTAL_ELEMENTS_O];
+    float *o_resid      = new float[TOTAL_ELEMENTS_O];
+
+    float *norm_weight   = new float[TOTAL_ELEMENTS_NORM_WEIGHT];
+    float *norm_bias     = new float[TOTAL_ELEMENTS_NORM_BIAS];
+    bf16 *norm_weight_bf = new bf16[TOTAL_ELEMENTS_NORM_WEIGHT];
+    bf16 *norm_bias_bf   = new bf16[TOTAL_ELEMENTS_NORM_BIAS];
+
+    // debug 
+    constexpr int TOTAL_ELEMENTS_MEAN = ATTN_B*ATTN_N;
+    float *mean_ref = new float[TOTAL_ELEMENTS_MEAN];
+    bf16 *mean_bf   = new bf16[TOTAL_ELEMENTS_MEAN];
+    float *mean     = new float[TOTAL_ELEMENTS_MEAN];
+    float *var_ref  = new float[TOTAL_ELEMENTS_MEAN];
+    bf16 *var_bf    = new bf16[TOTAL_ELEMENTS_MEAN];
+    float *var      = new float[TOTAL_ELEMENTS_MEAN];
+
+    if(argc > 1) {
+        std::ifstream infile(argv[1]);
+
+        printf("Loading from %s\n", argv[1]);
+        std::cout << "Starting to enter!" << std::endl;
+        for(int i = 0; i < TOTAL_ELEMENTS_X; i++) {  
+            infile >> x[i];   
+            // if (i < 5) { std::cout << x[i] << std::endl; }
+        }
+        std::cout << "Finished loading X" << std::endl;
+        for(int i = 0; i < TOTAL_ELEMENTS_X; i++) {  infile >> residual[i];   }
+        std::cout << "Finished loading RESIDUAL" << std::endl;
+        for(int i = 0; i < TOTAL_ELEMENTS_O; i++) {  
+            infile >> o_ref[i];  
+            // if (i < 5) { std::cout << o_ref[i] << std::endl; }
+        }
+        std::cout << "Finished loading O_REF" << std::endl;
+        for(int i = 0; i < TOTAL_ELEMENTS_X; i++) {  infile >> o_resid_ref[i];   }
+        std::cout << "Finished loading OUT_RESIDUAL" << std::endl;
+
+        for(int i = 0; i < TOTAL_ELEMENTS_NORM_WEIGHT; i++) {  infile >> norm_weight[i];   }
+        std::cout << "Finished loading NORM_WEIGHT" << std::endl;
+        for(int i = 0; i < TOTAL_ELEMENTS_NORM_BIAS; i++) {  infile >> norm_bias[i];   }
+        std::cout << "Finished loading NORM_BIAS" << std::endl;
+
+        // debug
+        for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) {  
+            infile >> mean_ref[i];   
+            // if (i < 5) { std::cout << mean_ref[i] << std::endl; }
+        }
+        std::cout << "Finished loading MEAN_REF" << std::endl;
+        for(int i = 0; i < TOTAL_ELEMENTS_MEAN; i++) {  
+            infile >> var_ref[i];    
+            // if (i < 5) { std::cout << var_ref[i] << std::endl; }
+        }
+        std::cout << "Finished loading VAR_REF" << std::endl;
+
+        std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
+    }
+
+    // set the inputs
+    for(int i = 0; i < TOTAL_ELEMENTS_X; i++) {
+        x_bf[i] =
+            sycl::ext::intel::math::float2bfloat16(x[i % TOTAL_ELEMENTS_X]);
+        residual_bf[i] = sycl::ext::intel::math::float2bfloat16(
+            residual[i % TOTAL_ELEMENTS_X]);
+    }
+    for (int i = 0; i < TOTAL_ELEMENTS_NORM_WEIGHT; i++) {
+        norm_weight_bf[i] =
+            sycl::ext::intel::math::float2bfloat16(norm_weight[i]);
+    }
+    for (int i = 0; i < TOTAL_ELEMENTS_NORM_BIAS; i++) {
+        norm_bias_bf[i] = sycl::ext::intel::math::float2bfloat16(norm_bias[i]);
+    }
+
+    bf16 *d_x, *d_residual, *d_o, *d_o_resid;
+    d_x =
+        sycl::malloc_device<bf16>(TOTAL_ELEMENTS_X, dpct::get_in_order_queue());
+    d_residual =
+        sycl::malloc_device<bf16>(TOTAL_ELEMENTS_X, dpct::get_in_order_queue());
+    d_o =
+        sycl::malloc_device<bf16>(TOTAL_ELEMENTS_O, dpct::get_in_order_queue());
+    d_o_resid =
+        sycl::malloc_device<bf16>(TOTAL_ELEMENTS_O, dpct::get_in_order_queue());
+
+    dpct::get_in_order_queue().memcpy(d_x, x_bf,
+                                      TOTAL_ELEMENTS_X * sizeof(bf16));
+    dpct::get_in_order_queue().memcpy(d_residual, residual_bf,
+                                      TOTAL_ELEMENTS_X * sizeof(bf16));
+    dpct::get_in_order_queue().memcpy(d_o, o_bf,
+                                      TOTAL_ELEMENTS_O * sizeof(bf16));
+    dpct::get_in_order_queue()
+        .memcpy(d_o_resid, o_resid_bf, TOTAL_ELEMENTS_O * sizeof(bf16))
+        .wait();
+
+    bf16 *d_norm_weight, *d_norm_bias;
+    d_norm_weight = sycl::malloc_device<bf16>(TOTAL_ELEMENTS_NORM_WEIGHT,
+                                              dpct::get_in_order_queue());
+    d_norm_bias = sycl::malloc_device<bf16>(TOTAL_ELEMENTS_NORM_BIAS,
+                                            dpct::get_in_order_queue());
+    dpct::get_in_order_queue().memcpy(d_norm_weight, norm_weight_bf,
+                                      TOTAL_ELEMENTS_NORM_WEIGHT *
+                                          sizeof(bf16));
+    dpct::get_in_order_queue()
+        .memcpy(d_norm_bias, norm_bias_bf,
+                TOTAL_ELEMENTS_NORM_BIAS * sizeof(bf16))
+        .wait();
+
+    // debug
+    bf16 *d_mean, *d_var;
+    d_mean = sycl::malloc_device<bf16>(TOTAL_ELEMENTS_MEAN,
+                                       dpct::get_in_order_queue());
+    dpct::get_in_order_queue()
+        .memcpy(d_mean, mean_bf, TOTAL_ELEMENTS_MEAN * sizeof(bf16))
+        .wait();
+    d_var = sycl::malloc_device<bf16>(TOTAL_ELEMENTS_MEAN,
+                                      dpct::get_in_order_queue());
+    dpct::get_in_order_queue()
+        .memcpy(d_var, var_bf, TOTAL_ELEMENTS_MEAN * sizeof(bf16))
+        .wait();
+
+    dpct::get_current_device().queues_wait_and_throw();
+    CudaCheckError();
+    std::cout << "Starting warmups\n";
+    for(int i = 0; i < ITERS; i++) {
+        dispatch_layernorm(
+            d_x,
+            d_residual,
+            d_norm_weight,
+            d_norm_bias,
+            d_o,
+            d_o_resid,
+            dropout_p,
+            ATTN_B, ATTN_N
+        );
+    }
+    dpct::get_current_device().queues_wait_and_throw();
+    CudaCheckError();
+
+    std::cout << "Starting kernel\n";
+    dpct::get_current_device().queues_wait_and_throw();
+    CudaCheckError();
+    const auto start = std::chrono::high_resolution_clock::now();
+    for(int i = 0; i < ITERS; i++) {
+        dispatch_layernorm(
+            d_x,
+            d_residual,
+            d_norm_weight,
+            d_norm_bias,
+            d_o,
+            d_o_resid,
+            dropout_p,
+            ATTN_B, ATTN_N
+        );
+    }
+    dpct::get_current_device().queues_wait_and_throw();
+    const auto finish = std::chrono::high_resolution_clock::now();
+    CudaCheckError();
+    std::cout << "Finished kernel\n";
+    
+    // check correctness
+    dpct::get_in_order_queue()
+        .memcpy(o_bf, d_o, TOTAL_ELEMENTS_O * sizeof(bf16))
+        .wait();
+    for(int i = 0; i < TOTAL_ELEMENTS_O; i++) {
+        o[i] = sycl::ext::intel::math::bfloat162float(o_bf[i]);
+        if (i < 5) { std::cout << o[i] << std::endl; }
+    }
+    bool good = true;
+    std::ofstream o_ref_file("printouts/o_ref.txt");
+    std::ofstream o_file("printouts/o.txt");
+    std::ofstream diff_file("printouts/diff.txt");
+    std::cout << "Total elements: " << TOTAL_ELEMENTS_O << std::endl;
+    std::cout << "Total unique elements: " << TOTAL_ELEMENTS_O << std::endl;
+    for(int i = 0; i < TOTAL_ELEMENTS_O; i++) {
+        float diff = o[i] - o_ref[i % TOTAL_ELEMENTS_O];
+        if(i < TOTAL_ELEMENTS_O) {
+            o_ref_file << o_ref[i % TOTAL_ELEMENTS_O] << ' ';
+            o_file << o[i] << ' ';
+            diff_file << diff << ' ';
+            if (i % 1024 == 1023) {
+                o_ref_file << std::endl;
+                o_file << std::endl;
+                diff_file << std::endl;
+            }
+        }
+        if(abs(diff) > 0.1 || isnan(diff)) {
+            if (good == true) { 
+                printf("i: %d, %f\n", i, diff);
+            }
+            good = false;
+        }
+    }
+    if(good) std::cout << "Correct out :)\n";
+    else std::cout << "Incorrect out :(\n";
+
+    // o_resid
+    dpct::get_in_order_queue()
+        .memcpy(o_resid_bf, d_o_resid, TOTAL_ELEMENTS_O * sizeof(bf16))
+        .wait();
+    for (int i = 0; i < TOTAL_ELEMENTS_O; i++) {
+        o_resid[i] = sycl::ext::intel::math::bfloat162float(o_resid_bf[i]);
+    }
+    bool good_resid = true;
+    std::ofstream o_resid_ref_file("printouts/resid_ref.txt");
+    std::ofstream o_resid_file("printouts/resid.txt");
+    std::ofstream resid_diff_file("printouts/resid_diff.txt");
+    std::cout << "Total elements: " << TOTAL_ELEMENTS_O << std::endl;
+    std::cout << "Total unique elements: " << TOTAL_ELEMENTS_O << std::endl;
+    for(int i = 0; i < TOTAL_ELEMENTS_O; i++) {
+        float resid_diff = o_resid[i] - o_resid_ref[i % TOTAL_ELEMENTS_O];
+        if(i < TOTAL_ELEMENTS_O) {
+            o_resid_ref_file << o_resid_ref[i % TOTAL_ELEMENTS_O] << ' ';
+            o_resid_file << o_resid[i] << ' ';
+            resid_diff_file << resid_diff << ' ';
+            if (i % 1024 == 1023) {
+                o_resid_ref_file << std::endl;
+                o_resid_file << std::endl;
+                resid_diff_file << std::endl;
+            }
+        }
+        if(abs(resid_diff) > 0.1 || isnan(resid_diff)) {
+            if (good_resid == true) { 
+                printf("i: %d, %f\n", i, resid_diff);
+            }
+            good_resid = false;
+        }
+    }
+    if(good_resid) std::cout << "Correct out resid :)\n";
+    else std::cout << "Incorrect out resid :(\n";
+
+    std::cout << "Note it's difficult to get correctness with the dropout randomness. You can set dropout_p to 0 to test correctness exactly." << std::endl;
+    std::cout << "Average execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count()/ITERS  << " us" << std::endl;
+
+    dpct::dpct_free(d_x, dpct::get_in_order_queue());
+    dpct::dpct_free(d_residual, dpct::get_in_order_queue());
+    dpct::dpct_free(d_o, dpct::get_in_order_queue());
+    dpct::dpct_free(d_norm_weight, dpct::get_in_order_queue());
+    dpct::dpct_free(d_norm_bias, dpct::get_in_order_queue());
+    dpct::dpct_free(d_mean, dpct::get_in_order_queue());
+    dpct::dpct_free(d_var, dpct::get_in_order_queue());
+
+    delete[] x, residual, o, o_ref, norm_weight, norm_bias;
+    delete[] x_bf, residual_bf, o_bf, norm_weight_bf, norm_bias_bf;
+    delete[] mean, mean_ref, mean_bf, var, var_ref, var_bf;
+    return 0;
+}

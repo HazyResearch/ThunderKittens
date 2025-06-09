@@ -1,0 +1,123 @@
+CC := icpx
+
+LD := $(CC)
+
+#DPCT2001:626: You can link with more libraries by adding them here.
+LIB := 
+
+FLAGS := 
+
+ifeq ($(shell which $(CC)),)
+    $(error ERROR - $(CC) compiler not found)
+endif
+
+ROOT_DIR     := $(shell dirname $(shell which $(CC)))
+INCLUDE_SYCL := $(ROOT_DIR)/../include
+INCLUDE_CL   := $(ROOT_DIR)/../include/sycl
+
+TARGET_0_SRC_0 = ./kernels/all_reduce/H100/all_reduce.dp.cpp
+TARGET_0_OBJ_0 = ./kernels/all_reduce/H100/all_reduce.dp.o
+TARGET_0_FLAG_0 = -DNDEBUG -O3 -std=c++20 -DKITTENS_HOPPER -I./include -I./prototype ${FLAGS}
+
+TARGET_0_SRC_1 = ./kernels/fftconv/non_pc/fftconv_tk.dp.cpp
+TARGET_0_OBJ_1 = ./kernels/fftconv/non_pc/fftconv_tk.dp.o
+TARGET_0_FLAG_1 = -DNDEBUG -O3 -std=c++20 -DKITTENS_HOPPER -I./include -I./prototype ${FLAGS}
+
+TARGET_0_SRC_2 = ./kernels/flux/flux_gate.dp.cpp
+TARGET_0_OBJ_2 = ./kernels/flux/flux_gate.dp.o
+TARGET_0_FLAG_2 = -DNDEBUG -O3 -std=c++20 -DKITTENS_HOPPER -I./include -I./prototype ${FLAGS}
+
+TARGET_0_SRC_3 = ./kernels/flux/flux_gelu.dp.cpp
+TARGET_0_OBJ_3 = ./kernels/flux/flux_gelu.dp.o
+TARGET_0_FLAG_3 = -DNDEBUG -O3 -std=c++20 -DKITTENS_HOPPER -I./include -I./prototype ${FLAGS}
+
+TARGET_0_SRC_4 = ./kernels/attn/h100/h100.dp.cpp
+TARGET_0_OBJ_4 = ./kernels/attn/h100/h100.dp.o
+TARGET_0_FLAG_4 = -DNDEBUG -O3 -std=c++20 -DKITTENS_HOPPER -I./include -I./prototype ${FLAGS}
+
+TARGET_0_SRC_5 = ./kernels/hedgehog/hh.dp.cpp
+TARGET_0_OBJ_5 = ./kernels/hedgehog/hh.dp.o
+TARGET_0_FLAG_5 = -DNDEBUG -O3 -std=c++20 -DKITTENS_HOPPER -I./include -I./prototype ${FLAGS}
+
+TARGET_0_SRC_6 = ./kernels/layernorm/non_pc/layer_norm.dp.cpp
+TARGET_0_OBJ_6 = ./kernels/layernorm/non_pc/layer_norm.dp.o
+TARGET_0_FLAG_6 = -DNDEBUG -O3 -std=c++20 -DKITTENS_HOPPER -I./include -I./prototype ${FLAGS}
+
+TARGET_0_SRC_7 = ./kernels/based/lin_attn_4090.dp.cpp
+TARGET_0_OBJ_7 = ./kernels/based/lin_attn_4090.dp.o
+TARGET_0_FLAG_7 = -DNDEBUG -O3 -std=c++20 -DKITTENS_HOPPER -I./include -I./prototype ${FLAGS}
+
+TARGET_0_SRC_8 = ./kernels/based/lin_attn_h100.dp.cpp
+TARGET_0_OBJ_8 = ./kernels/based/lin_attn_h100.dp.o
+TARGET_0_FLAG_8 = -DNDEBUG -O3 -std=c++20 -DKITTENS_HOPPER -I./include -I./prototype ${FLAGS}
+
+TARGET_0_SRC_9 = ./kernels/based/lcsf/linear_prefill.dp.cpp
+TARGET_0_OBJ_9 = ./kernels/based/lcsf/linear_prefill.dp.o
+TARGET_0_FLAG_9 = -DNDEBUG -O3 -std=c++20 -DKITTENS_HOPPER -I./include -I./prototype ${FLAGS}
+
+TARGET_0_SRC_10 = ./kernels/matmul/baselines/cublas/matmul.dp.cpp
+TARGET_0_OBJ_10 = ./kernels/matmul/baselines/cublas/matmul.dp.o
+TARGET_0_FLAG_10 = -DNDEBUG -O3 -std=c++20 -DKITTENS_HOPPER -I./include -I./prototype ${FLAGS}
+
+TARGET_0_SRC_11 = ./kernels/mamba2/pc.dp.cpp
+TARGET_0_OBJ_11 = ./kernels/mamba2/pc.dp.o
+TARGET_0_FLAG_11 = -DNDEBUG -O3 -std=c++20 -DKITTENS_HOPPER -I./include -I./prototype ${FLAGS}
+
+TARGET_0_SRC_12 = ./kernels/torch_scaled/scaled_matmul.dp.cpp
+TARGET_0_OBJ_12 = ./kernels/torch_scaled/scaled_matmul.dp.o
+TARGET_0_FLAG_12 = -DNDEBUG -O3 -std=c++20 -DKITTENS_HOPPER -I./include -I./prototype ${FLAGS}
+
+TARGET_0_SRC_13 = ./kernels/ring_attention/tk_ring_attention.dp.cpp
+TARGET_0_OBJ_13 = ./kernels/ring_attention/tk_ring_attention.dp.o
+TARGET_0_FLAG_13 = -DNDEBUG -O3 -std=c++20 -DKITTENS_HOPPER -I./include -I./prototype ${FLAGS}
+
+.PHONY:all clean
+OBJS_0 :=  ${TARGET_0_OBJ_0} ${TARGET_0_OBJ_1} ${TARGET_0_OBJ_2} ${TARGET_0_OBJ_3} ${TARGET_0_OBJ_4} ${TARGET_0_OBJ_5} ${TARGET_0_OBJ_6} ${TARGET_0_OBJ_7} ${TARGET_0_OBJ_8} ${TARGET_0_OBJ_9} ${TARGET_0_OBJ_10} ${TARGET_0_OBJ_11} ${TARGET_0_OBJ_12} ${TARGET_0_OBJ_13}
+OBJS :=  ${OBJS_0}
+
+all: $(OBJS)
+
+$(TARGET_0_OBJ_0):$(TARGET_0_SRC_0)
+	$(CC) -fsycl -c ${TARGET_0_SRC_0} -o ${TARGET_0_OBJ_0} $(TARGET_0_FLAG_13)
+
+$(TARGET_0_OBJ_1):$(TARGET_0_SRC_1)
+	$(CC) -fsycl -c ${TARGET_0_SRC_1} -o ${TARGET_0_OBJ_1} $(TARGET_0_FLAG_13)
+
+$(TARGET_0_OBJ_2):$(TARGET_0_SRC_2)
+	$(CC) -fsycl -c ${TARGET_0_SRC_2} -o ${TARGET_0_OBJ_2} $(TARGET_0_FLAG_13)
+
+$(TARGET_0_OBJ_3):$(TARGET_0_SRC_3)
+	$(CC) -fsycl -c ${TARGET_0_SRC_3} -o ${TARGET_0_OBJ_3} $(TARGET_0_FLAG_13)
+
+$(TARGET_0_OBJ_4):$(TARGET_0_SRC_4)
+	$(CC) -fsycl -c ${TARGET_0_SRC_4} -o ${TARGET_0_OBJ_4} $(TARGET_0_FLAG_13)
+
+$(TARGET_0_OBJ_5):$(TARGET_0_SRC_5)
+	$(CC) -fsycl -c ${TARGET_0_SRC_5} -o ${TARGET_0_OBJ_5} $(TARGET_0_FLAG_13)
+
+$(TARGET_0_OBJ_6):$(TARGET_0_SRC_6)
+	$(CC) -fsycl -c ${TARGET_0_SRC_6} -o ${TARGET_0_OBJ_6} $(TARGET_0_FLAG_13)
+
+$(TARGET_0_OBJ_7):$(TARGET_0_SRC_7)
+	$(CC) -fsycl -c ${TARGET_0_SRC_7} -o ${TARGET_0_OBJ_7} $(TARGET_0_FLAG_13)
+
+$(TARGET_0_OBJ_8):$(TARGET_0_SRC_8)
+	$(CC) -fsycl -c ${TARGET_0_SRC_8} -o ${TARGET_0_OBJ_8} $(TARGET_0_FLAG_13)
+
+$(TARGET_0_OBJ_9):$(TARGET_0_SRC_9)
+	$(CC) -fsycl -c ${TARGET_0_SRC_9} -o ${TARGET_0_OBJ_9} $(TARGET_0_FLAG_13)
+
+$(TARGET_0_OBJ_10):$(TARGET_0_SRC_10)
+	$(CC) -fsycl -c ${TARGET_0_SRC_10} -o ${TARGET_0_OBJ_10} $(TARGET_0_FLAG_13)
+
+$(TARGET_0_OBJ_11):$(TARGET_0_SRC_11)
+	$(CC) -fsycl -c ${TARGET_0_SRC_11} -o ${TARGET_0_OBJ_11} $(TARGET_0_FLAG_13)
+
+$(TARGET_0_OBJ_12):$(TARGET_0_SRC_12)
+	$(CC) -fsycl -c ${TARGET_0_SRC_12} -o ${TARGET_0_OBJ_12} $(TARGET_0_FLAG_13)
+
+$(TARGET_0_OBJ_13):$(TARGET_0_SRC_13)
+	$(CC) -fsycl -c ${TARGET_0_SRC_13} -o ${TARGET_0_OBJ_13} $(TARGET_0_FLAG_13)
+
+clean:
+	rm -f  ${OBJS_0}

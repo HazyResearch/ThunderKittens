@@ -1,0 +1,450 @@
+---
+MainSourceFile:  '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/out/include/types/global/gl.dp.hpp'
+Replacements:
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          80
+    Length:          34
+    ReplacementText: "#define ONEAPI_BACKEND_LEVEL_ZERO_EXT\n#define DPCT_PROFILING_ENABLED\n#include <sycl/sycl.hpp>\n#include <dpct/dpct.hpp>\n#include \"../../common/common.dp.hpp\""
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          115
+    Length:          31
+    ReplacementText: '#include "../shared/shared.dp.hpp"'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          147
+    Length:          19
+    ReplacementText: '#include "util.dp.hpp"'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          208
+    Length:          18
+    ReplacementText: '#include "tma.dp.hpp"'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          2379
+    Length:          0
+    ReplacementText: "/*\nDPCT1128:320: The type \"descriptor_dict<>\" is not device copyable for copy constructor breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:325: The type \"detail::descriptor_dict<>\" is not device copyable for copy constructor breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          2408
+    Length:          9
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          2463
+    Length:          9
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          2528
+    Length:          9
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          2537
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          2651
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          2996
+    Length:          0
+    ReplacementText: "/*\nDPCT1128:321: The type \"detail::descriptor_dict<st<__nv_bfloat16, 64, 64>>\" is not device copyable for copy constructor and non trivially copyable field \"other_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:335: The type \"detail::descriptor_dict<st<__nv_bfloat16, 16, 64>>\" is not device copyable for copy constructor and non trivially copyable field \"other_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:353: The type \"detail::descriptor_dict<st<__nv_bfloat16, 64, 128>>\" is not device copyable for copy constructor and non trivially copyable field \"other_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:357: The type \"detail::descriptor_dict<st<__nv_bfloat16, 128, 64>>\" is not device copyable for copy constructor and non trivially copyable field \"other_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:360: The type \"detail::descriptor_dict<sv<float, 128>>\" is not device copyable for copy constructor and non trivially copyable field \"other_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:362: The type \"detail::descriptor_dict<st<float, 128, 128>>\" is not device copyable for copy constructor and non trivially copyable field \"other_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:369: The type \"detail::descriptor_dict<sv<__nv_bfloat16, 1024>>\" is not device copyable for copy constructor and non trivially copyable field \"other_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:387: The type \"detail::descriptor_dict<st<__nv_bfloat16, 16, 16>>\" is not device copyable for copy constructor and non trivially copyable field \"other_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:397: The type \"detail::descriptor_dict<st<__nv_bfloat16, 64, 16>>\" is not device copyable for copy constructor and non trivially copyable field \"other_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:398: The type \"detail::descriptor_dict<sv<__nv_bfloat16, 64>>\" is not device copyable for copy constructor and non trivially copyable field \"other_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:409: The type \"detail::descriptor_dict<sv<float, 64>>\" is not device copyable for copy constructor and non trivially copyable field \"other_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:431: The type \"detail::descriptor_dict<st<__nv_bfloat16, 128, 128>>\" is not device copyable for copy constructor and non trivially copyable field \"other_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:443: The type \"detail::descriptor_dict<st<float, 64, 128>>\" is not device copyable for copy constructor and non trivially copyable field \"other_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          3341
+    Length:          9
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          3375
+    Length:          9
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          3601
+    Length:          9
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          3610
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          3779
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          4270
+    Length:          0
+    ReplacementText: "/*\nDPCT1128:322: The type \"seq_layout\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:323: The type \"component\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:336: The type \"seq_global\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:337: The type \"rope_global\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:354: The type \"q_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:355: The type \"k_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:356: The type \"v_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:358: The type \"qmap_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:359: The type \"kmap_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:361: The type \"k_state_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:363: The type \"kv_state_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:364: The type \"o_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:370: The type \"x_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:371: The type \"residual_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:372: The type \"o_resid_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:373: The type \"norm_weight_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:374: The type \"norm_bias_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:399: The type \"kv_a0_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:400: The type \"kv_a1_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:401: The type \"kv_a2_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:405: The type \"q_global\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:406: The type \"k_global\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:407: The type \"v_global\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:408: The type \"o_global\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:410: The type \"a_global\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:422: The type \"input_layout\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:432: The type \"l_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:438: The type \"og_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:439: The type \"d_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:444: The type \"qg_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:445: The type \"kg_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n/*\nDPCT1128:446: The type \"vg_gl\" is not device copyable for copy constructor and non trivially copyable field \"tma_descs\" breaking the device copyable requirement. It is used in the SYCL kernel, please rewrite the code.\n*/\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          4792
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          4803
+    Length:          9
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          4909
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          4920
+    Length:          9
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          5030
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          5041
+    Length:          9
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          5147
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          5158
+    Length:          9
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          5268
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          5279
+    Length:          9
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          5384
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          5395
+    Length:          9
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          5503
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          5514
+    Length:          9
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          5619
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          5630
+    Length:          9
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          5770
+    Length:          9
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          6288
+    Length:          9
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          6297
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          6608
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          6730
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          6971
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          7386
+    Length:          11
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/include/types/global/gl.cuh'
+    Offset:          9049
+    Length:          9
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+MainSourceFilesDigest:
+  - MainSourceFile:  ''
+    Digest:          ''
+    HasCUDASyntax:   false
+DpctVersion:     21.0.0
+SDKVersionMajor: '12'
+SDKVersionMinor: '3'
+MainHelperFileName: ''
+USMLevel:        ''
+FeatureMap:      {}
+CompileTargets:  {}
+OptionMap:
+  AnalysisScopePath:
+    Value:           ''
+    ValueVec:
+      - '/export/nvme0n1/zhiweij1/workspace/ThunderKittens'
+    Specified:       false
+  AsyncHandler:
+    Value:           'false'
+    Specified:       false
+  BuildScript:
+    Value:           '0'
+    Specified:       false
+  CodePinEnabled:
+    Value:           'false'
+    Specified:       false
+  CommentsEnabled:
+    Value:           'false'
+    Specified:       false
+  CompilationsDir:
+    Value:           '/export/nvme0n1/zhiweij1/workspace/ThunderKittens'
+    Specified:       true
+  CtadEnabled:
+    Value:           'false'
+    Specified:       false
+  EnablepProfiling:
+    Value:           'false'
+    Specified:       false
+  ExperimentalFlag:
+    Value:           '4294967295'
+    Specified:       true
+  ExplicitNamespace:
+    Value:           '20'
+    Specified:       false
+  ExtensionDDFlag:
+    Value:           '4294967295'
+    Specified:       true
+  ExtensionDEFlag:
+    Value:           '4294967295'
+    Specified:       false
+  HelperFuncPreferenceFlag:
+    Value:           '0'
+    Specified:       false
+  NDRangeDim:
+    Value:           '3'
+    Specified:       false
+  NoDRYPattern:
+    Value:           'false'
+    Specified:       false
+  OptimizeMigration:
+    Value:           'false'
+    Specified:       false
+  ProcessAll:
+    Value:           'false'
+    Specified:       false
+  RuleFile:
+    Value:           ''
+    Specified:       false
+  SyclNamedLambda:
+    Value:           'false'
+    Specified:       false
+  UseSYCLCompat:
+    Value:           'false'
+    Specified:       false
+  UsmLevel:
+    Value:           '1'
+    Specified:       false
+...

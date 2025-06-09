@@ -1,0 +1,549 @@
+---
+MainSourceFile:  '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/out/prototype/lcsf/lcsf.dp.hpp'
+Replacements:
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          14
+    Length:          33
+    ReplacementText: "#define ONEAPI_BACKEND_LEVEL_ZERO_EXT\n#define DPCT_PROFILING_ENABLED\n#include <sycl/sycl.hpp>\n#include <dpct/dpct.hpp>\n#include \"../include/kittens.dp.hpp\""
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          48
+    Length:          31
+    ReplacementText: '#include "../common/common.dp.hpp"'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          80
+    Length:          24
+    ReplacementText: '#include "templates.dp.hpp"'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          104
+    Length:          0
+    ReplacementText: "\n#include <time.h>\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          622
+    Length:          11
+    ReplacementText: "/*\nDPCT1110:314: The total declared local variable size in device function kernel exceeds 128 bytes and may cause high register pressure. Consult with your hardware vendor to find the total register size available and adjust the code, or use smaller sub-group size to avoid high register pressure.\n*/\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          633
+    Length:          76
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          728
+    Length:          18
+    ReplacementText: ''
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          785
+    Length:          0
+    ReplacementText: ",\n            uint8_t *dpct_local"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          793
+    Length:          0
+    ReplacementText: "auto item_ct1 = sycl::ext::oneapi::this_work_item::get_nd_item<3>();\n    "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          2601
+    Length:          30
+    ReplacementText: 'auto __shm = (int *)dpct_local;'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          3882
+    Length:          11
+    ReplacementText: 'item_ct1.get_local_id(2)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          3902
+    Length:          11
+    ReplacementText: 'item_ct1.get_local_id(1)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          3922
+    Length:          11
+    ReplacementText: 'item_ct1.get_local_id(0)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          3942
+    Length:          10
+    ReplacementText: 'item_ct1.get_group(2)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          3961
+    Length:          10
+    ReplacementText: 'item_ct1.get_group(1)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          3980
+    Length:          10
+    ReplacementText: 'item_ct1.get_group(0)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          4011
+    Length:          54
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("DEBUG REPORT FOR PRODUCER TEMPLATE KERNEL:\n")'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          4079
+    Length:          33
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("    BLOCK INFORMATION\n")'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          4126
+    Length:          68
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        gridDim.x:                         %d\n", item_ct1.get_group_range(2))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          4208
+    Length:          68
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        gridDim.y:                         %d\n", item_ct1.get_group_range(1))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          4290
+    Length:          68
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        gridDim.z:                         %d\n", item_ct1.get_group_range(0))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          4372
+    Length:          69
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        blockDim.x:                        %d\n", item_ct1.get_local_range(2))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          4455
+    Length:          69
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        blockDim.y:                        %d\n", item_ct1.get_local_range(1))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          4538
+    Length:          69
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        blockDim.z:                        %d\n", item_ct1.get_local_range(0))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          5250
+    Length:          36
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("    PIPELINE INFORMATION\n")'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          5301
+    Length:          76
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        input_pipe_stages:                 %d\n", INPUT_PIPE_STAGES)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          5391
+    Length:          77
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        output_pipe_stages:                %d\n", OUTPUT_PIPE_STAGES)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          5482
+    Length:          85
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        safe_stages_between_blocks:        %d\n", SAFE_STAGES_BETWEEN_BLOCKS)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          5581
+    Length:          41
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("    SHARED MEMORY INFORMATION\n")'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          5637
+    Length:          80
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        input_smem block size:             %llu\n", sizeof(input_block))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          5731
+    Length:          86
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        input_smem block size (aligned):   %llu\n", sizeof(input_alloc_block))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          5831
+    Length:          77
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        input_smem:                        %p\n", (void*)&input_smem)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          5922
+    Length:          104
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        input_smem size:                   %llu\n", INPUT_PIPE_STAGES*sizeof(input_alloc_block))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          6040
+    Length:          81
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        output_smem block size:            %llu\n", sizeof(output_block))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          6135
+    Length:          87
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        output_smem block size (aligned):  %llu\n", sizeof(output_alloc_block))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          6236
+    Length:          78
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        output_smem:                       %p\n", (void*)&output_smem)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          6328
+    Length:          106
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        output_smem size:                  %llu\n", OUTPUT_PIPE_STAGES*sizeof(output_alloc_block))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          6448
+    Length:          82
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        scratch_smem block size:           %llu\n", sizeof(scratch_block))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          6544
+    Length:          88
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        scratch_smem block size (aligned): %llu\n", sizeof(scratch_alloc_block))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          6646
+    Length:          79
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        scratch_smem:                      %p\n", (void*)&scratch_smem)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          6739
+    Length:          77
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        finish_smem:                       %p\n", (void*)finish_smem)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          6830
+    Length:          81
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        finish_smem size:                  %llu\n", sizeof(finish_block))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          6925
+    Length:          153
+    ReplacementText: 'sycl::ext::oneapi::experimental::printf("        dynamic shared memory usage:       %llu\n", sizeof(output_block) + uint64_t(&(*output_smem[OUTPUT_PIPE_STAGES-1])) - uint64_t(&__shm[0]))'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          7221
+    Length:          102
+    ReplacementText: "auto &inputs_arrived = *sycl::ext::oneapi::group_local_memory_for_overwrite<kittens::semaphore[INPUT_PIPE_STAGES]>(sycl::ext::oneapi::this_work_item::get_work_group<3>()); \n    auto &inputs_finished = *sycl::ext::oneapi::group_local_memory_for_overwrite<kittens::semaphore[INPUT_PIPE_STAGES]>(sycl::ext::oneapi::this_work_item::get_work_group<3>()); "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          7328
+    Length:          104
+    ReplacementText: "auto &outputs_arrived = *sycl::ext::oneapi::group_local_memory_for_overwrite<kittens::semaphore[OUTPUT_PIPE_STAGES]>(sycl::ext::oneapi::this_work_item::get_work_group<3>()); \n    auto &outputs_finished = *sycl::ext::oneapi::group_local_memory_for_overwrite<kittens::semaphore[OUTPUT_PIPE_STAGES]>(sycl::ext::oneapi::this_work_item::get_work_group<3>()); "
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          7437
+    Length:          46
+    ReplacementText: 'auto &finish_finished = *sycl::ext::oneapi::group_local_memory_for_overwrite<kittens::semaphore>(sycl::ext::oneapi::this_work_item::get_work_group<3>()); '
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          7639
+    Length:          11
+    ReplacementText: 'item_ct1.get_local_id(2)'
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          9091
+    Length:          0
+    ReplacementText: "                /*\n                DPCT1118:312: SYCL group functions and algorithms must be encountered in converged control flow. You may need to adjust the code.\n                */\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          9107
+    Length:          15
+    ReplacementText: "/*\n                DPCT1065:484: Consider replacing sycl::nd_item::barrier() with sycl::nd_item::barrier(sycl::access::fence_space::local_space) for better performance if there is no access to global memory.\n                */\n                item_ct1.barrier()"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          11679
+    Length:          0
+    ReplacementText: "                /*\n                DPCT1008:483: __nanosleep function is not defined in SYCL. This is a hardware-specific feature. Consult with your hardware vendor to find a replacement.\n                */\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          12311
+    Length:          0
+    ReplacementText: "                /*\n                DPCT1118:313: SYCL group functions and algorithms must be encountered in converged control flow. You may need to adjust the code.\n                */\n"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+  - FilePath:        '/export/nvme0n1/zhiweij1/workspace/ThunderKittens/prototype/lcsf/lcsf.cuh'
+    Offset:          12327
+    Length:          15
+    ReplacementText: "/*\n                DPCT1065:485: Consider replacing sycl::nd_item::barrier() with sycl::nd_item::barrier(sycl::access::fence_space::local_space) for better performance if there is no access to global memory.\n                */\n                item_ct1.barrier()"
+    ConstantFlag:    ''
+    ConstantOffset:  0
+    InitStr:         ''
+    NewHostVarName:  ''
+    BlockLevelFormatFlag: false
+MainSourceFilesDigest:
+  - MainSourceFile:  ''
+    Digest:          ''
+    HasCUDASyntax:   false
+DpctVersion:     21.0.0
+SDKVersionMajor: '12'
+SDKVersionMinor: '3'
+MainHelperFileName: ''
+USMLevel:        ''
+FeatureMap:      {}
+CompileTargets:  {}
+OptionMap:
+  AnalysisScopePath:
+    Value:           ''
+    ValueVec:
+      - '/export/nvme0n1/zhiweij1/workspace/ThunderKittens'
+    Specified:       false
+  AsyncHandler:
+    Value:           'false'
+    Specified:       false
+  BuildScript:
+    Value:           '0'
+    Specified:       false
+  CodePinEnabled:
+    Value:           'false'
+    Specified:       false
+  CommentsEnabled:
+    Value:           'false'
+    Specified:       false
+  CompilationsDir:
+    Value:           '/export/nvme0n1/zhiweij1/workspace/ThunderKittens'
+    Specified:       true
+  CtadEnabled:
+    Value:           'false'
+    Specified:       false
+  EnablepProfiling:
+    Value:           'false'
+    Specified:       false
+  ExperimentalFlag:
+    Value:           '4294967295'
+    Specified:       true
+  ExplicitNamespace:
+    Value:           '20'
+    Specified:       false
+  ExtensionDDFlag:
+    Value:           '4294967295'
+    Specified:       true
+  ExtensionDEFlag:
+    Value:           '4294967295'
+    Specified:       false
+  HelperFuncPreferenceFlag:
+    Value:           '0'
+    Specified:       false
+  NDRangeDim:
+    Value:           '3'
+    Specified:       false
+  NoDRYPattern:
+    Value:           'false'
+    Specified:       false
+  OptimizeMigration:
+    Value:           'false'
+    Specified:       false
+  ProcessAll:
+    Value:           'false'
+    Specified:       false
+  RuleFile:
+    Value:           ''
+    Specified:       false
+  SyclNamedLambda:
+    Value:           'false'
+    Specified:       false
+  UseSYCLCompat:
+    Value:           'false'
+    Specified:       false
+  UsmLevel:
+    Value:           '1'
+    Specified:       false
+...
