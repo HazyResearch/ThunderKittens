@@ -86,12 +86,15 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         tma::expect_bytes(qsmem_semaphore, sizeof(q_smem));
 
         for (int wg = 0; wg < CONSUMER_WARPGROUPS; wg++) {
-            coord<q_tile> q_tile_idx = {blockIdx.z, blockIdx.y, (seq_idx) + wg, 0};
+            // @yukavio Layout改这里
+            // global BHTD  grid Q_Tile, H, B
+            //coord<q_tile> q_tile_idx = {blockIdx.z, blockIdx.y, (seq_idx) + wg, 0};
+            coord<q_tile> q_tile_idx = {blockIdx.z, (seq_idx) + wg, blockIdx.y, 0};
             tma::load_async(q_smem[wg], g.q, q_tile_idx, qsmem_semaphore);
         }
 
         for (int j = 0; j < K::stages - 1; j++) {
-            coord<k_tile> kv_tile_idx = {blockIdx.z, kv_head_idx, j, 0};
+            coord<k_tile> kv_tile_idx = {blockIdx.z, j, kv_head_idx, 0};
             tma::expect_bytes(k_smem_arrived[j], sizeof(k_tile));
             tma::load_async(k_smem[j], g.k, kv_tile_idx, k_smem_arrived[j]);
             tma::expect_bytes(v_smem_arrived[j], sizeof(v_tile));
@@ -114,7 +117,8 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
         if(warpid == NUM_WORKERS-4) {
             for (auto kv_idx = pipe_idx - 1; kv_idx <= kv_iters; kv_idx++) {
-                coord<k_tile> kv_tile_idx = {blockIdx.z, kv_head_idx, kv_idx + 1, 0};
+                // @yukavio GQA还有Layout改这里
+                coord<k_tile> kv_tile_idx = {blockIdx.z, kv_idx + 1, kv_head_idx, 0};
                 tma::expect_bytes(k_smem_arrived[(kv_idx+1)%K::stages], sizeof(k_tile));
                 tma::load_async(k_smem[(kv_idx+1)%K::stages], g.k, kv_tile_idx, k_smem_arrived[(kv_idx+1)%K::stages]);
                 tma::expect_bytes(v_smem_arrived[(kv_idx+1)%K::stages], sizeof(v_tile));
@@ -209,7 +213,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         warpgroup::sync(warpgroupid+4);
 
         if (warpid % 4 == 0) {
-            coord<o_tile> o_tile_idx = {blockIdx.z, blockIdx.y, (seq_idx) + warpgroupid, 0};
+            coord<o_tile> o_tile_idx = {blockIdx.z, (seq_idx) + warpgroupid, blockIdx.y, 0};
             tma::store_async(g.o, o_smem[warpgroupid], o_tile_idx);
         }
 
@@ -658,20 +662,20 @@ attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal
     CHECK_INPUT(v);
 
     auto batch    = q.size(0);
-    auto seq_len  = q.size(2); 
+    auto seq_len  = q.size(1); 
     auto head_dim = q.size(3); 
     auto is_causal = causal; 
-    auto qo_heads = q.size(1);
-    auto kv_heads = k.size(1);
+    auto qo_heads = q.size(2);
+    auto kv_heads = k.size(2);
 
     // check to see that these dimensions match for all inputs
     TORCH_CHECK(q.size(0) == batch, "Q batch dimension - idx 0 - must match for all inputs");
     TORCH_CHECK(k.size(0) == batch, "K batch dimension - idx 0 - must match for all inputs");
     TORCH_CHECK(v.size(0) == batch, "V batch dimension - idx 0 - must match for all inputs");
 
-    TORCH_CHECK(q.size(2) == seq_len, "Q sequence length dimension - idx 2 - must match for all inputs");
-    TORCH_CHECK(k.size(2) == seq_len, "K sequence length dimension - idx 2 - must match for all inputs");
-    TORCH_CHECK(v.size(2) == seq_len, "V sequence length dimension - idx 2 - must match for all inputs");
+    // TORCH_CHECK(q.size(1) == seq_len, "Q sequence length dimension - idx 2 - must match for all inputs");
+    // TORCH_CHECK(k.size(1) == seq_len, "K sequence length dimension - idx 2 - must match for all inputs");
+    // TORCH_CHECK(v.size(1) == seq_len, "V sequence length dimension - idx 2 - must match for all inputs");
 
     TORCH_CHECK(q.size(3) == head_dim, "Q head dimension - idx 3 - must match for all non-vector inputs");
     TORCH_CHECK(k.size(3) == head_dim, "K head dimension - idx 3 - must match for all non-vector inputs");
@@ -679,9 +683,9 @@ attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal
 
     TORCH_CHECK(qo_heads >= kv_heads, "QO heads must be greater than or equal to KV heads");
     TORCH_CHECK(qo_heads % kv_heads == 0, "QO heads must be divisible by KV heads");
-    TORCH_CHECK(q.size(1) == qo_heads, "QO head dimension - idx 1 - must match for all inputs");
-    TORCH_CHECK(k.size(1) == kv_heads, "KV head dimension - idx 1 - must match for all inputs");
-    TORCH_CHECK(v.size(1) == kv_heads, "KV head dimension - idx 1 - must match for all inputs");  
+    TORCH_CHECK(q.size(2) == qo_heads, "QO head dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(k.size(2) == kv_heads, "KV head dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(v.size(2) == kv_heads, "KV head dimension - idx 1 - must match for all inputs");  
 
     auto hr = qo_heads / kv_heads;
 
@@ -695,8 +699,8 @@ attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal
     
     // for the returned outputs
     torch::Tensor o     = torch::empty({static_cast<const uint>(batch), 
-                                        static_cast<const uint>(qo_heads), 
                                         static_cast<const uint>(seq_len), 
+                                        static_cast<const uint>(qo_heads), 
                                         static_cast<const uint>(head_dim)}, v.options());
     
     torch::Tensor l_vec = torch::empty({static_cast<const uint>(batch), 
@@ -730,11 +734,11 @@ attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal
 
         using globals      = fwd_globals<64>;
 
-        q_global qg_arg{d_q, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 64U};
-        k_global kg_arg{d_k, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(seq_len), 64U};
-        v_global vg_arg{d_v, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(seq_len), 64U};
-        l_global lg_arg{d_l, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), 1U,  static_cast<unsigned int>(seq_len)};
-        o_global og_arg{d_o, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 64U};
+        q_global qg_arg{d_q, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 64U};
+        k_global kg_arg{d_k, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(kv_heads), 64U};
+        v_global vg_arg{d_v, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(kv_heads), 64U};
+        o_global og_arg{d_o, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 64U};
+        l_global lg_arg{d_l, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), 1U,   static_cast<unsigned int>(seq_len)};
 
         globals g{qg_arg, kg_arg, vg_arg, lg_arg, og_arg, static_cast<int>(seq_len), static_cast<int>(hr)};
 
@@ -781,18 +785,18 @@ attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal
 
         using globals      = fwd_globals<128>;
 
-        q_global qg_arg{d_q, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 128U};
-        k_global kg_arg{d_k, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(seq_len), 128U};
-        v_global vg_arg{d_v, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(seq_len), 128U};
+        q_global qg_arg{d_q, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
+        k_global kg_arg{d_k, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(kv_heads), 128U};
+        v_global vg_arg{d_v, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(kv_heads), 128U};
+        o_global og_arg{d_o, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
         l_global lg_arg{d_l, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), 1U,   static_cast<unsigned int>(seq_len)};
-        o_global og_arg{d_o, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 128U};
 
         globals g{qg_arg, kg_arg, vg_arg, lg_arg, og_arg, static_cast<int>(seq_len), static_cast<int>(hr)};
 
         auto mem_size = kittens::MAX_SHARED_MEMORY;
         auto threads  = NUM_WORKERS * kittens::WARP_THREADS;
 
-        // TORCH_CHECK(seq_len % (CONSUMER_WARPGROUPS*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 192");
+        //TORCH_CHECK(seq_len % (CONSUMER_WARPGROUPS*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 192");
         dim3 grid(seq_len/(CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>*4), qo_heads, batch);
 
         if (is_causal) {
