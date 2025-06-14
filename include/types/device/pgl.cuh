@@ -92,9 +92,6 @@ struct pgl {
                         ducks::gl::make_arg_t<GL::__r__> _rows,
                         ducks::gl::make_arg_t<GL::__c__> _cols) : 
             gls{GL(_data[I], _batch, _depth, _rows, _cols)...}, mc_handle(0), mc_vas{} {
-        static_assert(NUM_DEVICES > 1, 
-            "SKILL ISSUE: No point in using pgl with a single device (CUDA doesn't allow it).");
-
         for (int i = 0; i < NUM_DEVICES; i++) {
             multicast_check(_device_ids[i]); // check if device supports multicast
             device_ids[i] = _device_ids[i];
@@ -114,6 +111,11 @@ struct pgl {
     // There is a constraint on mc objects, which is apparently around 130 for 8 H100s on NVSwitch platform
     // NVIDIA does not document this and does not provide any driver APIs to clean resources during process runtime
     __host__ inline void multicast_init() {
+        if (NUM_DEVICES <= 1) {
+            std::cerr << "ERROR: CUDA does not allow multicast objects with a single device." << std::endl;
+            std::exit(EXIT_FAILURE);
+        }
+
         cuInit(0); // should be called before any Driver API calls (arg SBZ)
 
         if (mc_handle) {
