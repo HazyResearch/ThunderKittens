@@ -274,4 +274,51 @@ __device__ static inline void col_prod(V &col_accum, const T &src, const V &src_
     col_reduce<base_ops::mul, V, T, false>(col_accum, src, src_accum);
 }
 
+
+// templated versions of each
+
+template<int ax, ducks::sv::all SV, ducks::st::all T>
+__device__ static inline void max(SV &dst, const T &src, const SV &src_accum) {
+    if constexpr (ax == axis::COL) row_max(dst, src, src_accum);
+    else col_max(dst, src, src_accum);
+}
+template<int ax, ducks::sv::all SV, ducks::st::all T>
+__device__ static inline void max(SV &dst, const T &src) {
+    if constexpr (ax == axis::COL) row_max(dst, src);
+    else col_max(dst, src);
+}
+
+template<int ax, ducks::sv::all SV, ducks::st::all T>
+__device__ static inline void min(SV &dst, const T &src, const SV &src_accum) {
+    if constexpr (ax == axis::COL) row_min(dst, src, src_accum);
+    else col_min(dst, src, src_accum);
+}
+template<int ax, ducks::sv::all SV, ducks::st::all T>
+__device__ static inline void min(SV &dst, const T &src) {
+    if constexpr (ax == axis::COL) row_min(dst, src);
+    else col_min(dst, src);
+}
+
+template<int ax, ducks::sv::all SV, ducks::st::all T>
+__device__ static inline void sum(SV &dst, const T &src, const SV &src_accum) {
+    if constexpr (ax == axis::COL) row_sum(dst, src, src_accum);
+    else col_sum(dst, src, src_accum);
+}
+template<int ax, ducks::sv::all SV, ducks::st::all T>
+__device__ static inline void sum(SV &dst, const T &src) {
+    if constexpr (ax == axis::COL) row_sum(dst, src);
+    else col_sum(dst, src);
+}
+
+template<int ax, ducks::sv::all SV, ducks::st::all T>
+__device__ static inline void prod(SV &dst, const T &src, const SV &src_accum) {
+    if constexpr (ax == axis::COL) row_prod(dst, src, src_accum);
+    else col_prod(dst, src, src_accum);
+}
+template<int ax, ducks::sv::all SV, ducks::st::all T>
+__device__ static inline void prod(SV &dst, const T &src) {
+    if constexpr (ax == axis::COL) row_prod(dst, src);
+    else col_prod(dst, src);
+}
+
 }

@@ -7,6 +7,9 @@
 #ifdef TEST_GROUP
 #include "group/group.cuh"
 #endif
+#ifdef TEST_GANG
+#include "gang/gang.cuh"
+#endif
 
 int main(int argc, char **argv) {
 
@@ -19,6 +22,9 @@ int main(int argc, char **argv) {
 #endif
 #ifdef TEST_GROUP
     group::tests(data);
+#endif
+#ifdef TEST_GANG
+    gang::tests(data);
 #endif
 
     std::cout << "\n ------------------------------     Summary     ------------------------------\n"  << std::endl;

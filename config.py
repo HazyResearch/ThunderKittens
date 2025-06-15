@@ -58,6 +58,11 @@ sources = {
             'h100': 'kernels/matmul/FP8/matmul.cu'
         }
     },
+    'scaled_matmul': {
+        'source_files': {
+            'h100': 'kernels/torch_scaled/scaled_matmul.cu'
+        }
+    },
 }
 
 ### WHICH KERNELS DO WE WANT TO BUILD?

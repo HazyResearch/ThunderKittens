@@ -540,7 +540,7 @@ __device__ static inline void make_causal_t(RT &dst, const RT &src, const typena
  * @param val[in] The value to fill with.
  */
 template<ducks::rt::row_layout RT>
-__device__ static inline void tril(RT &dst, const RT &src, const int row_idx, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
+__device__ static inline void tril(RT &dst, const RT &src, const int diagonal, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
     const typename RT::dtype packed_val = base_types::packing<typename RT::dtype>::pack(val);
 
     #pragma unroll
@@ -553,21 +553,18 @@ __device__ static inline void tril(RT &dst, const RT &src, const int row_idx, co
                 const int global_col_idx_x = (j * dst.tile_size_col) + ((k / 2) * 8) + ((laneid() % 4) * 2);
                 const int global_col_idx_y = (j * dst.tile_size_col) + ((k / 2) * 8) + ((laneid() % 4) * 2) + 1;
 
-                if (global_row_idx < row_idx) { dst.tiles[i][j].data[k] = packed_val; }
-                else {
-                    if (global_col_idx_x <= global_row_idx - row_idx) { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
-                    else                                              { dst.tiles[i][j].data[k].x = val; }
+                if (global_col_idx_x <= global_row_idx + diagonal) { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
+                else                                               { dst.tiles[i][j].data[k].x = val; }
 
-                    if (global_col_idx_y <= global_row_idx - row_idx) { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
-                    else                                              { dst.tiles[i][j].data[k].y = val; }
-                }
+                if (global_col_idx_y <= global_row_idx + diagonal) { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
+                else                                               { dst.tiles[i][j].data[k].y = val; }
             }
         }
         __syncwarp();
     }
 }
 template<ducks::rt::col_layout RT>
-__device__ static inline void tril(RT &dst, const RT &src, const int row_idx, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
+__device__ static inline void tril(RT &dst, const RT &src, const int diagonal, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll
@@ -578,17 +575,10 @@ __device__ static inline void tril(RT &dst, const RT &src, const int row_idx, co
                 const int global_row_idx_y = (i * dst.tile_size_row) + ((k / 2) * 8) + ((laneid() % 4) * 2) + 1;
                 const int global_col_idx   = (j * dst.tile_size_col) + ((k % 2) * 8) + (laneid() / 4);
 
-                if (global_row_idx_x < row_idx) { dst.tiles[i][j].data[k].x = val; }
-                else { 
-                    if (global_col_idx <= global_row_idx_x - row_idx) { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
-                    else                                              { dst.tiles[i][j].data[k].x = val; }
-                }
-
-                if (global_row_idx_y < row_idx) { dst.tiles[i][j].data[k].y = val; }
-                else { 
-                    if (global_col_idx <= global_row_idx_y - row_idx) { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
-                    else                                              { dst.tiles[i][j].data[k].y = val; }
-                }
+                if (global_col_idx <= global_row_idx_x + diagonal) { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
+                else                                               { dst.tiles[i][j].data[k].x = val; }
+                if (global_col_idx <= global_row_idx_y + diagonal) { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
+                else                                               { dst.tiles[i][j].data[k].y = val; }
             }
         }
         __syncwarp();
@@ -605,7 +595,7 @@ __device__ static inline void tril(RT &dst, const RT &src, const int row_idx, co
  * @param val[in] The value to fill with.
  */
 template<ducks::rt::row_layout RT>
-__device__ static inline void triu(RT &dst, const RT &src, const int row_idx, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
+__device__ static inline void triu(RT &dst, const RT &src, const int diagonal, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
     const typename RT::dtype packed_val = base_types::packing<typename RT::dtype>::pack(val);
 
     #pragma unroll
@@ -618,21 +608,18 @@ __device__ static inline void triu(RT &dst, const RT &src, const int row_idx, co
                 const int global_col_idx_x = (j * dst.tile_size_col) + ((k / 2) * 8) + ((laneid() % 4) * 2);
                 const int global_col_idx_y = (j * dst.tile_size_col) + ((k / 2) * 8) + ((laneid() % 4) * 2) + 1;
 
-                if (global_row_idx < row_idx) { dst.tiles[i][j].data[k] = src.tiles[i][j].data[k]; }
-                else {
-                    if (global_col_idx_x < global_row_idx - row_idx) { dst.tiles[i][j].data[k].x = val; }
-                    else                                             { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
+                if (global_col_idx_x >= global_row_idx + diagonal) { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
+                else                                               { dst.tiles[i][j].data[k].x = val; }
 
-                    if (global_col_idx_y < global_row_idx - row_idx) { dst.tiles[i][j].data[k].y = val; }
-                    else                                             { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
-                }
+                if (global_col_idx_y >= global_row_idx + diagonal) { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
+                else                                               { dst.tiles[i][j].data[k].y = val; }
             }
         }
         __syncwarp();
     }
 }
 template<ducks::rt::col_layout RT>
-__device__ static inline void triu(RT &dst, const RT &src, const int row_idx, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
+__device__ static inline void triu(RT &dst, const RT &src, const int diagonal, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll
@@ -643,17 +630,11 @@ __device__ static inline void triu(RT &dst, const RT &src, const int row_idx, co
                 const int global_row_idx_y = (i * dst.tile_size_row) + ((k / 2) * 8) + ((laneid() % 4) * 2) + 1;
                 const int global_col_idx   = (j * dst.tile_size_col) + ((k % 2) * 8) + (laneid() / 4);
 
-                if (global_row_idx_x < row_idx) { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
-                else                            { 
-                    if (global_col_idx < global_row_idx_x - row_idx) { dst.tiles[i][j].data[k].x = val; }
-                    else                                             { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
-                }
-
-                if (global_row_idx_y < row_idx) { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
-                else                            { 
-                    if (global_col_idx < global_row_idx_y - row_idx) { dst.tiles[i][j].data[k].y = val; }
-                    else                                             { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
-                }
+                if (global_col_idx >= global_row_idx_x + diagonal) { dst.tiles[i][j].data[k].x = src.tiles[i][j].data[k].x; }
+                else                                               { dst.tiles[i][j].data[k].x = val; }
+                
+                if (global_col_idx >= global_row_idx_y + diagonal) { dst.tiles[i][j].data[k].y = src.tiles[i][j].data[k].y; }
+                else                                               { dst.tiles[i][j].data[k].y = val; }
             }
         }
         __syncwarp();

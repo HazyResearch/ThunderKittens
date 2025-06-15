@@ -30,26 +30,38 @@ template<kittens::ducks::st::all ST, int axis> __device__ inline int4 tma_coords
  * @param[in] tile_row_idx The row coord of the requested tile. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the requested tile. This is in units of complete tiles.
  */
-template<int axis, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void prefetch(ST &dst, const GL &src, const COORD &idx) {
     if (::kittens::laneid()) {
         uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.template get_tma<ST, axis>());
         coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
         int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
 
-        asm volatile (
-            "cp.async.bulk.prefetch.tensor.5d.L2.global.tile"
-            " [%0, {%1, %2, %3, %4, %5}];"
-            :
-            : "l"(tma_ptr),
-            "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
-            : "memory"
-        );
+        if constexpr (policy == cache_policy::NORMAL) {
+            asm volatile (
+                "cp.async.bulk.prefetch.tensor.5d.L2.global.tile"
+                " [%0, {%1, %2, %3, %4, %5}];"
+                :
+                : "l"(tma_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
+                : "memory"
+            );
+        }
+        else {
+            asm volatile (
+                "cp.async.bulk.prefetch.tensor.5d.L2.global.tile.L2::cache_hint"
+                " [%0, {%1, %2, %3, %4, %5}], %6;"
+                :
+                : "l"(tma_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w), "l"(make_cache_policy<policy>())
+                : "memory"
+            );
+        }
     }
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void prefetch(ST &dst, const GL &src, const COORD &idx) {
-    prefetch<2>(dst, src, idx);
+    prefetch<dim::ROW, cache_policy::NORMAL>(dst, src, idx);
 }
 
 /* ----------   Async load and store data from gmem/smem  ---------- */
@@ -65,7 +77,7 @@ __device__ static inline void prefetch(ST &dst, const GL &src, const COORD &idx)
  * @param[in] tile_row_idx The row coord of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the tile destination. This is in units of complete tiles.
  */
-template<int axis, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store_async(const GL &dst, const ST &src, const COORD &idx) {
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST, axis>());
@@ -74,20 +86,68 @@ __device__ static inline void store_async(const GL &dst, const ST &src, const CO
         int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
 
         asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
-        asm volatile (
-            "cp.async.bulk.tensor.5d.global.shared::cta.tile.bulk_group"
-            " [%0, {%2, %3, %4, %5, %6}], [%1];"
-            :
-            : "l"(tma_ptr), "r"(src_ptr),
-            "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
-            : "memory"
-        );
+        if constexpr (policy == cache_policy::NORMAL) {
+            asm volatile (
+                "cp.async.bulk.tensor.5d.global.shared::cta.tile.bulk_group"
+                " [%0, {%2, %3, %4, %5, %6}], [%1];"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
+                : "memory"
+            );
+        }
+        else {
+            asm volatile (
+                "cp.async.bulk.tensor.5d.global.shared::cta.tile.bulk_group.L2::cache_hint"
+                " [%0, {%2, %3, %4, %5, %6}], [%1], %7;"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w), "l"(make_cache_policy<policy>())
+                : "memory"
+            );
+        }
     }
     store_commit_group();
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store_async(const GL &dst, const ST &src, const COORD &idx) {
-    store_async<2>(dst, src, idx);
+    store_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx);
+}
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void store_async(const PGL &dst, const ST &src, const COORD &idx, const int dev_idx) {
+    if (::kittens::laneid() == 0) {
+        uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST, axis>(dev_idx));
+        uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+        coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
+        int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
+
+        asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
+        if constexpr (policy == cache_policy::NORMAL) {
+            asm volatile (
+                "cp.async.bulk.tensor.5d.global.shared::cta.tile.bulk_group"
+                " [%0, {%2, %3, %4, %5, %6}], [%1];"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
+                : "memory"
+            );
+        }
+        else {
+            asm volatile (
+                "cp.async.bulk.tensor.5d.global.shared::cta.tile.bulk_group.L2::cache_hint"
+                " [%0, {%2, %3, %4, %5, %6}], [%1], %7;"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w), "l"(make_cache_policy<policy>())
+                : "memory"
+            );
+        }
+    }
+    store_commit_group();
+}
+template<ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void store_async(const PGL &dst, const ST &src, const COORD &idx, const int dev_idx) {
+    store_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx, dev_idx);
 }
 
 /* ----------   Async reduction + store data from gmem/smem  ---------- */
@@ -103,7 +163,7 @@ __device__ static inline void store_async(const GL &dst, const ST &src, const CO
  * @param[in] tile_row_idx The row coord of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the tile destination. This is in units of complete tiles.
  */
-template<int axis, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store_add_async(const GL &dst, const ST &src, const COORD &idx) {
 
     static_assert(!(std::is_same_v<typename ST::dtype, fp8e4m3> ||
@@ -117,20 +177,73 @@ __device__ static inline void store_add_async(const GL &dst, const ST &src, cons
         int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
 
         asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
-        asm volatile (
-            "cp.reduce.async.bulk.tensor.5d.global.shared::cta.add.tile.bulk_group"
-            " [%0, {%2, %3, %4, %5, %6}], [%1];"
-            :
-            : "l"(tma_ptr), "r"(src_ptr),
-            "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
-            : "memory"
-        );
+        if constexpr (policy == cache_policy::NORMAL) {
+            asm volatile (
+                "cp.reduce.async.bulk.tensor.5d.global.shared::cta.add.tile.bulk_group"
+                " [%0, {%2, %3, %4, %5, %6}], [%1];"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
+                : "memory"
+            );
+        }
+        else {
+            asm volatile (
+                "cp.reduce.async.bulk.tensor.5d.global.shared::cta.add.tile.bulk_group.L2::cache_hint"
+                " [%0, {%2, %3, %4, %5, %6}], [%1], %7;"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w), "l"(make_cache_policy<policy>())
+                : "memory"
+            );
+        }
     }
     store_commit_group();
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store_add_async(const GL &dst, const ST &src, const COORD &idx) {
-    store_add_async<2>(dst, src, idx);
+    store_add_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx);
+}
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void store_add_async(const PGL &dst, const ST &src, const COORD &idx, const int dev_idx) {
+
+    static_assert(!(std::is_same_v<typename ST::dtype, fp8e4m3> ||
+                    std::is_same_v<typename ST::dtype, fp8e5m2>), 
+                    "TMA does not support async add reductions for fp8 types.");
+
+    if (::kittens::laneid() == 0) {
+        uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST, axis>(dev_idx));
+        uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+        coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
+        int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
+
+        asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
+        if constexpr (policy == cache_policy::NORMAL) {
+            asm volatile (
+                "cp.reduce.async.bulk.tensor.5d.global.shared::cta.add.tile.bulk_group"
+                " [%0, {%2, %3, %4, %5, %6}], [%1];"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
+                : "memory"
+            );
+        }
+        else {
+            asm volatile (
+                "cp.reduce.async.bulk.tensor.5d.global.shared::cta.add.tile.bulk_group.L2::cache_hint"
+                " [%0, {%2, %3, %4, %5, %6}], [%1], %7;"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w), "l"(make_cache_policy<policy>())
+                : "memory"
+            );
+        }
+    }
+    store_commit_group();
+}
+template<ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void store_add_async(const PGL &dst, const ST &src, const COORD &idx, const int dev_idx) {
+    store_add_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx, dev_idx);
 }
 
 /**
@@ -144,7 +257,7 @@ __device__ static inline void store_add_async(const GL &dst, const ST &src, cons
  * @param[in] tile_row_idx The row coord of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the tile destination. This is in units of complete tiles.
  */
-template<int axis, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store_min_async(const GL &dst, const ST &src, const COORD &idx) {
     static_assert(!std::is_same_v<typename ST::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
 
@@ -159,20 +272,74 @@ __device__ static inline void store_min_async(const GL &dst, const ST &src, cons
         int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
 
         asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
-        asm volatile (
-            "cp.reduce.async.bulk.tensor.5d.global.shared::cta.min.tile.bulk_group"
-            " [%0, {%2, %3, %4, %5, %6}], [%1];"
-            :
-            : "l"(tma_ptr), "r"(src_ptr),
-            "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
-            : "memory"
-        );
+        if constexpr (policy == cache_policy::NORMAL) {
+            asm volatile (
+                "cp.reduce.async.bulk.tensor.5d.global.shared::cta.min.tile.bulk_group"
+                " [%0, {%2, %3, %4, %5, %6}], [%1];"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
+                : "memory"
+            );
+        }
+        else {
+            asm volatile (
+                "cp.reduce.async.bulk.tensor.5d.global.shared::cta.min.tile.bulk_group.L2::cache_hint"
+                " [%0, {%2, %3, %4, %5, %6}], [%1], %7;"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w), "l"(make_cache_policy<policy>())
+                : "memory"
+            );
+        }
     }
     store_commit_group();
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store_min_async(const GL &dst, const ST &src, const COORD &idx) {
-    store_min_async<2>(dst, src, idx);
+    store_min_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx);
+}
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void store_min_async(const PGL &dst, const ST &src, const COORD &idx, const int dev_idx) {
+    static_assert(!std::is_same_v<typename ST::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
+
+    static_assert(!(std::is_same_v<typename ST::dtype, fp8e4m3> ||
+                    std::is_same_v<typename ST::dtype, fp8e5m2>), 
+                    "TMA does not support async add reductions for fp8 types.");
+
+    if (::kittens::laneid() == 0) {
+        uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST, axis>(dev_idx));
+        uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+        coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
+        int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
+
+        asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
+        if constexpr (policy == cache_policy::NORMAL) {
+            asm volatile (
+                "cp.reduce.async.bulk.tensor.5d.global.shared::cta.min.tile.bulk_group"
+                " [%0, {%2, %3, %4, %5, %6}], [%1];"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
+                : "memory"
+            );
+        }
+        else {
+            asm volatile (
+                "cp.reduce.async.bulk.tensor.5d.global.shared::cta.min.tile.bulk_group.L2::cache_hint"
+                " [%0, {%2, %3, %4, %5, %6}], [%1], %7;"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w), "l"(make_cache_policy<policy>())
+                : "memory"
+            );
+        }
+    }
+    store_commit_group();
+}
+template<ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void store_min_async(const PGL &dst, const ST &src, const COORD &idx, const int dev_idx) {
+    store_min_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx, dev_idx);
 }
 
 /**
@@ -186,7 +353,7 @@ __device__ static inline void store_min_async(const GL &dst, const ST &src, cons
  * @param[in] tile_row_idx The row coord of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the tile destination. This is in units of complete tiles.
  */
-template<int axis, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store_max_async(const GL &dst, const ST &src, const COORD &idx) {
     static_assert(!std::is_same_v<typename ST::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
 
@@ -201,20 +368,74 @@ __device__ static inline void store_max_async(const GL &dst, const ST &src, cons
         int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
 
         asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
-        asm volatile (
-            "cp.reduce.async.bulk.tensor.5d.global.shared::cta.max.tile.bulk_group"
-            " [%0, {%2, %3, %4, %5, %6}], [%1];"
-            :
-            : "l"(tma_ptr), "r"(src_ptr),
-            "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
-            : "memory"
-        );
+        if constexpr (policy == cache_policy::NORMAL) {
+            asm volatile (
+                "cp.reduce.async.bulk.tensor.5d.global.shared::cta.max.tile.bulk_group"
+                " [%0, {%2, %3, %4, %5, %6}], [%1];"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
+                : "memory"
+            );
+        }
+        else {
+            asm volatile (
+                "cp.reduce.async.bulk.tensor.5d.global.shared::cta.max.tile.bulk_group.L2::cache_hint"
+                " [%0, {%2, %3, %4, %5, %6}], [%1], %7;"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w), "l"(make_cache_policy<policy>())
+                : "memory"
+            );
+        }
     }
     store_commit_group();
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store_max_async(const GL &dst, const ST &src, const COORD &idx) {
-    store_max_async<2>(dst, src, idx);
+    store_max_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx);
+}
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void store_max_async(const PGL &dst, const ST &src, const COORD &idx, const int dev_idx) {
+    static_assert(!std::is_same_v<typename ST::dtype, float>, "TMA does not support async min/max reductions for fp32 types.");
+
+    static_assert(!(std::is_same_v<typename ST::dtype, fp8e4m3> ||
+                    std::is_same_v<typename ST::dtype, fp8e5m2>), 
+                    "TMA does not support async add reductions for fp8 types.");
+
+    if (::kittens::laneid() == 0) {
+        uint64_t tma_ptr = reinterpret_cast<uint64_t>(dst.template get_tma<ST, axis>(dev_idx));
+        uint32_t src_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(&src));
+        coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
+        int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
+
+        asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
+        if constexpr (policy == cache_policy::NORMAL) {
+            asm volatile (
+                "cp.reduce.async.bulk.tensor.5d.global.shared::cta.max.tile.bulk_group"
+                " [%0, {%2, %3, %4, %5, %6}], [%1];"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
+                : "memory"
+            );
+        }
+        else {
+            asm volatile (
+                "cp.reduce.async.bulk.tensor.5d.global.shared::cta.max.tile.bulk_group.L2::cache_hint"
+                " [%0, {%2, %3, %4, %5, %6}], [%1], %7;"
+                :
+                : "l"(tma_ptr), "r"(src_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w), "l"(make_cache_policy<policy>())
+                : "memory"
+            );
+        }
+    }
+    store_commit_group();
+}
+template<ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
+__device__ static inline void store_max_async(const PGL &dst, const ST &src, const COORD &idx, const int dev_idx) {
+    store_max_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx, dev_idx);
 }
 
 /**
@@ -229,7 +450,7 @@ __device__ static inline void store_max_async(const GL &dst, const ST &src, cons
  * @param[in] tile_row_idx The row coord of the requested tile. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the requested tile. This is in units of complete tiles.
  */
-template<int axis, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar) {
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(src.template get_tma<ST, axis>());
@@ -238,19 +459,31 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
         coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
         int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
 
-        asm volatile (
-            "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
-            " [%0], [%1, {%3, %4, %5, %6, %7}], [%2];"
-            :
-            : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
-            "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
-            : "memory"
-        );
+        if constexpr (policy == cache_policy::NORMAL) {
+            asm volatile(
+                "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes"
+                " [%0], [%1, {%3, %4, %5, %6, %7}], [%2];"
+                :
+                : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w)
+                : "memory"
+            );
+        }
+        else {
+            asm volatile(
+                "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.L2::cache_hint"
+                " [%0], [%1, {%3, %4, %5, %6, %7}], [%2], %8;"
+                :
+                : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w), "l"(make_cache_policy<policy>())
+                : "memory"
+            );
+        }
     }
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar) {
-    load_async<2>(dst, src, idx, bar);
+    load_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx, bar);
 }
 
 namespace cluster {
@@ -268,7 +501,7 @@ namespace cluster {
  * @param[in] tile_col_idx The column coord of the requested tile. This is in units of complete tiles.
  * @param[in] cluster_mask The mask of the clusters to broadcast to.
  */
-template<int axis, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
+template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask) {
     if (::kittens::laneid() == 0) {
         uint64_t tma_ptr = reinterpret_cast<uint64_t>(src.template get_tma<ST, axis>());
@@ -277,19 +510,31 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
         coord<ducks::default_type> unit_coord = idx.template unit_coord<axis, 3>(); // convert to unit coordinates
         int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
 
-        asm volatile (
-            "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster"
-            " [%0], [%1, {%3, %4, %5, %6, %7}], [%2], %8;"
-            :
-            : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
-            "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w), "h"(cluster_mask)
-            : "memory"
-        );
+        if constexpr (policy == cache_policy::NORMAL) {
+            asm volatile (
+                "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster"
+                " [%0], [%1, {%3, %4, %5, %6, %7}], [%2], %8;"
+                :
+                : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w), "h"(cluster_mask)
+                : "memory"
+            );
+        }
+        else {
+            asm volatile (
+                "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster.L2::cache_hint"
+                " [%0], [%1, {%3, %4, %5, %6, %7}], [%2], %8, %9;"
+                :
+                : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w), "h"(cluster_mask), "l"(make_cache_policy<policy>())
+                : "memory"
+            );
+        }
     }
 }
 template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask) {
-    load_async<2>(dst, src, idx, bar, cluster_mask);
+    load_async<dim::ROW, cache_policy::NORMAL>(dst, src, idx, bar, cluster_mask);
 }
 
 } // namespace cluster

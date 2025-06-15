@@ -70,6 +70,13 @@ struct KITTENS_DEFAULT_ALIGN sv {
     __device__ inline const dtype& operator[](size_t idx) const { return data[idx]; }
 
     template<size_t sub_length> using subvec = sv<dtype, sub_length>; ///< A subvector which allows warpgroups and blocks to work cooperatively.
+
+    __device__ inline void operator=(const dtype &value) { // runs at warp scope by default
+        #pragma unroll
+        for(int i = kittens::laneid(); i < length; i += WARP_THREADS) {
+            data[i] = value;
+        }
+    }
 };
 
 /* ----------  CONCEPTS  ---------- */
@@ -98,5 +105,26 @@ concept all = requires {
 template<size_t _length> using sv_bf = sv<bf16,  _length>;
 template<size_t _length> using sv_hf = sv<half,  _length>;
 template<size_t _length> using sv_fl = sv<float, _length>;
+
+/* ----------  PRINTOUTS  ---------- */
+
+template<ducks::sv::all SV>
+__device__ inline void print(const SV& sv) {
+    if(laneid() == 0) {
+        printf("Shared Vector %d:\n", SV::length);
+        for(int i = 0; i < SV::length; i++) {
+            if constexpr (std::is_same_v<typename SV::dtype, bf16>) {
+                printf("%f ", __bfloat162float(sv[i]));
+            } else if constexpr (std::is_same_v<typename SV::dtype, half>) {
+                printf("%f ", __half2float(sv[i]));
+            } else if constexpr (std::is_same_v<typename SV::dtype, float>) {
+                printf("%f ", sv[i]);
+            } else {
+                printf("%d ", (int)(sv[i]));
+            }
+        }
+        printf("\n");
+    }
+}
 
 } // namespace kittens

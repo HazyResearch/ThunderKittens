@@ -28,7 +28,7 @@ template<int _headdim> struct rotary_template {
     using layout = rotary_layout<headdim, NUM_CONSUMER_WARPS>;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
         if(args.task_iter == 0) {
-            args.num_iters = min(args.globals.batches, (int)(args.globals.x.batch-blockIdx.y*args.globals.batches)) * args.globals.x.depth; // batches*heads handled by block
+            args.num_iters = min(args.globals.batches, (int)(args.globals.x.batch()-blockIdx.y*args.globals.batches)) * args.globals.x.depth(); // batches*heads handled by block
         }
         else args.num_iters = -1;
     }
@@ -36,12 +36,12 @@ template<int _headdim> struct rotary_template {
         __device__ static void setup(producer_setup_args<layout> args) {
             warpgroup::producer_registers();
             args.state.active_warps = min((int)NUM_CONSUMER_WARPS,
-                                          (int)(args.globals.x.rows/16 - blockIdx.x*NUM_CONSUMER_WARPS));
+                                          (int)(args.globals.x.rows()/16 - blockIdx.x*NUM_CONSUMER_WARPS));
         }
         __device__ static void load(producer_load_args<layout> args) {
             if(warpgroup::warpid() == args.iter%4) {
-                kittens::coord idx = { blockIdx.y*args.globals.batches+args.iter/args.globals.x.depth,
-                                       args.iter%args.globals.x.depth,
+                kittens::coord idx = { blockIdx.y*args.globals.batches+args.iter/args.globals.x.depth(),
+                                       args.iter%args.globals.x.depth(),
                                        blockIdx.x*NUM_CONSUMER_WARPS,
                                        0 };
                 tma::expect_bytes(args.inputs_arrived, sizeof(layout::seq_tile)*args.state.active_warps);
@@ -54,8 +54,8 @@ template<int _headdim> struct rotary_template {
         }
         __device__ static void store(producer_store_args<layout> args) {
             if(warpgroup::warpid() == args.iter%4) {
-                kittens::coord idx = { blockIdx.y*args.globals.batches+args.iter/args.globals.x.depth,
-                                       args.iter%args.globals.x.depth,
+                kittens::coord idx = { blockIdx.y*args.globals.batches+args.iter/args.globals.x.depth(),
+                                       args.iter%args.globals.x.depth(),
                                        blockIdx.x*NUM_CONSUMER_WARPS,
                                        0 };
                 for(int i = 0; i < args.state.active_warps; i++) {
