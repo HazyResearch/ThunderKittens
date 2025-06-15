@@ -281,7 +281,8 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 }
 
 int main() {
-    int M = 2048, N = 4096, K = 8192;
-    run_benchmark<matmul_template<2,4,8>>(M, N, K);
+    int N;
+    N = 4096;
+    run_benchmark<matmul_template<2,4,8>>(N, N, N);
     return 0;
 }
