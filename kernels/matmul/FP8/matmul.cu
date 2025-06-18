@@ -35,7 +35,7 @@ struct matmul_template {
     }
     // ThunderKittens template functions
     __device__ static inline void common_setup(common_setup_args<layout> args) {
-        int Rblocks = args.globals.C.rows / (2*layout::c_tile::rows), Cblocks = args.globals.C.cols / layout::c_tile::cols;
+        int Rblocks = args.globals.C.rows() / (2*layout::c_tile::rows), Cblocks = args.globals.C.cols() / layout::c_tile::cols;
         int super_rows = (Rblocks/SUPER_M)*SUPER_M,
             final_rows = Rblocks - super_rows,
             super_repeat = SUPER_M*Cblocks;
@@ -50,7 +50,7 @@ struct matmul_template {
             args.num_iters = -1;
             return;
         }
-        args.num_iters = args.globals.A.cols/layout::a_tile::cols;
+        args.num_iters = args.globals.A.cols()/layout::a_tile::cols;
         int id = warpgroup::groupid() == NUM_CONSUMER_WARPS/4 ? 0 : warpgroup::groupid(); // producer sets as 0
         args.common.coord = { args.common.coord.x*2 + id, args.common.coord.y };
     }

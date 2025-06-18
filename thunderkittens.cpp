@@ -133,6 +133,14 @@ extern torch::Tensor fp8_gemm(
 );
 #endif
 
+#ifdef TK_COMPILE_SCALED_MATMUL
+extern torch::Tensor scaled_matmul(
+    const torch::Tensor a,
+    const torch::Tensor b,
+    const torch::Tensor scale_a,
+    const torch::Tensor scale_b
+);
+#endif
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.doc() = "ThunderKittens Kernels"; // optional module docstring
@@ -178,6 +186,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
 #ifdef TK_COMPILE_FP8_GEMM
     m.def("fp8_gemm", fp8_gemm, "FP8 GEMM TK. Takes tensors (a, b). Both tensors are bf16. Returns (B, H, N, 128) in bf16.");
+#endif
+
+#ifdef TK_COMPILE_SCALED_MATMUL
+    m.def("scaled_matmul", scaled_matmul, "Scaled Matmul TK. Takes tensors (a, b, scale_a, scale_b). a, b are fp8e4m3, scale_a, scale_b are float. Returns (M, N) in float.");
 #endif
 
 }

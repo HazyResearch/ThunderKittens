@@ -55,7 +55,6 @@ __device__ static inline void load(ST &dst, const GL &src, const COORD &idx) {
                 move<float4>::sts(dst.idx(dst_ptr, {row, col}), tmp);
             }
             else {
-                // printf("thread %d skipping load on row %d, col %d\n", threadIdx.x, row + unit_coord.template dim<axis>(), col);
                 float4 zeros = {0.f,0.f,0.f,0.f};
                 move<float4>::sts(dst.idx(dst_ptr, {row, col}), zeros); // use the default value
             }
@@ -107,9 +106,6 @@ __device__ static inline void store(const GL &dst, const ST &src, const COORD &i
                 float4 tmp;
                 move<float4>::lds(tmp, src.idx(src_ptr, {row, col}));
                 move<float4>::stg((float4*)&dst_ptr[row*row_stride + col], tmp);
-            }
-            else {
-                // printf("thread %d skipping store on row %d, col %d\n", threadIdx.x, row + unit_coord.template dim<axis>(), col);
             }
         }
     }

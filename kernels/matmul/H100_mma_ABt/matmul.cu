@@ -26,7 +26,7 @@ struct matmul_template {
     }
       // ThunderKittens template functions
     __device__ static inline void common_setup(common_setup_args<layout> args) {
-        int Rblocks = args.globals.C.rows / (M_BLOCK*64), Cblocks = args.globals.C.cols / (N_BLOCK*64);
+        int Rblocks = args.globals.C.rows() / (M_BLOCK*64), Cblocks = args.globals.C.cols() / (N_BLOCK*64);
         int super_rows = (Rblocks/SUPER_M)*SUPER_M,
             final_rows = Rblocks - super_rows,
             super_repeat = SUPER_M*Cblocks;
@@ -41,7 +41,7 @@ struct matmul_template {
             args.num_iters = -1;
             return;
         }
-        args.num_iters = args.globals.A.cols/64;  // 64
+        args.num_iters = args.globals.A.cols()/64;  // 64
         int id = warpgroup::groupid() == NUM_CONSUMER_WARPS/4 ? 0 : warpgroup::groupid(); // producer sets as 0
         args.common.coord = { args.common.coord.x*M_BLOCK + id, args.common.coord.y*N_BLOCK };
     }
@@ -68,13 +68,14 @@ struct matmul_template {
                 zero(args.state.accum[n]);
         }
         __device__ static void compute(consumer_compute_args<layout> args) {
-            for(int n = 0; n < N_BLOCK; n++) {
-                warpgroup::mma_ABt(
-                    args.state.accum[n],
-                    args.input.a[warpgroup::groupid()],
-                    args.input.b[n]
-                );
-            }
+            using wide_rt = rt_fl<16, 64*N_BLOCK>;
+            using tall_st = st_bf<64*N_BLOCK, 64>;
+            // dispatch the largest possible tensor core instruction to maximize TFLOPS (64x16x256 on M_BLOCK=2, N_BLOCK=4)
+            warpgroup::mma_ABt(
+                reinterpret_cast<wide_rt&>(args.state.accum),
+                args.input.a[warpgroup::groupid()],
+                reinterpret_cast<tall_st&>(args.input.b)
+            );
             warpgroup::mma_async_wait();
             if(laneid() == 0) arrive(args.inputs_finished);
         }
@@ -128,7 +129,7 @@ void inner_run(bf16 *d_A, bf16 *d_B, bf16 *d_C, size_t M, size_t N, size_t K, di
     using globals  = typename mmt::layout::globals;
     // printf("M: %d, N: %d, K: %d\n", M, N, K);
     global_layout Ag{d_A, nullptr, nullptr, M, K};
-    global_layout Bg{d_B, nullptr, nullptr, K, N};
+    global_layout Bg{d_B, nullptr, nullptr, N, K};
     global_layout Cg{d_C, nullptr, nullptr, M, N};
     globals G{Ag, Bg, Cg};
     prototype::lcf::kernel<mmt><<<grid, block, MAX_SHARED_MEMORY-1024>>>(G);
@@ -280,8 +281,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 }
 
 int main() {
-    int N;
-    N = 4096;
-    run_benchmark<matmul_template<2,4,8>>(N, N, N);
+    int M = 2048, N = 4096, K = 8192;
+    run_benchmark<matmul_template<2,4,8>>(M, N, K);
     return 0;
 }

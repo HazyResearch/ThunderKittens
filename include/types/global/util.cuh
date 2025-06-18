@@ -2,6 +2,7 @@
 
 #include <type_traits>
 #include <cstddef>
+#include "../register/register.cuh"
 
 namespace kittens {
 namespace ducks {

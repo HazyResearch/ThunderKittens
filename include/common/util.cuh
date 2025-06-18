@@ -10,6 +10,28 @@
 #include <concepts>
 #include <memory>
 
+// CUDA driver API
+#define CUCHECK(cmd) do {                                     \
+    CUresult err = cmd;                                       \
+    if (err != CUDA_SUCCESS) {                                \
+        const char *errStr;                                   \
+        cuGetErrorString(err, &errStr);                       \
+        fprintf(stderr, "Failed: CUDA error %s:%d '%s'\n",    \
+            __FILE__, __LINE__, errStr);                      \
+        exit(EXIT_FAILURE);                                   \
+    }                                                         \
+} while(0)
+
+// CUDA runtime API
+#define CUDACHECK(cmd) do {                                   \
+    cudaError_t err = cmd;                                    \
+    if (err != cudaSuccess) {                                 \
+        fprintf(stderr, "Failed: CUDA error %s:%d '%s'\n",    \
+            __FILE__, __LINE__, cudaGetErrorString(err));     \
+        exit(EXIT_FAILURE);                                   \
+    }                                                         \
+} while(0)
+
 /**
  * @namespace kittens
  *
@@ -65,6 +87,15 @@ constexpr int MAX_SHARED_MEMORY = 164000;
 #elif defined(KITTENS_4090)
 constexpr int MAX_SHARED_MEMORY = 100000;
 #endif
+
+struct transpose {
+    static constexpr int N = 0; // not transposed
+    static constexpr int T = 1; // transposed
+};
+struct axis {
+    static constexpr int ROW = 0; // row axis of a tile
+    static constexpr int COL = 1; // column axis of a tile
+};
 
 /* ----------  TYPE HELPERS  ---------- */
 

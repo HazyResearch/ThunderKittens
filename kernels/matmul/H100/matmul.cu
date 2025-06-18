@@ -24,9 +24,9 @@ struct matmul_template {
     template<bool PERISISTENT_GRID=true> __host__ static inline dim3 grid(int M, int N, int K) {
         return dim3(PERISISTENT_GRID ? 132 : M*N/(M_BLOCK*N_BLOCK*layout::base_tile::num_elements));
     }
-      // ThunderKittens template functions
+    // ThunderKittens template functions
     __device__ static inline void common_setup(common_setup_args<layout> args) {
-        int Rblocks = args.globals.C.rows / (M_BLOCK*64), Cblocks = args.globals.C.cols / (N_BLOCK*64);
+        int Rblocks = args.globals.C.rows() / (M_BLOCK*64), Cblocks = args.globals.C.cols() / (N_BLOCK*64);
         int super_rows = (Rblocks/SUPER_M)*SUPER_M,
             final_rows = Rblocks - super_rows,
             super_repeat = SUPER_M*Cblocks;
@@ -42,7 +42,7 @@ struct matmul_template {
             args.num_iters = -1;
             return;
         }
-        args.num_iters = args.globals.A.cols/64;
+        args.num_iters = args.globals.A.cols()/64;
         int id = warpgroup::groupid() == NUM_CONSUMER_WARPS/4 ? 0 : warpgroup::groupid(); // producer sets as 0
         args.common.coord = { args.common.coord.x*M_BLOCK + id, args.common.coord.y*N_BLOCK };
     }

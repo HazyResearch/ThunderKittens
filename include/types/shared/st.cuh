@@ -132,6 +132,7 @@ struct KITTENS_DEFAULT_ALIGN st {
 };
 
 
+
 /**
  * @brief A reference into a chunk of shared tile memory.
  *
@@ -218,6 +219,13 @@ struct st_subtile {
     // vector types
     using col_vec = sv<dtype, rows>;
     using row_vec = sv<dtype, cols>;
+
+    __device__ inline void operator=(const dtype &value) { // runs at warp scope by default
+        #pragma unroll
+        for(int i = kittens::laneid(); i < num_elements; i += WARP_THREADS) {
+            data[i] = value;
+        }
+    }
 };
 
 /* ----------  CONCEPTS  ---------- */
@@ -249,4 +257,55 @@ template<int _height, int _width> using st_fl = st<float, _height, _width>;
 template<int _height, int _width> using st_fl8_e4m3 = st<fp8e4m3, _height, _width>;
 template<int _height, int _width> using st_fl8_e5m2 = st<fp8e5m2, _height, _width>;
 #endif
+
+/* ----------  PRINTOUTS  ---------- */
+
+/**
+ * @brief Print the contents of a shared tile as a formatted table.
+ * 
+ * This function should be called by a single thread in the warp.
+ * It will print the entire tile atomically to avoid interleaved output.
+ * 
+ * @param tile The shared tile to print
+ */
+template<ducks::st::all ST>
+__device__ inline void print(const ST& tile) {
+    if (laneid() == 0) { // Only first thread in warp prints
+        printf("Shared Tile %dx%d:\n", ST::rows, ST::cols);
+        
+        // Print column headers
+        printf("     "); // Padding for row indices
+        for (int c = 0; c < ST::cols; c++) {
+            printf("%8d ", c);
+        }
+        printf("\n");
+        
+        // Print separator line
+        printf("     ");
+        for (int c = 0; c < ST::cols; c++) {
+            printf("--------+");
+        }
+        printf("\n");
+        
+        // Print data rows
+        for (int r = 0; r < ST::rows; r++) {
+            printf("%3d |", r); // Row index
+            for (int c = 0; c < ST::cols; c++) {
+                if constexpr (std::is_same_v<typename ST::dtype, float>) {
+                    printf("%8.3f ", tile[{r,c}]);
+                } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
+                    printf("%8.3f ", __bfloat162float(tile[{r,c}]));
+                } else if constexpr (std::is_integral_v<typename ST::dtype>) {
+                    printf("%8d ", (int)tile[{r,c}]);
+                } else {
+                    printf("%8.3f ", (float)tile[{r,c}]);
+                }
+            }
+            printf("\n");
+        }
+        printf("\n");
+    }
+    __syncwarp(); // Ensure warp stays in sync
+}
+
 }
