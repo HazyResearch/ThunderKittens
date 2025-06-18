@@ -22,13 +22,18 @@ struct vec_load_store {
     }
 };
 
-template<typename T>
+template<typename T, bool should_use_semaphore=false>
 struct vec_async_load_store {
     using dtype = T;
     template<int S, int NW> using valid = std::bool_constant<S%NW==0 && S<=64>;
-    static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "group_shared_vec_loadstore_async_gmem=bf16" :
-                                                      std::is_same_v<T, kittens::half> ? "group_shared_vec_loadstore_async_gmem=half" :
-                                                                                         "group_shared_vec_loadstore_async_gmem=float";
+    static inline const std::string test_identifier = 
+        should_use_semaphore ? 
+            (std::is_same_v<T, kittens::bf16> ? "group_shared_vec_loadstore_async_semaphore_gmem=bf16" :
+             std::is_same_v<T, kittens::half> ? "group_shared_vec_loadstore_async_semaphore_gmem=half" :
+                                                "group_shared_vec_loadstore_async_semaphore_gmem=float") :
+            (std::is_same_v<T, kittens::bf16> ? "group_shared_vec_loadstore_async_gmem=bf16" :
+             std::is_same_v<T, kittens::half> ? "group_shared_vec_loadstore_async_gmem=half" :
+                                                "group_shared_vec_loadstore_async_gmem=float");
     template<int S, int NW, gl_t GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
@@ -37,11 +42,28 @@ struct vec_async_load_store {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
         kittens::shared_allocator<16> al((int*)&__shm[0]); 
         kittens::col_vec<kittens::st<dtype, 16*S, 16*S>> &shared_vec = al.allocate<kittens::col_vec<kittens::st<dtype, 16*S, 16*S>>>();
-        G::load_async(shared_vec, input, {});
-        G::load_async_wait(0);
+
+        __shared__ kittens::semaphore bar;
+        if constexpr (should_use_semaphore) {
+            if (threadIdx.x == 0) {
+                kittens::init_semaphore(bar, G::GROUP_THREADS, 0);
+            }
+            __syncthreads();
+        }
+
+        if constexpr (should_use_semaphore) {
+            G::load_async(shared_vec, input, {}, bar);
+            kittens::wait(bar, 0);
+        } else {
+            G::load_async(shared_vec, input, {});
+            kittens::load_async_wait();
+        }
         G::store(output, shared_vec, {});
     }
 };
+
+template<typename T>
+using vec_async_load_store_semaphore = vec_async_load_store<T, true>;
 
 void group::memory::vec::global_to_shared::tests(test_data &results) {
     std::cout << "\n ----- Starting ops/group/memory/vec/global_to_shared tests! -----\n" << std::endl;
@@ -69,6 +91,16 @@ void group::memory::vec::global_to_shared::tests(test_data &results) {
     sweep_size_1d<vec_async_load_store<kittens::half>, SIZE, 2>::run(results);
     sweep_size_1d<vec_async_load_store<kittens::half>, SIZE, 4>::run(results);
     sweep_size_1d<vec_async_load_store<kittens::half>, SIZE, 12>::run(results);
+
+    sweep_size_1d<vec_async_load_store_semaphore<float>, SIZE, 2>::run(results);
+    sweep_size_1d<vec_async_load_store_semaphore<float>, SIZE, 4>::run(results);
+    sweep_size_1d<vec_async_load_store_semaphore<float>, SIZE, 12>::run(results);
+    sweep_size_1d<vec_async_load_store_semaphore<kittens::bf16>, SIZE, 2>::run(results);
+    sweep_size_1d<vec_async_load_store_semaphore<kittens::bf16>, SIZE, 4>::run(results);
+    sweep_size_1d<vec_async_load_store_semaphore<kittens::bf16>, SIZE, 12>::run(results);
+    sweep_size_1d<vec_async_load_store_semaphore<kittens::half>, SIZE, 2>::run(results);
+    sweep_size_1d<vec_async_load_store_semaphore<kittens::half>, SIZE, 4>::run(results);
+    sweep_size_1d<vec_async_load_store_semaphore<kittens::half>, SIZE, 12>::run(results);
 }
 
 #endif
