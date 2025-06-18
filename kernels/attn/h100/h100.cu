@@ -648,6 +648,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
 
 #include "pyutils/torch_helpers.cuh"
 #include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <iostream>
 
 std::vector<torch::Tensor> 
@@ -712,7 +713,8 @@ attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal
     float* l_ptr = reinterpret_cast<float*>(l_vec.data_ptr<float>());
     float* d_l   = reinterpret_cast<float*>(l_ptr);
 
-    cudaDeviceSynchronize();
+    // cudaDeviceSynchronize();
+    at::cuda::CUDAGuard device_guard{q.get_device()};
     auto stream = at::cuda::getCurrentCUDAStream().stream(); 
 
     if (head_dim == 64) {
@@ -763,7 +765,7 @@ attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal
             fwd_attend_ker<64, false><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
         }
         CHECK_CUDA_ERROR(cudaGetLastError());
-        cudaStreamSynchronize(stream);
+        // cudaStreamSynchronize(stream);
     }
 
     if (head_dim == 128) {
@@ -815,11 +817,11 @@ attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal
         }
 
         CHECK_CUDA_ERROR(cudaGetLastError());
-        cudaStreamSynchronize(stream);
+        // cudaStreamSynchronize(stream);
     }
 
     return {o, l_vec};
-    cudaDeviceSynchronize();
+    // cudaDeviceSynchronize();
 }
 
 std::vector<torch::Tensor> 
@@ -925,10 +927,11 @@ attention_backward(torch::Tensor q,
     auto mem_size = kittens::MAX_SHARED_MEMORY; 
     auto threads  = 4 * kittens::WARP_THREADS;
 
-    cudaDeviceSynchronize();
+    // cudaDeviceSynchronize();
+    at::cuda::CUDAGuard device_guard{q.get_device()};
     auto stream = at::cuda::getCurrentCUDAStream().stream();
 
-    cudaStreamSynchronize(stream);
+    // cudaStreamSynchronize(stream);
 
     // TORCH_CHECK(seq_len % (4*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 256");
     dim3 grid_bwd(seq_len/(4*kittens::TILE_ROW_DIM<bf16>*4), qo_heads, batch);
@@ -1009,7 +1012,7 @@ attention_backward(torch::Tensor q,
         dim3 grid_bwd_2(seq_len/(4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>), qo_heads, batch);
         threads = kittens::WARP_THREADS * BWD_NUM_WORKERS;
 
-        cudaDeviceSynchronize();
+        // cudaDeviceSynchronize();
 
         if (is_causal) {
             cudaFuncSetAttribute(
@@ -1040,9 +1043,9 @@ attention_backward(torch::Tensor q,
             bwd_attend_ker<64, false><<<grid_bwd_2, threads, 194000, stream>>>(bwd_global); 
         }
 
-        // CHECK_CUDA_ERROR(cudaGetLastError());
-        cudaStreamSynchronize(stream);
-        cudaDeviceSynchronize();
+        CHECK_CUDA_ERROR(cudaGetLastError());
+        // cudaStreamSynchronize(stream);
+        // cudaDeviceSynchronize();
         // const auto kernel_end = std::chrono::high_resolution_clock::now();
         // std::cout << "Kernel Time: " << std::chrono::duration_cast<std::chrono::microseconds>(kernel_end - start).count() << "us" << std::endl;
         // std::cout << "---" << std::endl;
@@ -1157,13 +1160,13 @@ attention_backward(torch::Tensor q,
             bwd_attend_ker<128, false><<<grid_bwd_2, threads, 194000, stream>>>(bwd_global); 
         }
 
-        // CHECK_CUDA_ERROR(cudaGetLastError());
-        cudaStreamSynchronize(stream);
-        cudaDeviceSynchronize();
+        CHECK_CUDA_ERROR(cudaGetLastError());
+        // cudaStreamSynchronize(stream);
+        // cudaDeviceSynchronize();
     }
 
     return {qg, kg, vg};
-    cudaDeviceSynchronize();
+    // cudaDeviceSynchronize();
 }
 
 #else
