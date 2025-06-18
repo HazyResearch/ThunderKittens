@@ -330,7 +330,7 @@ std::vector<torch::Tensor> ring_attention_forward(
     club.execute([&](int i) {
         cudaFuncSetAttribute(blockwise_attn_ker<64, false>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
         blockwise_attn_ker<64, false><<<grid, NUM_WORKERS * kittens::WARP_THREADS, smem, streams[i]>>>(p_G, i);
-        cudaStreamSynchronize(streams[i]);
+        // cudaStreamSynchronize(streams[i]);
         CHECK_CUDA_ERROR(cudaGetLastError());
     });
 
