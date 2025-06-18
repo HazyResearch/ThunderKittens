@@ -27,12 +27,3 @@ template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST
 __device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx) {
     kittens::load_async<2, false, ST, GL, COORD, GROUP_THREADS>(dst, src, idx);
 }
-// cp.async with semaphores
-template<int axis, bool assume_aligned, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
-__device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore &bar) {
-    kittens::load_async<axis, assume_aligned, ST, GL, COORD, GROUP_THREADS>(dst, src, idx, bar);
-}
-template<ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>> // default case
-__device__ static inline void load_async(ST &dst, const GL &src, const COORD &idx, semaphore &bar) {
-    kittens::load_async<2, false, ST, GL, COORD, GROUP_THREADS>(dst, src, idx, bar);
-}

@@ -68,7 +68,7 @@ __device__ static inline void store(const GL &dst, const SV &src, const COORD &i
  * @param[in] src The source global memory array.
  * @param[in] idx The coord of the global memory array.
  */
-template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>, bool should_commit_group=true>
+template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void load_async(SV &dst, const GL &src, const COORD &idx) {
     constexpr uint32_t elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
     constexpr uint32_t total_calls = (dst.length + WARP_THREADS*elem_per_transfer-1) / (WARP_THREADS*elem_per_transfer); // round up
@@ -85,38 +85,7 @@ __device__ static inline void load_async(SV &dst, const GL &src, const COORD &id
             );
         }
     }
-    if constexpr (should_commit_group) {
-        asm volatile("cp.async.commit_group;\n" ::: "memory");
-    }
+    asm volatile("cp.async.commit_group;\n" ::: "memory");
 }
-
-/**
- * @brief Asynchronously loads a vector from global to shared memory. Additionally, each thread will
- * signal the semaphore as it completes its load. For example, if you invoke load_async from a warp
- * with a semaphore, when all threads are completed, the sempahore's completed arrivals count
- * will be 32.
- * 
- * Example Usage;
- *     semaphore bar;
- *     init_semaphore(bar, 32, 0); // 32 threads in a warp
- *     load_async(dst, src, idx, bar);
- *     wait(bar, 0); // ding! memory arrived from all threads in the warp
- *
- * @tparam ST The type of the shared vector.
- * @param[out] dst The destination shared memory vector.
- * @param[in] src The source global memory array.
- * @param[in] idx The coordinate of the vector in the global memory array.
- * @param[in] bar The semaphore to signal.
- */
-template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
-__device__ static inline void load_async(SV &dst, const GL &src, const COORD &idx, semaphore &bar) {
-    load_async<SV, GL, COORD, false>(dst, src, idx);
-    asm volatile(
-        "cp.async.mbarrier.arrive.noinc.shared::cta.b64 [%0];\n" 
-        :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&bar)))
-        : "memory"
-    );
-}
-
 
 }
