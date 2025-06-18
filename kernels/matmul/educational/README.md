@@ -1,5 +1,5 @@
 
-This folder builds up the H100 GEMM piece-by-piece. It only for educational purposes. 
+This folder builds up the H100 GEMM piece-by-piece. It is only for educational purposes. 
 
 Change the ```.cu``` file in the ```Makefile``` to one of the following, then ```make clean && make && ./matmul```.
 
