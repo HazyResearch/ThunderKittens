@@ -35,9 +35,9 @@ __device__ static inline int groupid() { return threadIdx.x / GROUP_THREADS; }
 __device__ static inline void sync(int id) {
     asm volatile("bar.sync %0, %1;\n" :: "r"(id), "n"(GROUP_THREADS));
 }
-template<typename _=ducks::default_type> __device__ static inline void sync() {
+template<uint32_t MASK=0xFFFFFFFF> __device__ static inline void sync() {
     static_assert(GROUP_WARPS==1, "barrier-less sync() can only be called by a single warp!");
-    asm volatile("bar.warp.sync 0xFFFFFFFF;\n");
+    asm volatile("bar.warp.sync %0;\n" :: "n"(MASK));
 }
 __device__ static inline void arrive(int id) {
     asm volatile("bar.arrive %0, %1;\n" :: "r"(id), "n"(GROUP_THREADS));
