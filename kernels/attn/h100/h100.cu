@@ -1128,8 +1128,8 @@ attention_backward(torch::Tensor q,
         dim3 grid_bwd_2(seq_len/(4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>), qo_heads, batch);
         threads = kittens::WARP_THREADS * BWD_NUM_WORKERS;
 
-        cudaStreamSynchronize(stream);
-        cudaDeviceSynchronize(); 
+        // cudaStreamSynchronize(stream);
+        // cudaDeviceSynchronize(); 
         
         if (is_causal) {
             cudaFuncSetAttribute(
