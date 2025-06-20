@@ -33,11 +33,11 @@ template<int D> struct fwd_globals {
     using l_col_vec = col_vec<st_fl<fwd_attend_ker_tile_dims<D>::qo_height, fwd_attend_ker_tile_dims<D>::tile_width>>;
     using o_tile    =         st_bf<fwd_attend_ker_tile_dims<D>::qo_height, fwd_attend_ker_tile_dims<D>::tile_width>;
 
-    using q_gl = gl<bf16,  -1, -1, -1, -1, q_tile>;
-    using k_gl = gl<bf16,  -1, -1, -1, -1, k_tile>;
-    using v_gl = gl<bf16,  -1, -1, -1, -1, v_tile>;
+    using q_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<q_tile, dim::DEPTH>>;
+    using k_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<k_tile, dim::DEPTH>>;
+    using v_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<v_tile, dim::DEPTH>>;
     using l_gl = gl<float, -1, -1, -1, -1, l_col_vec>;
-    using o_gl = gl<bf16,  -1, -1, -1, -1, o_tile>;
+    using o_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<o_tile, dim::DEPTH>>;
 
     q_gl q;
     k_gl k;
@@ -86,19 +86,17 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         tma::expect_bytes(qsmem_semaphore, sizeof(q_smem));
 
         for (int wg = 0; wg < CONSUMER_WARPGROUPS; wg++) {
-            // @yukavio Layout改这里
-            // global BHTD  grid Q_Tile, H, B
-            //coord<q_tile> q_tile_idx = {blockIdx.z, blockIdx.y, (seq_idx) + wg, 0};
+            // coord<q_tile> q_tile_idx = {blockIdx.z, blockIdx.y, (seq_idx) + wg, 0};
             coord<q_tile> q_tile_idx = {blockIdx.z, (seq_idx) + wg, blockIdx.y, 0};
-            tma::load_async(q_smem[wg], g.q, q_tile_idx, qsmem_semaphore);
+            tma::load_async<dim::DEPTH, cache_policy::NORMAL>(q_smem[wg], g.q, q_tile_idx, qsmem_semaphore);
         }
 
         for (int j = 0; j < K::stages - 1; j++) {
             coord<k_tile> kv_tile_idx = {blockIdx.z, j, kv_head_idx, 0};
             tma::expect_bytes(k_smem_arrived[j], sizeof(k_tile));
-            tma::load_async(k_smem[j], g.k, kv_tile_idx, k_smem_arrived[j]);
+            tma::load_async<dim::DEPTH, cache_policy::NORMAL>(k_smem[j], g.k, kv_tile_idx, k_smem_arrived[j]);
             tma::expect_bytes(v_smem_arrived[j], sizeof(v_tile));
-            tma::load_async(v_smem[j], g.v, kv_tile_idx, v_smem_arrived[j]);
+            tma::load_async<dim::DEPTH, cache_policy::NORMAL>(v_smem[j], g.v, kv_tile_idx, v_smem_arrived[j]);
         }
     }
     __syncthreads(); 
@@ -120,9 +118,9 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
                 // @yukavio GQA还有Layout改这里
                 coord<k_tile> kv_tile_idx = {blockIdx.z, kv_idx + 1, kv_head_idx, 0};
                 tma::expect_bytes(k_smem_arrived[(kv_idx+1)%K::stages], sizeof(k_tile));
-                tma::load_async(k_smem[(kv_idx+1)%K::stages], g.k, kv_tile_idx, k_smem_arrived[(kv_idx+1)%K::stages]);
+                tma::load_async<dim::DEPTH, cache_policy::NORMAL>(k_smem[(kv_idx+1)%K::stages], g.k, kv_tile_idx, k_smem_arrived[(kv_idx+1)%K::stages]);
                 tma::expect_bytes(v_smem_arrived[(kv_idx+1)%K::stages], sizeof(v_tile));
-                tma::load_async(v_smem[(kv_idx+1)%K::stages], g.v, kv_tile_idx, v_smem_arrived[(kv_idx+1)%K::stages]);
+                tma::load_async<dim::DEPTH, cache_policy::NORMAL>(v_smem[(kv_idx+1)%K::stages], g.v, kv_tile_idx, v_smem_arrived[(kv_idx+1)%K::stages]);
                 
                 wait(compute_done[(kv_idx)%K::stages], (kv_idx/K::stages)%2);
             }
@@ -214,7 +212,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
         if (warpid % 4 == 0) {
             coord<o_tile> o_tile_idx = {blockIdx.z, (seq_idx) + warpgroupid, blockIdx.y, 0};
-            tma::store_async(g.o, o_smem[warpgroupid], o_tile_idx);
+            tma::store_async<dim::DEPTH, cache_policy::NORMAL>(g.o, o_smem[warpgroupid], o_tile_idx);
         }
 
         mul(max_vec_scaled,   max_vec_scaled, 0.69314718056f);
@@ -726,19 +724,19 @@ attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal
         using l_col_vec = col_vec<st_fl<fwd_attend_ker_tile_dims<64>::qo_height, fwd_attend_ker_tile_dims<64>::tile_width>>;
         using o_tile    =         st_bf<fwd_attend_ker_tile_dims<64>::qo_height, fwd_attend_ker_tile_dims<64>::tile_width>;
 
-        using q_global = gl<bf16,  -1, -1, -1, -1, q_tile>;
-        using k_global = gl<bf16,  -1, -1, -1, -1, k_tile>;
-        using v_global = gl<bf16,  -1, -1, -1, -1, v_tile>;
+        using q_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<q_tile, dim::DEPTH>>;
+        using k_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<k_tile, dim::DEPTH>>;
+        using v_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<v_tile, dim::DEPTH>>;
         using l_global = gl<float, -1, -1, -1, -1, l_col_vec>;
-        using o_global = gl<bf16,  -1, -1, -1, -1, o_tile>;
+        using o_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<o_tile, dim::DEPTH>>;
 
         using globals      = fwd_globals<64>;
 
-        q_global qg_arg{d_q, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 64U};
+        q_global qg_arg{d_q, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads),  64U};
         k_global kg_arg{d_k, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(kv_heads), 64U};
         v_global vg_arg{d_v, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(kv_heads), 64U};
+        l_global lg_arg{d_l, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), 1U,  static_cast<unsigned int>(seq_len)};
         o_global og_arg{d_o, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 64U};
-        l_global lg_arg{d_l, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), 1U,   static_cast<unsigned int>(seq_len)};
 
         globals g{qg_arg, kg_arg, vg_arg, lg_arg, og_arg, static_cast<int>(seq_len), static_cast<int>(hr)};
 
@@ -777,11 +775,11 @@ attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal
         using l_col_vec = col_vec<st_fl<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width>>;
         using o_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width>;
 
-        using q_global = gl<bf16,  -1, -1, -1, -1, q_tile>;
-        using k_global = gl<bf16,  -1, -1, -1, -1, k_tile>;
-        using v_global = gl<bf16,  -1, -1, -1, -1, v_tile>;
+        using q_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<q_tile, dim::DEPTH>>;
+        using k_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<k_tile, dim::DEPTH>>;
+        using v_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<v_tile, dim::DEPTH>>;
         using l_global = gl<float, -1, -1, -1, -1, l_col_vec>;
-        using o_global = gl<bf16,  -1, -1, -1, -1, o_tile>;
+        using o_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<o_tile, dim::DEPTH>>;
 
         using globals      = fwd_globals<128>;
 
@@ -796,7 +794,7 @@ attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal
         auto mem_size = kittens::MAX_SHARED_MEMORY;
         auto threads  = NUM_WORKERS * kittens::WARP_THREADS;
 
-        //TORCH_CHECK(seq_len % (CONSUMER_WARPGROUPS*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 192");
+        // TORCH_CHECK(seq_len % (CONSUMER_WARPGROUPS*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 192");
         dim3 grid(seq_len/(CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>*4), qo_heads, batch);
 
         if (is_causal) {
