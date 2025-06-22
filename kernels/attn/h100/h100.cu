@@ -20,6 +20,10 @@ __device__ static inline int ceil_div(int a, int b){
     return (a+b-1)/b;
 }
 
+__device__ static inline float assign_mask(bool t, float a){
+    return t ? base_types::constants<float>::neg_infty() : a;
+}
+
 template<int D> struct fwd_attend_ker_tile_dims {};
 template<> struct fwd_attend_ker_tile_dims<64> {
     constexpr static int tile_width = (64);
@@ -122,10 +126,11 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             // kv_iters = (seq_idx * (K::qo_height/kittens::TILE_ROW_DIM<bf16>)) - 1 + (CONSUMER_WARPGROUPS * (K::qo_height/kittens::TILE_ROW_DIM<bf16>)); 
             // kv_iters = ((kv_iters / (K::kv_height/kittens::TILE_ROW_DIM<bf16>)) == 0) ? (0) : ((kv_iters / (K::kv_height/kittens::TILE_ROW_DIM<bf16>)) - 1);
             int q_idx_upper = (seq_idx + CONSUMER_WARPGROUPS) * K::qo_height - 1;
-            kv_iters = ceil_div(q_idx_upper, K::kv_height) - 1;
-            // int kv_idx = (q_idx_upper-g.block_size) / g.block_stride;
-            // kv_idx = kv_idx >= 0 ? kv_idx : 0;
-            // kv_iters = ceil_div(kv_idx, K::kv_height) - 1;
+            // kv_iters = ceil_div(q_idx_upper, K::kv_height) - 1;
+
+            int kv_idx = (q_idx_upper-g.block_size) / g.block_stride;
+            kv_idx = kv_idx >= 0 ? kv_idx : 0;
+            kv_iters = ceil_div(kv_idx, K::kv_height) - 1;
         }
         else { kv_iters = kv_blocks-2; }
 
@@ -162,10 +167,11 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             // kv_iters = (kv_iters/8);
             // Comression causal mask
             int q_idx_upper = (seq_idx + CONSUMER_WARPGROUPS) * K::qo_height - 1;
-            kv_iters = ceil_div(q_idx_upper, K::kv_height) - 1;
-            // int kv_idx = (q_idx_upper-g.block_size) / g.block_stride;
-            // kv_idx = kv_idx >= 0 ? kv_idx : 0;
-            // kv_iters = ceil_div(kv_idx, K::kv_height) - 1;
+            // kv_iters = ceil_div(q_idx_upper, K::kv_height) - 1;
+
+            int kv_idx = (q_idx_upper-g.block_size) / g.block_stride;
+            kv_idx = kv_idx >= 0 ? kv_idx : 0;
+            kv_iters = ceil_div(kv_idx, K::kv_height) - 1;
         }
         else { kv_iters = kv_blocks - 1; }
 
@@ -182,7 +188,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             
             warpgroup::mma_async_wait();
 
-            if constexpr (is_causal) {
+            if constexpr (causal) {
                 const int q_blk = (seq_idx * (K::qo_height/kittens::TILE_ROW_DIM<bf16>)) + warpid; 
                       int k_blk = (kv_idx * (K::kv_height/kittens::TILE_ROW_DIM<bf16>)); 
 
@@ -193,8 +199,37 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
                         auto k_idx = k_blk + j;
                         auto &attn_subtile = reinterpret_cast<rt_fl<16, 16>&>(att_block.tiles[0][j]);
 
-                        if      (k_idx >  q_blk) { neg_infty  (attn_subtile); }
-                        else if (k_idx == q_blk) { make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
+                        // if      (k_idx >  q_blk) { neg_infty  (attn_subtile); }
+                        // else if (k_idx == q_blk) { make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
+
+                        int q_lower_id = q_blk * kittens::TILE_ROW_DIM<bf16>;
+                        int q_upper_id = q_lower_id + kittens::TILE_ROW_DIM<bf16> - 1;
+                        int kv_lower_id = k_idx * kittens::TILE_ROW_DIM<bf16>;
+                        int kv_upper_id = kv_lower_id + kittens::TILE_ROW_DIM<bf16> - 1;
+                        kv_lower_id = kv_lower_id*g.block_stride+g.block_size-1;
+                        kv_upper_id = kv_upper_id*g.block_stride+g.block_size-1;
+
+                        if      (kv_upper_id < q_lower_id){continue; }
+                        else if (kv_lower_id >  q_upper_id) { neg_infty  (attn_subtile); }
+                        else { 
+                            int q_base_id =  q_lower_id + laneid() / 4;
+                            int kv_base_id = kv_lower_id + (laneid()%4)*2*g.block_stride;
+                            bool t= kv_base_id >= q_base_id;
+                            attn_subtile.tiles[0][0].data[0].x = assign_mask(t, attn_subtile.tiles[0][0].data[0].x);
+                            attn_subtile.tiles[0][0].data[1].x = assign_mask(t, attn_subtile.tiles[0][0].data[1].x);
+                            kv_base_id += g.block_stride;
+                            t = kv_base_id >= q_base_id;
+                            attn_subtile.tiles[0][0].data[0].y = assign_mask(t, attn_subtile.tiles[0][0].data[0].y);
+                            attn_subtile.tiles[0][0].data[1].y = assign_mask(t, attn_subtile.tiles[0][0].data[1].y);
+                            kv_base_id += g.block_stride * 7;
+                            t = kv_base_id >= q_base_id;
+                            attn_subtile.tiles[0][0].data[2].x = assign_mask(t, attn_subtile.tiles[0][0].data[2].x);
+                            attn_subtile.tiles[0][0].data[3].x = assign_mask(t, attn_subtile.tiles[0][0].data[3].x);
+                            kv_base_id += g.block_stride;
+                            t = kv_base_id >= q_base_id;
+                            attn_subtile.tiles[0][0].data[2].y = assign_mask(t, attn_subtile.tiles[0][0].data[2].y);
+                            attn_subtile.tiles[0][0].data[3].y = assign_mask(t, attn_subtile.tiles[0][0].data[3].y);
+                        }
                         __syncwarp();
                     }
                 }
