@@ -188,7 +188,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             
             warpgroup::mma_async_wait();
 
-            if constexpr (causal) {
+            if constexpr (is_causal) {
                 const int q_blk = (seq_idx * (K::qo_height/kittens::TILE_ROW_DIM<bf16>)) + warpid; 
                       int k_blk = (kv_idx * (K::kv_height/kittens::TILE_ROW_DIM<bf16>)); 
 
@@ -419,6 +419,7 @@ struct bwd_globals {
     d_gl  d;
 
     const int N;
+    const int KV_N;
     const int hr;
 };
 
@@ -1065,10 +1066,11 @@ attention_backward(torch::Tensor q,
                         bwd_l_arg, 
                         bwd_d_arg, 
                         static_cast<int>(seq_len), 
+                        static_cast<int>(kv_len),
                         static_cast<int>(hr)};
 
         // TORCH_CHECK(seq_len % (4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_DIM) == 0, "sequence length must be divisible by 128");
-        dim3 grid_bwd_2(host_ceil_div(seq_len, 4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>), qo_heads, batch);
+        dim3 grid_bwd_2(host_ceil_div(kv_len, 4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>), qo_heads, batch);
         threads = kittens::WARP_THREADS * BWD_NUM_WORKERS;
 
         cudaDeviceSynchronize();
@@ -1181,10 +1183,11 @@ attention_backward(torch::Tensor q,
                         bwd_l_arg, 
                         bwd_d_arg, 
                         static_cast<int>(seq_len), 
+                        static_cast<int>(kv_len),
                         static_cast<int>(hr)};
         
         // TORCH_CHECK(seq_len % (4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_DIM) == 0, "sequence length must be divisible by 128");
-        dim3 grid_bwd_2(host_ceil_div(seq_len, 4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>), qo_heads, batch);
+        dim3 grid_bwd_2(host_ceil_div(kv_len, 4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>), qo_heads, batch);
         threads = kittens::WARP_THREADS * BWD_NUM_WORKERS;
 
         cudaStreamSynchronize(stream);
