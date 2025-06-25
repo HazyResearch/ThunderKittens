@@ -3,6 +3,7 @@
 #include "kittens.cuh"
 #include <cooperative_groups.h>
 #include <iostream>
+#include <cuda_bf16.h>
 
 constexpr int CONSUMER_WARPGROUPS = (3); 
 constexpr int PRODUCER_WARPGROUPS = (1); 
@@ -22,6 +23,10 @@ __device__ static inline int ceil_div(int a, int b){
 
 __device__ static inline float assign_mask(bool t, float a){
     return t ? base_types::constants<float>::neg_infty() : a;
+}
+
+__device__ static inline float assign_mask_z(bool t, float a){
+    return t ? base_types::constants<float>::zero() : a;
 }
 
 template<int D> struct fwd_attend_ker_tile_dims {};
@@ -214,19 +219,19 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
                         else { 
                             int q_base_id =  q_lower_id + laneid() / 4;
                             int kv_base_id = kv_lower_id + (laneid()%4)*2*g.block_stride;
-                            bool t= kv_base_id >= q_base_id;
+                            bool t= kv_base_id > q_base_id;
                             attn_subtile.tiles[0][0].data[0].x = assign_mask(t, attn_subtile.tiles[0][0].data[0].x);
                             attn_subtile.tiles[0][0].data[1].x = assign_mask(t, attn_subtile.tiles[0][0].data[1].x);
                             kv_base_id += g.block_stride;
-                            t = kv_base_id >= q_base_id;
+                            t = kv_base_id > q_base_id;
                             attn_subtile.tiles[0][0].data[0].y = assign_mask(t, attn_subtile.tiles[0][0].data[0].y);
                             attn_subtile.tiles[0][0].data[1].y = assign_mask(t, attn_subtile.tiles[0][0].data[1].y);
                             kv_base_id += g.block_stride * 7;
-                            t = kv_base_id >= q_base_id;
+                            t = kv_base_id > q_base_id;
                             attn_subtile.tiles[0][0].data[2].x = assign_mask(t, attn_subtile.tiles[0][0].data[2].x);
                             attn_subtile.tiles[0][0].data[3].x = assign_mask(t, attn_subtile.tiles[0][0].data[3].x);
                             kv_base_id += g.block_stride;
-                            t = kv_base_id >= q_base_id;
+                            t = kv_base_id > q_base_id;
                             attn_subtile.tiles[0][0].data[2].y = assign_mask(t, attn_subtile.tiles[0][0].data[2].y);
                             attn_subtile.tiles[0][0].data[3].y = assign_mask(t, attn_subtile.tiles[0][0].data[3].y);
                         }
@@ -421,6 +426,8 @@ struct bwd_globals {
     const int N;
     const int KV_N;
     const int hr;
+    const int block_size=32;
+    const int block_stride=16;
 };
 
 __device__ static inline void
@@ -449,17 +456,41 @@ stream_sub_tile(auto &reg_tile, auto &smem_vec, int tic) {
 
 template<int tile_h_qo, int tile_h>
 __device__ static inline void 
-causal_mask(auto &reg_tile, int qo_idx) {
+causal_mask(auto &reg_tile, int qo_idx, int block_stride, int block_size) {
     int q_blk = (qo_idx) * (tile_h_qo/kittens::TILE_ROW_DIM<bf16>);
     int k_blk = (blockIdx.x * BWD_CONSUMER_WARPGROUPS * (tile_h/kittens::TILE_ROW_DIM<bf16>)) 
                 + ((kittens::warpid()/kittens::WARPGROUP_WARPS) * (tile_h/kittens::TILE_ROW_DIM<bf16>)) 
                 + (kittens::warpid() % kittens::WARPGROUP_WARPS);
-
+    int kv_lower_id = k_blk * kittens::TILE_ROW_DIM<bf16>;
+    int kv_upper_id = kv_lower_id + kittens::TILE_ROW_DIM<bf16> - 1;
+    kv_lower_id = kv_lower_id*block_stride+block_size-1;
+    kv_upper_id = kv_upper_id*block_stride+block_size-1;
     for (int j = 0; j < (tile_h_qo/kittens::TILE_ROW_DIM<bf16>); j++) {
         int q_idx = q_blk + j;
         auto &attn_subtile = reinterpret_cast<rt_fl<16, 16>&>(reg_tile.tiles[0][j]);
-        if      (q_idx  < k_blk) { neg_infty(attn_subtile); }
-        else if (q_idx == k_blk) { make_causal_t(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
+        // if      (q_idx  < k_blk) { neg_infty(attn_subtile); }
+        // else if (q_idx == k_blk) { make_causal_t(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
+        int q_lower_id = q_idx * kittens::TILE_ROW_DIM<bf16>;
+        int q_upper_id = q_lower_id + kittens::TILE_ROW_DIM<bf16> - 1;
+
+        if      (kv_upper_id < q_lower_id){continue; }
+        else if (kv_lower_id >  q_upper_id) { zero  (attn_subtile); }
+        else { 
+            int q_base_id =  q_lower_id + (laneid()%4)*2;
+            int kv_base_id = kv_lower_id + (laneid() / 4)*block_stride;
+            int kv_base_id_upper = kv_base_id+7*block_stride;
+            attn_subtile.tiles[0][0].data[0].x = assign_mask_z(kv_base_id >= q_base_id, attn_subtile.tiles[0][0].data[0].x);
+            attn_subtile.tiles[0][0].data[1].x = assign_mask_z(kv_base_id_upper >= q_base_id, attn_subtile.tiles[0][0].data[1].x);
+            q_base_id += 1;
+            attn_subtile.tiles[0][0].data[0].y = assign_mask_z(kv_base_id >= q_base_id, attn_subtile.tiles[0][0].data[0].y);
+            attn_subtile.tiles[0][0].data[1].y = assign_mask_z(kv_base_id_upper >= q_base_id, attn_subtile.tiles[0][0].data[1].y);
+            q_base_id += 7;
+            attn_subtile.tiles[0][0].data[2].x = assign_mask_z(kv_base_id >= q_base_id, attn_subtile.tiles[0][0].data[2].x);
+            attn_subtile.tiles[0][0].data[3].x = assign_mask_z(kv_base_id_upper >= q_base_id, attn_subtile.tiles[0][0].data[3].x);
+            q_base_id += 1;
+            attn_subtile.tiles[0][0].data[2].y = assign_mask_z(kv_base_id >= q_base_id, attn_subtile.tiles[0][0].data[2].y);
+            attn_subtile.tiles[0][0].data[3].y = assign_mask_z(kv_base_id_upper >= q_base_id, attn_subtile.tiles[0][0].data[3].y);
+        }
     }
 }
 
@@ -473,7 +504,8 @@ compute_bwd_loop(
         rt_fl<16, tile_width> &kg_reg, rt_fl<16, tile_width> &vg_reg,
         auto &q_smem, auto &k_smem, auto &v_smem, 
         auto &og_smem, auto &ds_smem, auto &l_smem, auto &d_smem,
-        int qo_idx, int q_start, int tic, int toc) 
+        int qo_idx, int q_start, int tic, int toc, int block_stride, 
+        int block_size, int real_kv_lower_id) 
 {
     wait(vec_b[tic], ((qo_idx - q_start)/2)%2);
     stream_tile(s_block_t, l_smem, tic);
@@ -490,9 +522,8 @@ compute_bwd_loop(
     if constexpr (D == 64) { mul(s_block_t, s_block_t, 1.44269504089f*0.125f); }
     else                   { mul(s_block_t, s_block_t, 1.44269504089f*0.08838834764f); }
 
-    if constexpr (is_causal) { causal_mask<tile_h_qo, tile_h>(s_block_t, qo_idx); }
-
     exp2(s_block_t, s_block_t);
+    if constexpr (is_causal) { causal_mask<tile_h_qo, tile_h>(s_block_t, qo_idx, block_stride, block_size); }
     copy(p_block_t, s_block_t);
     copy(p_block_t_mma, s_block_t);
     stream_sub_tile(dp_block_t, d_smem, tic);
@@ -501,9 +532,13 @@ compute_bwd_loop(
     if constexpr (D == 64) { mul(ds_block_t, ds_block_t, 0.125f); }
     else                   { mul(ds_block_t, ds_block_t, 0.08838834764f); }
 
+    if((qo_idx+1)*tile_h_qo-1<real_kv_lower_id){
+        warpgroup::store(ds_smem[kittens::warpid()/kittens::WARPGROUP_WARPS], ds_block_t);
+        group<8>::sync(10); 
+        return;
+    }
     warpgroup::mma_AB(vg_reg, p_block_t_mma, og_smem[tic]);
     warpgroup::mma_commit_group();
-    
     copy(ds_block_t_mma, ds_block_t);
     warpgroup::store(ds_smem[kittens::warpid()/kittens::WARPGROUP_WARPS], ds_block_t);
     warpgroup::mma_AB(kg_reg, ds_block_t_mma, q_smem[tic]);
@@ -577,13 +612,15 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
     const int warpid      = kittens::warpid();
     const int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
     const int qo_blocks   = N / (G::tile_h_qo);
+    const int real_kv_lower_id = blockIdx.x * BWD_CONSUMER_WARPGROUPS * G::tile_h * g.block_stride + g.block_size-1;
     const int kv_head_idx = (blockIdx.y) / hr; 
 
     __shared__ kittens::semaphore kv_b, q_b[2], o_b[2], vec_b[2];
     __shared__ kittens::semaphore compute_done[2], qg_ready; 
 
     int tic = 0, toc = 1;
-    const int q_start = (is_causal) ? (blockIdx.x * 2) : (0);
+    // const int q_start = (is_causal) ? (blockIdx.x * 2) : (0);
+    constexpr static int q_start = 0;
 
     if (threadIdx.x == 0) {
         init_semaphore(kv_b,  0, 1);
@@ -669,21 +706,27 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
                     s_block_t, dp_block_t, p_block_t, ds_block_t, p_block_t_mma, ds_block_t_mma,
                     kg_reg, vg_reg,
                     q_smem, k_smem, v_smem, og_smem, ds_smem, l_smem, d_smem,
-                    qo_idx, q_start, tic, toc
+                    qo_idx, q_start, tic, toc, g.block_stride, g.block_size, real_kv_lower_id
                 );
 
                 rt_fl<16, G::tile_width> qg_reg; 
-                warpgroup::mm_AtB(qg_reg, ds_smem[0], k_smem[0]);
-                warpgroup::mma_AtB(qg_reg, ds_smem[1], k_smem[1]);
-                warpgroup::mma_commit_group(); 
-    
-                wait(qg_ready, toc);
-                if (qo_idx > 0) tma::store_async_wait();
-
-                warpgroup::mma_async_wait();
+                if((qo_idx+1)*G::tile_h_qo <= real_kv_lower_id){
+                    zero  (qg_reg);
+                    wait(qg_ready, toc);
+                    if (qo_idx > 0) tma::store_async_wait();
+                }
+                else{
+                    warpgroup::mm_AtB(qg_reg, ds_smem[0], k_smem[0]);
+                    warpgroup::mma_AtB(qg_reg, ds_smem[1], k_smem[1]);
+                    warpgroup::mma_commit_group(); 
+                    wait(qg_ready, toc);
+                    if (qo_idx > 0) {
+                        tma::store_async_wait();
+                    } 
+                    warpgroup::mma_async_wait();
+                }
                 warpgroup::store(qg_smem, qg_reg);
                 group<4>::sync(warpgroup::groupid()+4);
-    
                 if (warpgroup::laneid() == 0) arrive(compute_done[tic]);
             }
             kv_store<kg_tile, vg_tile>(kg_smem, kg_reg, vg_smem, vg_reg, g, qg_ready, kv_head_idx, toc);
@@ -697,7 +740,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
                     s_block_t, dp_block_t, p_block_t, ds_block_t, p_block_t_mma, ds_block_t_mma,
                     kg_reg, vg_reg,
                     q_smem, k_smem, v_smem, og_smem, ds_smem, l_smem, d_smem,
-                    qo_idx, q_start, tic, toc
+                    qo_idx, q_start, tic, toc, g.block_stride, g.block_size, real_kv_lower_id
                 );
             }
             kv_store<kg_tile, vg_tile>(kg_smem, kg_reg, vg_smem, vg_reg, g, qg_ready, kv_head_idx, toc);
@@ -913,12 +956,12 @@ attention_backward(torch::Tensor q,
     TORCH_CHECK(o.size(0)     == batch, "O  batch dimension - idx 0 - must match for all inputs");
     TORCH_CHECK(og.size(0)    == batch, "OG batch dimension - idx 0 - must match for all inputs");
 
-    TORCH_CHECK(q.size(1)     == seq_len, "Q  sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(q.size(1)     == seq_len, "Q  sequence length dimension - idx 1 - must match for all inputs");
     // TORCH_CHECK(k.size(1)     == seq_len, "K  sequence length dimension - idx 2 - must match for all inputs");
-    TORCH_CHECK(v.size(1)     == kv_len, "V  sequence length dimension - idx 2 - must match for all inputs");
-    TORCH_CHECK(l_vec.size(2) == seq_len, "L  sequence length dimension - idx 2 - must match for all inputs");
-    TORCH_CHECK(o.size(1)     == seq_len, "O  sequence length dimension - idx 2 - must match for all inputs");
-    TORCH_CHECK(og.size(1)    == seq_len, "OG sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(v.size(1)     == kv_len, "V  sequence length dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(l_vec.size(2) == seq_len, "L  sequence length dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(o.size(1)     == seq_len, "O  sequence length dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(og.size(1)    == seq_len, "OG sequence length dimension - idx 1 - must match for all inputs");
 
     TORCH_CHECK(q.size(3)  == head_dim, "Q  head dimension - idx 3 - must match for all non-vector inputs");
     TORCH_CHECK(k.size(3)  == head_dim, "K  head dimension - idx 3 - must match for all non-vector inputs");
@@ -935,12 +978,12 @@ attention_backward(torch::Tensor q,
     TORCH_CHECK(qo_heads >= kv_heads,     "Q heads must be greater than or equal to K and V heads");
     TORCH_CHECK(qo_heads % kv_heads == 0, "Q heads must be divisible by KV heads");
 
-    TORCH_CHECK(q.size(2)     == qo_heads, "Q  heads dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(q.size(2)     == qo_heads, "Q  heads dimension - idx 2 - must match for all inputs");
     TORCH_CHECK(l_vec.size(1) == qo_heads, "L  heads dimension - idx 1 - must match for all inputs");
-    TORCH_CHECK(o.size(2)     == qo_heads, "O  heads dimension - idx 1 - must match for all inputs");
-    TORCH_CHECK(og.size(2)    == qo_heads, "OG heads dimension - idx 1 - must match for all inputs");
-    TORCH_CHECK(k.size(2)  == kv_heads, "K  heads dimension - idx 1 - must match for all inputs");
-    TORCH_CHECK(v.size(2)  == kv_heads, "V  heads dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(o.size(2)     == qo_heads, "O  heads dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(og.size(2)    == qo_heads, "OG heads dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(k.size(2)  == kv_heads, "K  heads dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(v.size(2)  == kv_heads, "V  heads dimension - idx 2 - must match for all inputs");
 
     auto hr = qo_heads / kv_heads;
 
