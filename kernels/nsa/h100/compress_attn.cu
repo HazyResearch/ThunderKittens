@@ -12,7 +12,7 @@ constexpr int NUM_WORKERS         = (NUM_WARPGROUPS*kittens::WARPGROUP_WARPS);
 
 using namespace kittens;
 namespace cg = cooperative_groups;
-namespace NSA{
+namespace NSA_COMPRESS_ATTN{
 static inline int host_ceil_div(int a, int b){
     return (a+b-1)/b;
 }
@@ -773,7 +773,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
 #include "pyutils/torch_helpers.cuh"
 #include <ATen/cuda/CUDAContext.h>
 #include <iostream>
-using namespace NSA;
+using namespace NSA_COMPRESS_ATTN;
 
 std::vector<torch::Tensor> 
 nsa_compress_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal, int block_stride, int block_size)

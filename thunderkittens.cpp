@@ -33,7 +33,7 @@ extern std::vector<torch::Tensor> attention_backward(
 );
 #endif
 
-#ifdef TK_COMPILE_NSA_COMPRESS_ATTN
+#ifdef TK_COMPILE_NSA_ATTN
 extern std::vector<torch::Tensor> nsa_compress_attention_forward(
     torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal, 
     int block_stride, int block_size); 
@@ -41,6 +41,11 @@ extern std::vector<torch::Tensor> nsa_compress_attention_backward(
     torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, 
     torch::Tensor l_vec, torch::Tensor og, 
     bool causal, int block_stride, int block_size);
+extern std::vector<torch::Tensor> nsa_selection_attention_forward(
+    torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal); 
+extern std::vector<torch::Tensor> nsa_selection_attention_backward(
+    torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor o, 
+    torch::Tensor l_vec, torch::Tensor og, bool causal);
 #endif
 
 #ifdef TK_COMPILE_HEDGEHOG
@@ -160,9 +165,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("mha_backward", torch::wrap_pybind_function(attention_backward), "Bidirectional backward MHA. Takes Q,K,V,O,Og,Qg,Kg,Vg in (B,H,N,D) where D must be 64 or 128, and N must be a multiple of 64. Additionally requres norm vec l_vec, and (TODO) d_vec memory.");
 #endif
 
-#ifdef TK_COMPILE_NSA_COMPRESS_ATTN
+#ifdef TK_COMPILE_NSA_ATTN
     m.def("compress_attn_fwd",  torch::wrap_pybind_function(nsa_compress_attention_forward), "Forward for NSA Compression Branch. Takes Q,K,V,O in (B,H,N,D) where D must be 64 or 128, and N must be a multiple of 64. Additionally writes out norm vector L of shape (B,H,N), used in backward pass.");
     m.def("compress_attn_bwd", torch::wrap_pybind_function(nsa_compress_attention_backward), "Backward for NSA Compression Branch. Takes Q,K,V,O,Og,Qg,Kg,Vg in (B,H,N,D) where D must be 64 or 128, and N must be a multiple of 64. Additionally requres norm vec l_vec, and (TODO) d_vec memory.");
+    m.def("selection_attn_fwd",  torch::wrap_pybind_function(nsa_selection_attention_forward), "Forward for NSA Compression Branch. Takes Q,K,V,O in (B,H,N,D) where D must be 64 or 128, and N must be a multiple of 64. Additionally writes out norm vector L of shape (B,H,N), used in backward pass.");
+    m.def("selection_attn_bwd", torch::wrap_pybind_function(nsa_selection_attention_backward), "Backward for NSA Compression Branch. Takes Q,K,V,O,Og,Qg,Kg,Vg in (B,H,N,D) where D must be 64 or 128, and N must be a multiple of 64. Additionally requres norm vec l_vec, and (TODO) d_vec memory.");
 #endif
 
 #ifdef TK_COMPILE_HEDGEHOG
