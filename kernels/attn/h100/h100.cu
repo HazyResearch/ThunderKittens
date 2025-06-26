@@ -294,6 +294,25 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         }
         tma::store_async_wait();
     }
+    if(blockIdx.x==0){
+        // we have 4 * 4 * 32 = 512 threads per thread block
+        // set 32 * tile_width data to zero
+        __syncthreads();
+        __nv_bfloat162 a = {__float2bfloat16(0.0f), __float2bfloat16(0.0f)};
+        constexpr int num_threads_per_row = D/2;
+        constexpr int rows_per_iter = 512 / num_threads_per_row;
+        constexpr int num_iter = 32 / (512 / num_threads_per_row);
+        int row_idx = threadIdx.x / num_threads_per_row;
+        int col_idx = threadIdx.x % num_threads_per_row;
+        __nv_bfloat16 *raw_ptr = g.o.raw_ptr + g.o.template stride<0>()*blockIdx.z + g.o.template stride<1>()*row_idx + g.o.template stride<2>()*blockIdx.y;
+        __nv_bfloat162 *ptr = reinterpret_cast<__nv_bfloat162 *>(raw_ptr);
+
+        #pragma unroll
+        for(int i=0; i<num_iter; i++){
+            ptr[col_idx] = a;
+            ptr += g.o.template stride<1>()/2*rows_per_iter;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------
