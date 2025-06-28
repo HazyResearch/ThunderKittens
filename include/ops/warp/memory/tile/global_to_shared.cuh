@@ -27,8 +27,9 @@ __device__ static inline void load(ST &dst, const GL &src, const COORD &idx) {
     // we can handle this many rows each time we run a memcpy_async
     constexpr int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
     constexpr int memcpy_per_row = dst.cols / elem_per_memcpy;
-    constexpr int total_calls = (dst.height*dst.width * kittens::TILE_ROW_DIM<T>*kittens::TILE_COL_DIM<T> + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
-    constexpr int total_rows = dst.height*dst.width;
+    constexpr int dst_num_elem = dst.height*dst.width * kittens::TILE_ROW_DIM<T>*kittens::TILE_COL_DIM<T>;
+    constexpr int total_calls = (dst_num_elem + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
+    constexpr bool needs_bounds_check = dst_num_elem % (N_THREADS*elem_per_memcpy);
 
     coord<> unit_coord = idx.template unit_coord<axis, 3>();
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src[unit_coord];
@@ -42,7 +43,10 @@ __device__ static inline void load(ST &dst, const GL &src, const COORD &idx) {
         
         int row = load_idx / memcpy_per_row;
         int col = (load_idx*elem_per_memcpy) % dst.cols;
-
+        
+        if constexpr (needs_bounds_check) {
+            if (row >= dst.rows) continue;
+        }
         if constexpr (assume_aligned) {
             float4 tmp;
             move<float4>::ldg(tmp, (float4*)&src_ptr[row*row_stride + col]);
@@ -81,7 +85,9 @@ __device__ static inline void store(const GL &dst, const ST &src, const COORD &i
     // we can handle this many rows each time we run a memcpy_async
     constexpr int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
     constexpr int memcpy_per_row = src.cols / elem_per_memcpy;
-    constexpr int total_calls = (src.height*src.width * kittens::TILE_ROW_DIM<T>*kittens::TILE_COL_DIM<T> + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
+    constexpr int src_num_elem = src.height*src.width * kittens::TILE_ROW_DIM<T>*kittens::TILE_COL_DIM<T>;
+    constexpr int total_calls = (src_num_elem + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
+    constexpr bool needs_bounds_check = src_num_elem % (N_THREADS*elem_per_memcpy);
 
     coord<> unit_coord = idx.template unit_coord<axis, 3>();
     typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst[unit_coord];
@@ -96,6 +102,9 @@ __device__ static inline void store(const GL &dst, const ST &src, const COORD &i
         int row = load_idx / memcpy_per_row;
         int col = (load_idx*elem_per_memcpy) % src.cols;
 
+        if constexpr (needs_bounds_check) {
+            if (row >= src.rows) continue;
+        }
         if constexpr (assume_aligned) {
             float4 tmp;
             move<float4>::lds(tmp, src.idx(src_ptr, {row, col}));
@@ -131,7 +140,9 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
     // we can handle this many rows each time we run a memcpy_async
     constexpr int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
     constexpr int memcpy_per_row = dst.cols / elem_per_memcpy;
-    constexpr int total_calls = (dst.height*dst.width * kittens::TILE_ROW_DIM<T>*kittens::TILE_COL_DIM<T> + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
+    constexpr int dst_num_elem = dst.height*dst.width * kittens::TILE_ROW_DIM<T>*kittens::TILE_COL_DIM<T>;
+    constexpr int total_calls = (dst_num_elem + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
+    constexpr bool needs_bounds_check = dst_num_elem % (N_THREADS*elem_per_memcpy);
 
     coord<> unit_coord = idx.template unit_coord<axis, 3>();
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src[unit_coord];
@@ -146,6 +157,9 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
         int row = load_idx / memcpy_per_row;
         int col = (load_idx*elem_per_memcpy) % dst.cols;
 
+        if constexpr (needs_bounds_check) {
+            if (row >= dst.rows) continue;
+        }
         if constexpr (assume_aligned) {
             asm volatile(
                 "cp.async.cg.shared.global.L2::128B [%0], [%1], 16;\n"
