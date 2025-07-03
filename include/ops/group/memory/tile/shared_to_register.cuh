@@ -282,3 +282,42 @@ __device__ inline static void store(ST &dst, const RT &src) {
         }
     }
 }
+
+// Load and store of vectors from/to shared tiles.
+
+template<ducks::rv::naive_layout RV, ducks::st::all ST>
+__device__ inline static auto load(RV &dst, const ST &src, int2 row_col) {
+    KITTENS_CHECK_WARP;
+    static_assert(ST::cols>=RV::length, "Shared tile must be at least as wide as the vector.");
+    using T = RV::T;
+    using U = ST::T;
+    int warp_laneid = ::kittens::laneid();
+
+    // convert to shared state space
+    uint32_t shared_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&src.data[0]));
+
+    #pragma unroll
+    for(int col = warp_laneid; col < dst.length; col+=WARP_THREADS) {
+        U tmp;
+        move<U>::lds(tmp, src.idx(shared_addr, {row_col.x, row_col.y + col}));
+        dst.data[col/WARP_THREADS][0] = base_types::convertor<T, U>::convert(tmp);
+    }
+}
+
+template<ducks::rv::naive_layout RV, ducks::st::all ST>
+__device__ inline static auto store(ST &dst, const RV &src, int2 row_col) {
+    KITTENS_CHECK_WARP;
+    static_assert(ST::cols>=RV::length, "Shared tile must be at least as wide as the vector.");
+    using T = RV::T;
+    using U = ST::T;
+    int warp_laneid = ::kittens::laneid();
+
+    // convert to shared state space
+    uint32_t shared_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
+
+    #pragma unroll
+    for(int col = warp_laneid; col < src.length; col+=WARP_THREADS) {
+        U tmp = base_types::convertor<U, T>::convert(src.data[col/WARP_THREADS][0]);
+        move<U>::sts(dst.idx(shared_addr, {row_col.x, row_col.y + col}), tmp);
+    }
+}
