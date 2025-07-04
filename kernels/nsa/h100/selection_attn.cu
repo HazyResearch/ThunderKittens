@@ -25,7 +25,7 @@ __device__ static inline int ceil_div(int a, int b){
 
 
 // SRC [16 (Block of Width), qo_height] to DST [qo_height, width]
-__device__ static inline void warpgroup_store_t(st_bf<16, 64> &dst, const rt_fl<16, 16> &src){
+__device__ static inline void warpgroup_store_t(st_bf<16, 64> &dst, const rt_fl<16, 16> &src, int width_offset){
     using T2 = rt_fl<16, 16>::dtype;
     using U  = st_bf<16, 64>::dtype;
     using T  = base_types::packing<T2>::unpacked_type;
@@ -43,32 +43,55 @@ __device__ static inline void warpgroup_store_t(st_bf<16, 64> &dst, const rt_fl<
     move<U2>::stsm4t(dst.idx(shared_addr, {row, col}), tmp[0], tmp[2], tmp[1], tmp[3]);
 }
 
+// SRC [16 (Block of Width), qo_height] to DST [qo_height, width]
+__device__ static inline void warpgroup_store_t(st_bf<16, 128> &dst, const rt_fl<16, 16> &src, int width_offset){
+    using T2 = rt_fl<16, 16>::dtype;
+    using U  = st_bf<16, 64>::dtype;
+    using T  = base_types::packing<T2>::unpacked_type;
+    using U2 = base_types::packing<U>::packed_type;
+    uint32_t shared_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
+    int local_warpid = warpid()%4;
+    int warp_laneid = ::kittens::laneid();
+    int row = warp_laneid%16;
+    int col = warp_laneid/16*8+local_warpid*src.tile_size_row+width_offset;
+    U2 tmp[4];
+    tmp[0] = base_types::convertor<U2, T2>::convert(src.tiles[0][0].data[0]);
+    tmp[1] = base_types::convertor<U2, T2>::convert(src.tiles[0][0].data[1]);
+    tmp[2] = base_types::convertor<U2, T2>::convert(src.tiles[0][0].data[2]);
+    tmp[3] = base_types::convertor<U2, T2>::convert(src.tiles[0][0].data[3]);
+    move<U2>::stsm4t(dst.idx(shared_addr, {row, col}), tmp[0], tmp[2], tmp[1], tmp[3]);
+}
+
+
 template<int D> struct fwd_attend_ker_tile_dims {};
 template<> struct fwd_attend_ker_tile_dims<64> {
     constexpr static int tile_width = (64);
     constexpr static int qo_height  = (16);
     constexpr static int kv_height  = (4*16);
     constexpr static int stages     = (4); 
+    constexpr static int num_v_chunk = (1);
 };
 template<> struct fwd_attend_ker_tile_dims<128> {
     constexpr static int tile_width = (128);
     constexpr static int qo_height  = (16);
     constexpr static int kv_height  = (4*16);
     constexpr static int stages     = (2); 
+    constexpr static int num_v_chunk = (2);
 };
 
 template<int D> struct fwd_globals {
     using q_tile    =         st_bf<fwd_attend_ker_tile_dims<D>::qo_height, fwd_attend_ker_tile_dims<D>::tile_width>;
     using k_tile    =         st_bf<fwd_attend_ker_tile_dims<D>::kv_height, fwd_attend_ker_tile_dims<D>::tile_width>;
-    using v_tile    =         st_bf<fwd_attend_ker_tile_dims<D>::kv_height, fwd_attend_ker_tile_dims<D>::tile_width>;
+    using v_tile    =         st_bf<fwd_attend_ker_tile_dims<D>::kv_height, 64>;
     using l_col_vec = col_vec<st_fl<fwd_attend_ker_tile_dims<D>::qo_height, fwd_attend_ker_tile_dims<D>::tile_width>>;
     using o_tile    =         st_bf<fwd_attend_ker_tile_dims<D>::qo_height, 64>;
+    using o_out_tile=         st_bf<fwd_attend_ker_tile_dims<D>::qo_height, fwd_attend_ker_tile_dims<D>::tile_width>;
 
     using q_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<q_tile, dim::ROW>>;
     using k_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<k_tile, dim::DEPTH>>;
     using v_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<v_tile, dim::DEPTH>>;
     using l_gl = gl<float, -1, -1, -1, -1, l_col_vec>;
-    using o_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<o_tile, dim::ROW>>;
+    using o_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<o_out_tile, dim::ROW>>;
 
     q_gl q;
     k_gl k;
@@ -92,20 +115,19 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
     using q_tile    =         st_bf<K::qo_height, K::tile_width>;
     using k_tile    =         st_bf<K::kv_height, K::tile_width>;
-    using v_tile    =         st_bf<K::kv_height, K::tile_width>;
-    using v_wgmma_tile =      st_bf<K::kv_height, 64>;
+    using v_tile    =         st_bf<K::kv_height, 64>;
     using l_col_vec = col_vec<st_fl<K::qo_height, K::tile_width>>;
     using o_tile    =         st_bf<K::qo_height, 64>;
+    using o_out_tile=         fwd_globals<D>::o_out_tile;
     using att_tile =          st_bf<K::kv_height, K::qo_height>;
     using reduce_tile =       row_vec<st_fl<K::kv_height, K::qo_height>>;
     
-    q_tile    (&q_smem)[CONSUMER_WARPGROUPS] = al.allocate<q_tile, CONSUMER_WARPGROUPS>();
-    k_tile    (&k_smem)[K::stages]           = al.allocate<k_tile, K::stages          >();
-    v_tile    (&v_smem)[K::stages]           = al.allocate<v_tile, K::stages          >();
-    l_col_vec (&l_smem)[CONSUMER_WARPGROUPS] = al.allocate<l_col_vec, CONSUMER_WARPGROUPS>();
-    att_tile    (&att_smem)[CONSUMER_WARPGROUPS] = al.allocate<att_tile, CONSUMER_WARPGROUPS>();
-    auto      (*o_smem)                      = reinterpret_cast<o_tile(*)>(q_smem);
-    auto      (*v_wgmma_smem)                = reinterpret_cast<v_wgmma_tile(*)>(v_smem);
+    q_tile    (&q_smem)[CONSUMER_WARPGROUPS]       = al.allocate<q_tile, CONSUMER_WARPGROUPS>();
+    k_tile    (&k_smem)[K::stages]                 = al.allocate<k_tile, K::stages          >();
+    v_tile    (&v_smem)[K::stages*K::num_v_chunk]  = al.allocate<v_tile, K::stages*K::num_v_chunk>();
+    l_col_vec (&l_smem)[CONSUMER_WARPGROUPS]       = al.allocate<l_col_vec, CONSUMER_WARPGROUPS>();
+    att_tile  (&att_smem)[CONSUMER_WARPGROUPS]     = al.allocate<att_tile, CONSUMER_WARPGROUPS>();
+    auto      (*o_smem)                            = reinterpret_cast<o_out_tile(*)>(q_smem);
     __shared__ float reduce_vec[CONSUMER_WARPGROUPS][kittens::WARPGROUP_WARPS][K::qo_height];
     __shared__ float sum_vec[CONSUMER_WARPGROUPS][kittens::WARPGROUP_WARPS][K::qo_height];
     
@@ -113,12 +135,15 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     int kv_head_idx = blockIdx.y;
     int seq_idx     = blockIdx.x * CONSUMER_WARPGROUPS; 
 
-    __shared__ kittens::semaphore qsmem_semaphore, k_smem_arrived[K::stages], v_smem_arrived[K::stages], compute_done[K::stages];
+    __shared__ kittens::semaphore qsmem_semaphore, k_smem_arrived[K::stages], v_smem_arrived[K::stages*K::num_v_chunk], compute_done[K::stages];
     if (threadIdx.x == 0) { 
         init_semaphore(qsmem_semaphore, 0, 1); 
         for(int j = 0; j < K::stages; j++) {
             init_semaphore(k_smem_arrived[j], 0, 1); 
-            init_semaphore(v_smem_arrived[j], 0, 1); 
+            for(int c=0; c < K::num_v_chunk; c++){
+                init_semaphore(v_smem_arrived[j*K::num_v_chunk+c], 0, 1);
+            }
+            //init_semaphore(v_smem_arrived[j], 0, 1); 
             init_semaphore(compute_done[j], CONSUMER_WARPGROUPS, 0); 
         }
 
@@ -133,8 +158,11 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             coord<k_tile> kv_tile_idx = {blockIdx.z, j, kv_head_idx, 0};
             tma::expect_bytes(k_smem_arrived[j], sizeof(k_tile));
             tma::load_async<dim::DEPTH, cache_policy::NORMAL>(k_smem[j], g.k, kv_tile_idx, k_smem_arrived[j]);
-            tma::expect_bytes(v_smem_arrived[j], sizeof(v_tile));
-            tma::load_async<dim::DEPTH, cache_policy::NORMAL>(v_smem[j], g.v, kv_tile_idx, v_smem_arrived[j]);
+            for(int c=0; c<K::num_v_chunk; c++){
+                tma::expect_bytes(v_smem_arrived[j*K::num_v_chunk+c], sizeof(v_tile));
+                tma::load_async<dim::DEPTH, cache_policy::NORMAL>(v_smem[j*K::num_v_chunk+c], g.v, 
+                    {blockIdx.z, j, kv_head_idx, c}, v_smem_arrived[j*K::num_v_chunk+c]);
+            }
         }
     }
     __syncthreads(); 
@@ -156,9 +184,13 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
                 coord<k_tile> kv_tile_idx = {blockIdx.z, kv_idx + 1, kv_head_idx, 0};
                 tma::expect_bytes(k_smem_arrived[(kv_idx+1)%K::stages], sizeof(k_tile));
                 tma::load_async<dim::DEPTH, cache_policy::NORMAL>(k_smem[(kv_idx+1)%K::stages], g.k, kv_tile_idx, k_smem_arrived[(kv_idx+1)%K::stages]);
-                tma::expect_bytes(v_smem_arrived[(kv_idx+1)%K::stages], sizeof(v_tile));
-                tma::load_async<dim::DEPTH, cache_policy::NORMAL>(v_smem[(kv_idx+1)%K::stages], g.v, kv_tile_idx, v_smem_arrived[(kv_idx+1)%K::stages]);
-                
+                #pragma unroll
+                for(int c=0; c<K::num_v_chunk; c++)
+                {
+                    tma::expect_bytes(v_smem_arrived[(kv_idx+1)%K::stages*K::num_v_chunk+c], sizeof(v_tile));
+                    tma::load_async<dim::DEPTH, cache_policy::NORMAL>(v_smem[(kv_idx+1)%K::stages*K::num_v_chunk+c], g.v, 
+                    {blockIdx.z, kv_idx + 1, kv_head_idx, c}, v_smem_arrived[(kv_idx+1)%K::stages*K::num_v_chunk+c]);
+                }
                 wait(compute_done[(kv_idx)%K::stages], (kv_idx/K::stages)%2);
             }
         }
@@ -168,14 +200,18 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         // [kv height. qo_height]
         rt_fl<16, K::qo_height>  att_block;
         // [TILE WIDTH, BG], O_SMEM: [BG, TILE WIDTH]
-        rt_fl<16, K::qo_height> o_reg;
+        rt_fl<16, K::qo_height> o_reg[K::num_v_chunk];
 
         // [1, qo_height]
         row_vec<rt_fl<16, K::qo_height>> max_vec, norm_vec, max_vec_last_scaled, max_vec_scaled;
         
         neg_infty(max_vec);
         zero(norm_vec);
-        zero(o_reg);
+        #pragma unroll
+        for(int i=0; i<K::num_v_chunk; i++){
+            zero(o_reg[i]);
+        }
+        
 
         int kv_iters; 
         if constexpr (is_causal) {
@@ -271,11 +307,15 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
             warpgroup::store(att_smem[warpgroupid], att_block); 
             warpgroup::sync(warpgroupid+4);
-            mul_col(o_reg, o_reg, max_vec_last_scaled); 
-            wait(v_smem_arrived[(kv_idx)%K::stages], (kv_idx/K::stages)%2); 
-            // (kv_height, width) * (kv_height, qo_height) ->  (width, qo_height)
-            warpgroup::mma_AtB(o_reg, v_smem[(kv_idx)%K::stages], att_smem[warpgroupid]);
-            warpgroup::mma_async_wait();
+            
+            for(int c=0; c<K::num_v_chunk; c++)
+            {
+                mul_col(o_reg[c], o_reg[c], max_vec_last_scaled); 
+                wait(v_smem_arrived[(kv_idx)%K::stages*K::num_v_chunk+c], (kv_idx/K::stages)%2); 
+                // (kv_height, width) * (kv_height, qo_height) ->  (width, qo_height)
+                warpgroup::mma_AtB(o_reg[c], v_smem[(kv_idx)%K::stages*K::num_v_chunk+c], att_smem[warpgroupid]);
+                warpgroup::mma_async_wait();
+            }
 
             if(warpgroup::laneid() == 0) arrive(compute_done[(kv_idx)%K::stages], 1);
         }
@@ -292,10 +332,13 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             norm_vec.data[0][1].x += sum_vec[warpgroupid][i][col+8];
             norm_vec.data[0][1].y += sum_vec[warpgroupid][i][col+9];
         }
-        div_col(o_reg, o_reg, norm_vec);
 
-        warpgroup_store_t(o_smem[warpgroupid], o_reg);
-        warpgroup::sync(warpgroupid+4);
+        #pragma unroll
+        for(int c=0; c<K::num_v_chunk; c++){
+            div_col(o_reg[c], o_reg[c], norm_vec);
+            warpgroup_store_t(o_smem[warpgroupid], o_reg[c], c*64);
+            warpgroup::sync(warpgroupid+4);
+        }
 
         if (warpid % 4 == 0) {
             coord<o_tile> o_tile_idx = {blockIdx.z, (seq_idx) + warpgroupid, blockIdx.y, 0};
@@ -858,57 +901,57 @@ nsa_selection_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
         cudaStreamSynchronize(stream);
     }
 
-    // if (head_dim == 128) {
-    //     using q_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width>;
-    //     using k_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::kv_height, fwd_attend_ker_tile_dims<128>::tile_width>;
-    //     using v_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::kv_height, fwd_attend_ker_tile_dims<128>::tile_width>;
-    //     using l_col_vec = col_vec<st_fl<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width>>;
-    //     using o_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width>;
+    if (head_dim == 128) {
+        using q_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width>;
+        using k_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::kv_height, fwd_attend_ker_tile_dims<128>::tile_width>;
+        using v_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::kv_height, 64>;
+        using l_col_vec = col_vec<st_fl<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width>>;
+        using o_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width>;
 
-    //     using q_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<q_tile, dim::ROW>>;
-    //     using k_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<k_tile, dim::DEPTH>>;
-    //     using v_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<v_tile, dim::DEPTH>>;
-    //     using l_global = gl<float, -1, -1, -1, -1, l_col_vec>;
-    //     using o_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<o_tile, dim::ROW>>;
+        using q_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<q_tile, dim::ROW>>;
+        using k_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<k_tile, dim::DEPTH>>;
+        using v_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<v_tile, dim::DEPTH>>;
+        using l_global = gl<float, -1, -1, -1, -1, l_col_vec>;
+        using o_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<o_tile, dim::ROW>>;
 
-    //     using globals      = fwd_globals<128>;
+        using globals      = fwd_globals<128>;
 
-    //     q_global qg_arg{d_q, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
-    //     k_global kg_arg{d_k, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 128U};
-    //     v_global vg_arg{d_v, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 128U};
-    //     o_global og_arg{d_o, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
-    //     l_global lg_arg{d_l, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), 1U,   static_cast<unsigned int>(seq_len)};
+        q_global qg_arg{d_q, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
+        k_global kg_arg{d_k, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 128U};
+        v_global vg_arg{d_v, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 128U};
+        o_global og_arg{d_o, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
+        l_global lg_arg{d_l, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), 1U,   static_cast<unsigned int>(seq_len)};
 
-    //     globals g{qg_arg, kg_arg, vg_arg, lg_arg, og_arg, static_cast<int>(seq_len), static_cast<int>(kv_len), static_cast<int>(hr)};
+        globals g{qg_arg, kg_arg, vg_arg, lg_arg, og_arg, static_cast<int>(seq_len), static_cast<int>(kv_len), static_cast<int>(hr)};
 
-    //     auto mem_size = kittens::MAX_SHARED_MEMORY;
-    //     auto threads  = NUM_WORKERS * kittens::WARP_THREADS;
+        auto mem_size = kittens::MAX_SHARED_MEMORY;
+        auto threads  = NUM_WORKERS * kittens::WARP_THREADS;
 
-    //     // TORCH_CHECK(seq_len % (CONSUMER_WARPGROUPS*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 192");
-    //     dim3 grid(seq_len, kv_heads, batch);
+        // TORCH_CHECK(seq_len % (CONSUMER_WARPGROUPS*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 192");
+        dim3 grid(host_ceil_div(seq_len, CONSUMER_WARPGROUPS), kv_heads, batch);
 
-    //     if (is_causal) {
-    //         cudaFuncSetAttribute(
-    //             fwd_attend_ker<128, true>,
-    //             cudaFuncAttributeMaxDynamicSharedMemorySize,
-    //             mem_size
-    //         );
+        if (is_causal) {
+            cudaFuncSetAttribute(
+                fwd_attend_ker<128, true>,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                mem_size
+            );
 
-    //         fwd_attend_ker<128, true><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
-    //     }
-    //     else {
-    //         cudaFuncSetAttribute(
-    //             fwd_attend_ker<128, false>,
-    //             cudaFuncAttributeMaxDynamicSharedMemorySize,
-    //             mem_size
-    //         );
+            fwd_attend_ker<128, true><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
+        }
+        else {
+            cudaFuncSetAttribute(
+                fwd_attend_ker<128, false>,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                mem_size
+            );
 
-    //         fwd_attend_ker<128, false><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
-    //     }
+            fwd_attend_ker<128, false><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
+        }
 
-    //     CHECK_CUDA_ERROR(cudaGetLastError());
-    //     cudaStreamSynchronize(stream);
-    // }
+        CHECK_CUDA_ERROR(cudaGetLastError());
+        cudaStreamSynchronize(stream);
+    }
 
     return {o, l_vec};
     cudaDeviceSynchronize();
