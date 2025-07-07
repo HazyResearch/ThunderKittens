@@ -177,7 +177,10 @@ static void bind_multigpu_boilerplate(auto m) {
                 CUDACHECK(cudaDeviceCanAccessPeer(&can_access, device_ids[i], device_ids[j]));
                 if (!can_access)
                     throw std::runtime_error("Device " + std::to_string(device_ids[i]) + " cannot access device " + std::to_string(device_ids[j]));
-                CUDACHECK(cudaDeviceEnablePeerAccess(device_ids[j], 0));
+                cudaError_t res = cudaDeviceEnablePeerAccess(device_ids[j], 0);
+                if (res != cudaSuccess && res != cudaErrorPeerAccessAlreadyEnabled) {
+                    CUDACHECK(res);
+                }
             }
         }
     });
