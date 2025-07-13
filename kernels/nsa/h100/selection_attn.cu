@@ -558,16 +558,24 @@ stream_sub_tile(auto &reg_tile, auto &smem_vec, int tic) {
 template<int tile_h_qo, int tile_h>
 __device__ static inline void 
 causal_mask(auto &reg_tile, int qo_idx) {
-    int q_blk = (qo_idx) * (tile_h_qo/kittens::TILE_ROW_DIM<bf16>);
-    int k_blk = (blockIdx.x * BWD_CONSUMER_WARPGROUPS * (tile_h/kittens::TILE_ROW_DIM<bf16>)) 
-                + ((kittens::warpid()/kittens::WARPGROUP_WARPS) * (tile_h/kittens::TILE_ROW_DIM<bf16>)) 
-                + (kittens::warpid() % kittens::WARPGROUP_WARPS);
+    int k_blk = blockIdx.x * BWD_CONSUMER_WARPGROUPS * tile_h + kittens::warpid()*kittens::TILE_ROW_DIM<bf16>;
 
-    for (int j = 0; j < (tile_h_qo/kittens::TILE_ROW_DIM<bf16>); j++) {
-        int q_idx = q_blk + j;
+    #pragma unroll
+    for (int j = 0; j < 4; j++) {
         auto &attn_subtile = reinterpret_cast<rt_fl<16, 16>&>(reg_tile.tiles[0][j]);
-        if      (q_idx  < k_blk) { neg_infty(attn_subtile); }
-        else if (q_idx == k_blk) { make_causal_t(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
+        if      (qo_idx  < k_blk+j*kittens::TILE_ROW_DIM<bf16>) { neg_infty(attn_subtile); }
+        else if (qo_idx < k_blk+(j+1)*kittens::TILE_ROW_DIM<bf16>-1) {
+            int k_idx_lower = k_blk + laneid() / 4;
+            int k_idx_upper = k_idx_lower + 8;
+            if(k_idx_lower > qo_idx) { 
+                attn_subtile.tiles[0][0].data[0] = base_types::constants<float2>::neg_infty(); 
+                attn_subtile.tiles[0][0].data[2] = base_types::constants<float2>::neg_infty(); 
+            }
+            if(k_idx_upper > qo_idx) { 
+                attn_subtile.tiles[0][1].data[1] = base_types::constants<float2>::neg_infty(); 
+                attn_subtile.tiles[0][0].data[3] = base_types::constants<float2>::neg_infty(); 
+            }
+        }
     }
 }
 
@@ -603,7 +611,7 @@ compute_bwd_loop(
     if constexpr (D == 64) { mul(s_block_t, s_block_t, 1.44269504089f*0.125f); }
     else                   { mul(s_block_t, s_block_t, 1.44269504089f*0.08838834764f); }
 
-    // if constexpr (is_causal) { causal_mask<tile_h_qo, tile_h>(s_block_t, qo_idx); }
+    if constexpr (is_causal) { causal_mask<tile_h_qo, tile_h>(s_block_t, qo_idx); }
 
     exp2(s_block_t, s_block_t);
     copy(p_block_t, s_block_t);
@@ -700,7 +708,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
     __shared__ kittens::semaphore compute_done[2], qg_ready; 
 
     int tic = 0, toc = 1;
-    const int q_start = (is_causal) ? (blockIdx.x * 2) : (0);
+    const int q_start = (is_causal) ? (blockIdx.x*G::tile_h*BWD_CONSUMER_WARPGROUPS) : (0);
 
     if (threadIdx.x == 0) {
         init_semaphore(kv_b,  0, 1);
