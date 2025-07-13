@@ -64,6 +64,36 @@ __device__ static inline void warpgroup_copy_st_split(ST2 &dst0, ST2 &dst1, cons
     }
 }
 
+// [BLOCKKV, WIDTH] to [WIDTH/2, BLOCKKV] and [WIDTH/2, BLOCKKV]
+template<ducks::st::all ST, ducks::rt::all RT>
+__device__ static inline void warpgroup_load_t_split(RT &dst0, RT &dst1, const ST &src){
+    int local_warpid = warpid()%4;
+    using T2 = RT::dtype;
+    using U  = ST::dtype;
+    using T  = base_types::packing<T2>::unpacked_type;
+    using U2 = base_types::packing<U>::packed_type;
+    int warp_laneid = ::kittens::laneid();
+    uint32_t src_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&src.data[0]));
+    int row =  (warp_laneid % 16);
+    int col = (warp_laneid / 16) * 8 + local_warpid*16;
+
+    U2 tmp[4];
+    #pragma unroll
+    for(int j=0; j<4; j++, row+=16){
+        
+        move<U2>::ldsm4t(tmp[0], tmp[2], tmp[1], tmp[3], src.idx(src_addr, {row, col}));
+        dst0.tiles[0][j].data[0] = base_types::convertor<T2, U2>::convert(tmp[0]);
+        dst0.tiles[0][j].data[1] = base_types::convertor<T2, U2>::convert(tmp[1]);
+        dst0.tiles[0][j].data[2] = base_types::convertor<T2, U2>::convert(tmp[2]);
+        dst0.tiles[0][j].data[3] = base_types::convertor<T2, U2>::convert(tmp[3]);
+        move<U2>::ldsm4t(tmp[0], tmp[2], tmp[1], tmp[3], src.idx(src_addr, {row, col+64}));
+        dst1.tiles[0][j].data[0] = base_types::convertor<T2, U2>::convert(tmp[0]);
+        dst1.tiles[0][j].data[1] = base_types::convertor<T2, U2>::convert(tmp[1]);
+        dst1.tiles[0][j].data[2] = base_types::convertor<T2, U2>::convert(tmp[2]);
+        dst1.tiles[0][j].data[3] = base_types::convertor<T2, U2>::convert(tmp[3]);
+    }
+}
+
 
 template<int D> struct fwd_attend_ker_tile_dims {};
 template<> struct fwd_attend_ker_tile_dims<64> {
@@ -475,8 +505,8 @@ struct bwd_globals {
     using v_tile  =         st_bf<G::tile_h,    G::tile_width>;
     using og_tile =         st_bf<G::tile_h_qo, G::tile_width>;
     using qg_tile =         st_bf<G::tile_h_qo, G::tile_width>;
-    using kg_tile =         st_fl<G::tile_h,    G::tile_width>;
-    using vg_tile =         st_fl<G::tile_h,    G::tile_width>;
+    using kg_tile =         st_bf<G::tile_h,    G::tile_width>;
+    using vg_tile =         st_bf<G::tile_h,    G::tile_width>;
     using l_tile  = col_vec<st_fl<G::tile_h_qo, G::tile_h>>;
     using d_tile  = col_vec<st_fl<G::tile_h_qo, G::tile_h>>;
 
@@ -487,8 +517,8 @@ struct bwd_globals {
     using og_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<og_tile, dim::ROW>>;
 
     using qg_gl = gl<bf16, -1, -1, -1, -1, tma::descriptor<qg_tile, dim::ROW>>;
-    using kg_gl = gl<float, -1, -1, -1, -1, tma::descriptor<kg_tile, dim::DEPTH>>;
-    using vg_gl = gl<float, -1, -1, -1, -1, tma::descriptor<vg_tile, dim::DEPTH>>;
+    using kg_gl = gl<bf16, -1, -1, -1, -1, tma::descriptor<kg_tile, dim::DEPTH>>;
+    using vg_gl = gl<bf16, -1, -1, -1, -1, tma::descriptor<vg_tile, dim::DEPTH>>;
 
     using l_gl  = gl<float, -1, -1, -1, -1, l_tile>;
     using d_gl  = gl<float, -1, -1, -1, -1, d_tile>; 
@@ -635,8 +665,8 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
     const int N = g.N, hr = g.hr;
     using G = bwd_attend_ker_tile_dims<D>;
     
-    using kg_tile   = st_fl<G::tile_h, G::tile_width>;
-    using vg_tile   = st_fl<G::tile_h, G::tile_width>;
+    using kg_tile   = st_bf<G::tile_h, G::tile_width>;
+    using vg_tile   = st_bf<G::tile_h, G::tile_width>;
     using k_tile    = st_bf<G::tile_h, G::tile_width>;
     using v_tile    = st_bf<G::tile_h, G::tile_width>;
     using q_tile    = st_bf<G::tile_h_qo, G::tile_width>;
@@ -659,7 +689,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
     kg_tile (*kg_smem)    = reinterpret_cast<kg_tile*>(&k_smem[0].data[0]); 
     vg_tile (*vg_smem)    = reinterpret_cast<vg_tile*>(&q_smem[0].data[0]); 
 
-    k_tile_chunk (&k_smem_chunk)[4] = al.allocate<k_tile_chunk, 4>();
+    //k_tile_chunk (&k_smem_chunk)[4] = al.allocate<k_tile_chunk, 4>();
     attn_tile (&ds_smem)[BWD_CONSUMER_WARPGROUPS] = al.allocate<attn_tile, BWD_CONSUMER_WARPGROUPS>();
     const int warpid      = kittens::warpid();
     const int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
@@ -777,14 +807,16 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
                     warpgroup::mma_AtB(qg_reg[0], k_smem[1], ds_smem[1]);
                     warpgroup::mma_commit_group(); 
                 } else{
-                    warpgroup_copy_st_split(k_smem_chunk[0], k_smem_chunk[1], k_smem[0]);
+                    rt_bf<16, 64> k_reg_chunk[4];
+                    warpgroup_load_t_split(k_reg_chunk[0], k_reg_chunk[1], k_smem[0]);
                     warpgroup::sync(warpgroupid+8);
-                    warpgroup::mm_AtB(qg_reg[0], k_smem_chunk[0], ds_smem[0]);
-                    warpgroup::mm_AtB(qg_reg[1], k_smem_chunk[1], ds_smem[0]);
-                    warpgroup_copy_st_split(k_smem_chunk[2], k_smem_chunk[3], k_smem[1]);
+                    warpgroup::mm_AB(qg_reg[0], k_reg_chunk[0], ds_smem[0]);
+                    warpgroup::mm_AB(qg_reg[1], k_reg_chunk[1], ds_smem[0]);
+                    warpgroup_load_t_split(k_reg_chunk[2], k_reg_chunk[3], k_smem[1]);
                     warpgroup::sync(warpgroupid+8);
-                    warpgroup::mma_AtB(qg_reg[0], k_smem_chunk[2], ds_smem[1]);
-                    warpgroup::mma_AtB(qg_reg[1], k_smem_chunk[3], ds_smem[1]);
+                    warpgroup::mma_AB(qg_reg[0], k_reg_chunk[2], ds_smem[1]);
+                    warpgroup::mma_AB(qg_reg[1], k_reg_chunk[3], ds_smem[1]);
+
                     warpgroup::mma_commit_group(); 
                 }
     
@@ -890,7 +922,6 @@ nsa_selection_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
     float* l_ptr = reinterpret_cast<float*>(l_vec.data_ptr<float>());
     float* d_l   = reinterpret_cast<float*>(l_ptr);
 
-    cudaDeviceSynchronize();
     auto stream = at::cuda::getCurrentCUDAStream().stream();
 
     if (head_dim == 64) {
@@ -941,7 +972,6 @@ nsa_selection_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
             fwd_attend_ker<64, false><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
         }
         CHECK_CUDA_ERROR(cudaGetLastError());
-        cudaStreamSynchronize(stream);
     }
 
     if (head_dim == 128) {
@@ -993,11 +1023,9 @@ nsa_selection_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
         }
 
         CHECK_CUDA_ERROR(cudaGetLastError());
-        cudaStreamSynchronize(stream);
     }
 
     return {o, l_vec};
-    cudaDeviceSynchronize();
 }
 
 std::vector<torch::Tensor>
@@ -1074,11 +1102,11 @@ nsa_selection_attention_backward(torch::Tensor q,
     torch::Tensor kg = torch::zeros({static_cast<const uint>(batch),
                                      static_cast<const uint>(kv_len),
                                      static_cast<const uint>(kv_heads),
-                                     static_cast<const uint>(head_dim)},   l_vec.options());
+                                     static_cast<const uint>(head_dim)},   q.options());
     torch::Tensor vg = torch::zeros({static_cast<const uint>(batch),
                                      static_cast<const uint>(kv_len),
                                      static_cast<const uint>(kv_heads),
-                                     static_cast<const uint>(head_dim)},   l_vec.options());
+                                     static_cast<const uint>(head_dim)},   q.options());
 
     torch::Tensor d_vec = torch::empty({static_cast<const uint>(batch),
                                         static_cast<const uint>(seq_len),
@@ -1086,8 +1114,8 @@ nsa_selection_attention_backward(torch::Tensor q,
                                         static_cast<const uint>(1)},       l_vec.options());
 
     auto           qg_ptr = qg.data_ptr<c10::BFloat16>();
-    auto*          kg_ptr = kg.data_ptr<float>();
-    auto*          vg_ptr = vg.data_ptr<float>();
+    auto*          kg_ptr = kg.data_ptr<c10::BFloat16>();
+    auto*          vg_ptr = vg.data_ptr<c10::BFloat16>();
     float*         d_ptr  = d_vec.data_ptr<float>();
 
     bf16*  d_q  = reinterpret_cast<bf16*>(q_ptr);
@@ -1098,16 +1126,14 @@ nsa_selection_attention_backward(torch::Tensor q,
     float* d_l  = reinterpret_cast<float*>(l_ptr);
     float* d_d  = reinterpret_cast<float*>(d_ptr);
     bf16* d_qg  = reinterpret_cast<bf16*>(qg_ptr);
-    float* d_kg  = reinterpret_cast<float*>(kg_ptr);
-    float* d_vg  = reinterpret_cast<float*>(vg_ptr);
+    bf16* d_kg  = reinterpret_cast<bf16*>(kg_ptr);
+    bf16* d_vg  = reinterpret_cast<bf16*>(vg_ptr);
 
     auto mem_size = kittens::MAX_SHARED_MEMORY;
     auto threads  = 4 * kittens::WARP_THREADS;
 
-    cudaDeviceSynchronize();
     auto stream = at::cuda::getCurrentCUDAStream().stream();
 
-    cudaStreamSynchronize(stream);
 
     // TORCH_CHECK(seq_len % (4*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 256");
 
@@ -1142,8 +1168,8 @@ nsa_selection_attention_backward(torch::Tensor q,
         using bwd_v_tile    =         st_bf<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>;
         using bwd_og_tile   =         st_bf<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_width>;
         using bwd_qg_tile   =         st_bf<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_width>;
-        using bwd_kg_tile   =         st_fl<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>;
-        using bwd_vg_tile   =         st_fl<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>;
+        using bwd_kg_tile   =         st_bf<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>;
+        using bwd_vg_tile   =         st_bf<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>;
         using bwd_l_tile    = col_vec<st_fl<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_h>>;
         using bwd_d_tile    = col_vec<st_fl<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_h>>;
 
@@ -1154,8 +1180,8 @@ nsa_selection_attention_backward(torch::Tensor q,
         using bwd_og_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<bwd_og_tile, dim::ROW>>;
 
         using bwd_qg_global = gl<bf16, -1, -1, -1, -1, tma::descriptor<bwd_qg_tile, dim::ROW>>;
-        using bwd_kg_global = gl<float, -1, -1, -1, -1, tma::descriptor<bwd_kg_tile, dim::DEPTH>>;
-        using bwd_vg_global = gl<float, -1, -1, -1, -1, tma::descriptor<bwd_vg_tile, dim::DEPTH>>;
+        using bwd_kg_global = gl<bf16, -1, -1, -1, -1, tma::descriptor<bwd_kg_tile, dim::DEPTH>>;
+        using bwd_vg_global = gl<bf16, -1, -1, -1, -1, tma::descriptor<bwd_vg_tile, dim::DEPTH>>;
 
         using bwd_l_global  = gl<float, -1, -1, -1, -1, bwd_l_tile>;
         using bwd_d_global  = gl<float, -1, -1, -1, -1, bwd_d_tile>;
@@ -1215,13 +1241,6 @@ nsa_selection_attention_backward(torch::Tensor q,
 
             bwd_attend_ker<64, false><<<grid_bwd_2, threads, 194000, stream>>>(bwd_global);
         }
-
-        // CHECK_CUDA_ERROR(cudaGetLastError());
-        cudaStreamSynchronize(stream);
-        cudaDeviceSynchronize();
-        // const auto kernel_end = std::chrono::high_resolution_clock::now();
-        // std::cout << "Kernel Time: " << std::chrono::duration_cast<std::chrono::microseconds>(kernel_end - start).count() << "us" << std::endl;
-        // std::cout << "---" << std::endl;
     }
 
     if (head_dim == 128) {
@@ -1255,8 +1274,8 @@ nsa_selection_attention_backward(torch::Tensor q,
         using bwd_v_tile    =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>;
         using bwd_og_tile   =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>;
         using bwd_qg_tile   =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>;
-        using bwd_kg_tile   =         st_fl<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>;
-        using bwd_vg_tile   =         st_fl<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>;
+        using bwd_kg_tile   =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>;
+        using bwd_vg_tile   =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>;
         using bwd_l_tile    = col_vec<st_fl<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_h>>;
         using bwd_d_tile    = col_vec<st_fl<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_h>>;
 
@@ -1267,8 +1286,8 @@ nsa_selection_attention_backward(torch::Tensor q,
         using bwd_og_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<bwd_og_tile, dim::ROW>>;
 
         using bwd_qg_global = gl<bf16, -1, -1, -1, -1, tma::descriptor<bwd_qg_tile, dim::ROW>>;
-        using bwd_kg_global = gl<float, -1, -1, -1, -1, tma::descriptor<bwd_kg_tile, dim::DEPTH>>;
-        using bwd_vg_global = gl<float, -1, -1, -1, -1, tma::descriptor<bwd_vg_tile, dim::DEPTH>>;
+        using bwd_kg_global = gl<bf16, -1, -1, -1, -1, tma::descriptor<bwd_kg_tile, dim::DEPTH>>;
+        using bwd_vg_global = gl<bf16, -1, -1, -1, -1, tma::descriptor<bwd_vg_tile, dim::DEPTH>>;
 
         using bwd_l_global  = gl<float, -1, -1, -1, -1, bwd_l_tile>;
         using bwd_d_global  = gl<float, -1, -1, -1, -1, bwd_d_tile>;
@@ -1302,7 +1321,6 @@ nsa_selection_attention_backward(torch::Tensor q,
         dim3 grid_bwd_2(host_ceil_div(seq_len, 4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>), kv_heads, batch);
         threads = kittens::WARP_THREADS * BWD_NUM_WORKERS;
 
-        cudaDeviceSynchronize();
 
         if (is_causal) {
             cudaFuncSetAttribute(
@@ -1333,13 +1351,9 @@ nsa_selection_attention_backward(torch::Tensor q,
             bwd_attend_ker<128, false><<<grid_bwd_2, threads, 194000, stream>>>(bwd_global);
         }
 
-        // CHECK_CUDA_ERROR(cudaGetLastError());
-        cudaStreamSynchronize(stream);
-        cudaDeviceSynchronize();
     }
 
-    return {qg, kg, vg, d_vec};
-    cudaDeviceSynchronize();
+    return {qg, kg, vg};
 }
 
 #else
