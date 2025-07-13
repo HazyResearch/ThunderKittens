@@ -5,7 +5,7 @@
 #include <iostream>
 #include "cuda_bf16.h"
 
-constexpr int CONSUMER_WARPGROUPS = (3);
+constexpr int CONSUMER_WARPGROUPS = (1);
 constexpr int PRODUCER_WARPGROUPS = (1);
 constexpr int NUM_WARPGROUPS      = (CONSUMER_WARPGROUPS+PRODUCER_WARPGROUPS);
 constexpr int NUM_WORKERS         = (NUM_WARPGROUPS*kittens::WARPGROUP_WARPS);
@@ -42,26 +42,6 @@ __device__ static inline void warpgroup_store_t(ST &dst, const RT &src, int widt
     tmp[2] = base_types::convertor<U2, T2>::convert(src.tiles[0][0].data[2]);
     tmp[3] = base_types::convertor<U2, T2>::convert(src.tiles[0][0].data[3]);
     move<U2>::stsm4t(dst.idx(shared_addr, {row, col}), tmp[0], tmp[2], tmp[1], tmp[3]);
-}
-
-// [BLOCKKV, WIDTH] to [BLOCKKV, WIDTH/2] and [BLOCKKV, WIDTH/2]
-template<ducks::st::all ST, ducks::st::all ST2>
-__device__ static inline void warpgroup_copy_st_split(ST2 &dst0, ST2 &dst1, const ST &src){
-    using T2 = ST::dtype;
-    using U  = ST2::dtype;
-    using T  = base_types::packing<T2>::unpacked_type;
-    using U2 = base_types::packing<U>::packed_type;
-    uint32_t dst_addr0 = static_cast<uint32_t>(__cvta_generic_to_shared(&dst0.data[0]));
-    uint32_t dst_addr1 = static_cast<uint32_t>(__cvta_generic_to_shared(&dst1.data[0]));
-    uint32_t src_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&src.data[0]));
-
-    int col_id = threadIdx.x % 64;
-
-    #pragma unroll
-    for(int row_id = threadIdx.x / 64; row_id<dst0.rows; row_id+=2){
-        dst0[{row_id, col_id}] = src[{row_id, col_id}];
-        dst1[{row_id, col_id}] = src[{row_id, col_id+64}];
-    }
 }
 
 // [BLOCKKV, WIDTH] to [WIDTH/2, BLOCKKV] and [WIDTH/2, BLOCKKV]
@@ -118,22 +98,29 @@ template<int D> struct fwd_globals {
     using l_col_vec = col_vec<st_fl<fwd_attend_ker_tile_dims<D>::qo_height, fwd_attend_ker_tile_dims<D>::tile_width>>;
     using o_tile    =         st_bf<fwd_attend_ker_tile_dims<D>::qo_height, 64>;
     using o_out_tile=         st_bf<fwd_attend_ker_tile_dims<D>::qo_height, fwd_attend_ker_tile_dims<D>::tile_width>;
+    using att_tile    =       st_bf<fwd_attend_ker_tile_dims<D>::kv_height, fwd_attend_ker_tile_dims<D>::qo_height>;
+    using reduce_tile =       row_vec<st_fl<fwd_attend_ker_tile_dims<D>::kv_height, fwd_attend_ker_tile_dims<D>::qo_height>>;
+    using indices_vec =       sv<int, 16>;
 
     using q_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<q_tile, dim::ROW>>;
     using k_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<k_tile, dim::DEPTH>>;
     using v_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<v_tile, dim::DEPTH>>;
     using l_gl = gl<float, -1, -1, -1, -1, l_col_vec>;
     using o_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<o_out_tile, dim::ROW>>;
+    using indices_gl = gl<int, -1, -1, -1, -1>;
 
     q_gl q;
     k_gl k;
     v_gl v;
     l_gl l;
     o_gl o;
+    indices_gl indices;
 
     const int N;
     const int KV_N;
     const int hr;
+    const int block_size;
+    const int block_count;
 };
 
 template<int D, bool is_causal>
@@ -142,23 +129,24 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     extern __shared__ int __shm[];
     tma_swizzle_allocator al((int*)&__shm[0]);
     int warpid = kittens::warpid(), warpgroupid = warpid/kittens::WARPGROUP_WARPS, local_warpid = warpid % kittens::WARPGROUP_WARPS;;
-
     using K = fwd_attend_ker_tile_dims<D>;
-
-    using q_tile    =         st_bf<K::qo_height, K::tile_width>;
-    using k_tile    =         st_bf<K::kv_height, K::tile_width>;
-    using v_tile    =         st_bf<K::kv_height, 64>;
-    using l_col_vec = col_vec<st_fl<K::qo_height, K::tile_width>>;
-    using o_tile    =         st_bf<K::qo_height, 64>;
-    using o_out_tile=         fwd_globals<D>::o_out_tile;
-    using att_tile =          st_bf<K::kv_height, K::qo_height>;
-    using reduce_tile =       row_vec<st_fl<K::kv_height, K::qo_height>>;
+    using q_tile      =         fwd_globals<D>::q_tile;
+    using k_tile      =         fwd_globals<D>::k_tile;
+    using v_tile      =         fwd_globals<D>::v_tile;
+    using l_col_vec   =         fwd_globals<D>::l_col_vec;
+    using o_tile      =         fwd_globals<D>::o_tile;
+    using o_out_tile  =         fwd_globals<D>::o_out_tile;
+    using att_tile    =         fwd_globals<D>::att_tile;
+    using reduce_tile =         fwd_globals<D>::reduce_tile;
+    using indices_vec =         fwd_globals<D>::indices_vec;
+    
 
     q_tile    (&q_smem)[CONSUMER_WARPGROUPS]       = al.allocate<q_tile, CONSUMER_WARPGROUPS>();
     k_tile    (&k_smem)[K::stages]                 = al.allocate<k_tile, K::stages          >();
     v_tile    (&v_smem)[K::stages*K::num_v_chunk]  = al.allocate<v_tile, K::stages*K::num_v_chunk>();
     l_col_vec (&l_smem)[CONSUMER_WARPGROUPS]       = al.allocate<l_col_vec, CONSUMER_WARPGROUPS>();
     att_tile  (&att_smem)[CONSUMER_WARPGROUPS]     = al.allocate<att_tile, CONSUMER_WARPGROUPS>();
+    indices_vec (&indices_smem)[CONSUMER_WARPGROUPS] = al.allocate<indices_vec, CONSUMER_WARPGROUPS>();
     auto      (*o_smem)                            = reinterpret_cast<o_out_tile(*)>(q_smem);
     __shared__ float reduce_vec[CONSUMER_WARPGROUPS][kittens::WARPGROUP_WARPS][K::qo_height];
     __shared__ float sum_vec[CONSUMER_WARPGROUPS][kittens::WARPGROUP_WARPS][K::qo_height];
@@ -168,7 +156,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     int seq_idx     = blockIdx.x * CONSUMER_WARPGROUPS;
 
     __shared__ kittens::semaphore qsmem_semaphore, k_smem_arrived[K::stages], v_smem_arrived[K::stages*K::num_v_chunk], compute_done[K::stages];
-    if (threadIdx.x == 0) {
+    if (warpid == 0) {
         init_semaphore(qsmem_semaphore, 0, 1);
         for(int j = 0; j < K::stages; j++) {
             init_semaphore(k_smem_arrived[j], 0, 1);
@@ -184,7 +172,9 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         for (int wg = 0; wg < CONSUMER_WARPGROUPS; wg++) {
             coord<q_tile> q_tile_idx = {blockIdx.z, seq_idx + wg, blockIdx.y, 0};
             tma::load_async<dim::ROW, cache_policy::NORMAL>(q_smem[wg], g.q, q_tile_idx, qsmem_semaphore);
+            //load(indices_smem[wg], g.indices, {blockIdx.x, seq_idx + wg, blockIdx.y, 0});
         }
+
 
         for (int j = 0; j < K::stages - 1; j++) {
             coord<k_tile> kv_tile_idx = {blockIdx.z, j, kv_head_idx, 0};
@@ -244,7 +234,6 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             zero(o_reg[i]);
         }
 
-
         int kv_iters;
         if constexpr (is_causal) {
             int q_idx_upper = (seq_idx + CONSUMER_WARPGROUPS);
@@ -262,9 +251,6 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         for (auto kv_idx = 0; kv_idx <= kv_iters; kv_idx++) {
 
             wait(k_smem_arrived[(kv_idx)%K::stages], (kv_idx/K::stages)%2);
-            // original (qo_height, width) * (kv_height, width)  ->  (qo_height, kv_height) (BQ, BKV)
-            // warpgroup::mm_ABt(att_block, q_smem[warpgroupid], k_smem[(kv_idx)%K::stages]);
-            // to
             // (kv_height, width) * (qo_height, width)  ->  (kv_height, qo_height) (BKV, BG)
             warpgroup::mm_ABt(att_block, k_smem[(kv_idx)%K::stages], q_smem[warpgroupid]);
 
@@ -870,7 +856,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
 using namespace NSA_SELECTION_ATTN;
 
 std::vector<torch::Tensor>
-nsa_selection_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal)
+nsa_selection_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, torch::Tensor indices, int block_count, int block_size, bool causal)
 {
     CHECK_INPUT(q);
     CHECK_INPUT(k);
@@ -885,29 +871,37 @@ nsa_selection_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
     auto kv_heads = k.size(2);
 
     // check to see that these dimensions match for all inputs
+    TORCH_CHECK(indices.scalar_type() == at::kInt, "Indices tensor must be of type int32");
+    TORCH_CHECK(block_size == 64, "Only support block size of 64");
+
     TORCH_CHECK(q.size(0) == batch, "Q batch dimension - idx 0 - must match for all inputs");
     TORCH_CHECK(k.size(0) == batch, "K batch dimension - idx 0 - must match for all inputs");
     TORCH_CHECK(v.size(0) == batch, "V batch dimension - idx 0 - must match for all inputs");
+    TORCH_CHECK(indices.size(0) == batch, "Indices batch dimension - idx 0 - must match for all inputs");
 
-    // TORCH_CHECK(q.size(1) == seq_len, "Q sequence length dimension - idx 2 - must match for all inputs");
-    // TORCH_CHECK(k.size(1) == seq_len, "K sequence length dimension - idx 2 - must match for all inputs");
-    // TORCH_CHECK(v.size(1) == kv_len, "V sequence length dimension - idx 2 - must match for all inputs");
+    TORCH_CHECK(q.size(1) == seq_len, "Q sequence length dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(k.size(1) == seq_len, "K sequence length dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(v.size(1) == kv_len, "V sequence length dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(indices.size(1) == seq_len, "Indices sequence length dimension - idx 1 - must match for all inputs");
 
     TORCH_CHECK(q.size(3) == head_dim, "Q head dimension - idx 3 - must match for all non-vector inputs");
     TORCH_CHECK(k.size(3) == head_dim, "K head dimension - idx 3 - must match for all non-vector inputs");
     TORCH_CHECK(v.size(3) == head_dim, "V head dimension - idx 3 - must match for all non-vector inputs");
+    TORCH_CHECK(indices.size(3) == block_count, "Indices head dimension - idx 3 - must match for all non-vector inputs");
 
-    TORCH_CHECK(qo_heads >= kv_heads, "QO heads must be greater than or equal to KV heads");
+    TORCH_CHECK(qo_heads/kv_heads == 16, "QO_heads/KV_heads must equal 16");
     TORCH_CHECK(qo_heads % kv_heads == 0, "QO heads must be divisible by KV heads");
-    TORCH_CHECK(q.size(2) == qo_heads, "QO head dimension - idx 1 - must match for all inputs");
-    TORCH_CHECK(k.size(2) == kv_heads, "KV head dimension - idx 1 - must match for all inputs");
-    TORCH_CHECK(v.size(2) == kv_heads, "KV head dimension - idx 1 - must match for all inputs");
+    TORCH_CHECK(q.size(2) == qo_heads, "QO head dimension - idx 2 - must match for QO inputs");
+    TORCH_CHECK(k.size(2) == kv_heads, "KV head dimension - idx 2 - must match for KV inputs");
+    TORCH_CHECK(v.size(2) == kv_heads, "KV head dimension - idx 2 - must match for KV inputs");
+    TORCH_CHECK(indices.size(2) == kv_heads, "Indices head dimension - idx 2 - must match for KV inputs");
 
     auto hr = qo_heads / kv_heads;
 
     c10::BFloat16* q_ptr = q.data_ptr<c10::BFloat16>();
     c10::BFloat16* k_ptr = k.data_ptr<c10::BFloat16>();
     c10::BFloat16* v_ptr = v.data_ptr<c10::BFloat16>();
+    int* indices_ptr = indices.data_ptr<int>();
 
     bf16*  d_q = reinterpret_cast<bf16*>(q_ptr);
     bf16*  d_k = reinterpret_cast<bf16*>(k_ptr);
@@ -933,27 +927,17 @@ nsa_selection_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
     auto stream = at::cuda::getCurrentCUDAStream().stream();
 
     if (head_dim == 64) {
-        using q_tile    =         st_bf<fwd_attend_ker_tile_dims<64>::qo_height, fwd_attend_ker_tile_dims<64>::tile_width>;
-        using k_tile    =         st_bf<fwd_attend_ker_tile_dims<64>::kv_height, fwd_attend_ker_tile_dims<64>::tile_width>;
-        using v_tile    =         st_bf<fwd_attend_ker_tile_dims<64>::kv_height, fwd_attend_ker_tile_dims<64>::tile_width>;
-        using l_col_vec = col_vec<st_fl<fwd_attend_ker_tile_dims<64>::qo_height, fwd_attend_ker_tile_dims<64>::tile_width>>;
-        using o_tile    =         st_bf<fwd_attend_ker_tile_dims<64>::qo_height, fwd_attend_ker_tile_dims<64>::tile_width>;
+        using globals = fwd_globals<64>;
+        globals::q_gl qg_arg{d_q, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads),  64U};
+        globals::k_gl kg_arg{d_k, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 64U};
+        globals::v_gl vg_arg{d_v, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 64U};
+        globals::l_gl lg_arg{d_l, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), 1U,  static_cast<unsigned int>(qo_heads)};
+        globals::o_gl og_arg{d_o, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 64U};
+        globals::indices_gl indices_arg{indices_ptr, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(kv_heads), 
+                                   static_cast<unsigned int>(block_count)};
 
-        using q_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<q_tile, dim::ROW>>;
-        using k_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<k_tile, dim::DEPTH>>;
-        using v_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<v_tile, dim::DEPTH>>;
-        using l_global = gl<float, -1, -1, -1, -1, l_col_vec>;  
-        using o_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<o_tile, dim::ROW>>;
-
-        using globals      = fwd_globals<64>;
-
-        q_global qg_arg{d_q, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads),  64U};
-        k_global kg_arg{d_k, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 64U};
-        v_global vg_arg{d_v, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 64U};
-        l_global lg_arg{d_l, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), 1U,  static_cast<unsigned int>(qo_heads)};
-        o_global og_arg{d_o, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 64U};
-
-        globals g{qg_arg, kg_arg, vg_arg, lg_arg, og_arg, static_cast<int>(seq_len), static_cast<int>(kv_len), static_cast<int>(hr)};
+        globals g{qg_arg, kg_arg, vg_arg, lg_arg, og_arg, indices_arg, static_cast<int>(seq_len), static_cast<int>(kv_len), static_cast<int>(hr), 
+                  static_cast<int>(block_size), static_cast<int>(block_count)};
 
         auto mem_size = kittens::MAX_SHARED_MEMORY;
         auto threads  = NUM_WORKERS * kittens::WARP_THREADS;
@@ -983,27 +967,16 @@ nsa_selection_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
     }
 
     if (head_dim == 128) {
-        using q_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width>;
-        using k_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::kv_height, fwd_attend_ker_tile_dims<128>::tile_width>;
-        using v_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::kv_height, 64>;
-        using l_col_vec = col_vec<st_fl<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width>>;
-        using o_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width>;
-
-        using q_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<q_tile, dim::ROW>>;
-        using k_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<k_tile, dim::DEPTH>>;
-        using v_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<v_tile, dim::DEPTH>>;
-        using l_global = gl<float, -1, -1, -1, -1, l_col_vec>;
-        using o_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<o_tile, dim::ROW>>;
-
         using globals      = fwd_globals<128>;
-
-        q_global qg_arg{d_q, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
-        k_global kg_arg{d_k, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 128U};
-        v_global vg_arg{d_v, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 128U};
-        o_global og_arg{d_o, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
-        l_global lg_arg{d_l, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), 1U,   static_cast<unsigned int>(qo_heads)};
-
-        globals g{qg_arg, kg_arg, vg_arg, lg_arg, og_arg, static_cast<int>(seq_len), static_cast<int>(kv_len), static_cast<int>(hr)};
+        globals::q_gl qg_arg{d_q, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
+        globals::k_gl kg_arg{d_k, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 128U};
+        globals::v_gl vg_arg{d_v, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 128U};
+        globals::o_gl og_arg{d_o, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
+        globals::l_gl lg_arg{d_l, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), 1U,   static_cast<unsigned int>(qo_heads)};
+        globals::indices_gl indices_arg{indices_ptr, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 
+                                   static_cast<unsigned int>(block_count)};
+        globals g{qg_arg, kg_arg, vg_arg, lg_arg, og_arg, indices_arg, static_cast<int>(seq_len), static_cast<int>(kv_len), static_cast<int>(hr), 
+                  static_cast<int>(block_size), static_cast<int>(block_count)};
 
         auto mem_size = kittens::MAX_SHARED_MEMORY;
         auto threads  = NUM_WORKERS * kittens::WARP_THREADS;
@@ -1043,6 +1016,9 @@ nsa_selection_attention_backward(torch::Tensor q,
                    torch::Tensor o,
                    torch::Tensor l_vec,
                    torch::Tensor og,
+                   torch::Tensor indices,
+                   int block_count,
+                   int block_size,
                    bool causal)
 {
     CHECK_INPUT(q);
@@ -1058,6 +1034,7 @@ nsa_selection_attention_backward(torch::Tensor q,
     auto kv_len   = k.size(1);
 
     // check to see that these dimensions match for all inputs
+    TORCH_CHECK(block_size == 64, "Only support block size of 64");
     TORCH_CHECK(q.size(0)     == batch, "Q  batch dimension - idx 0 - must match for all inputs");
     TORCH_CHECK(k.size(0)     == batch, "K  batch dimension - idx 0 - must match for all inputs");
     TORCH_CHECK(v.size(0)     == batch, "V  batch dimension - idx 0 - must match for all inputs");
