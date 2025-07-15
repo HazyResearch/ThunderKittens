@@ -29,7 +29,7 @@ __device__ static inline bool hasnan(const ST &src) {
             }
         }
         else {
-            static_assert(sizeof(typename ST::T) == -1, "Unsupported dtype");
+            static_assert(sizeof(typename ST::T) == 999, "Unsupported dtype");
         }
     }
     // Ballot across the warp to see if any lane detected a nan

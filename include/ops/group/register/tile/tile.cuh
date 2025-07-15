@@ -33,7 +33,7 @@ __device__ static inline bool hasnan(const RT &src) {
                     }
                 }
                 else {
-                    static_assert(sizeof(typename RT::T) == -1, "Unsupported dtype");
+                    static_assert(sizeof(typename RT::T) == 999, "Unsupported dtype");
                 }
             }
         }
