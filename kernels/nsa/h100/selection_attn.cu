@@ -134,7 +134,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     k_tile    (&k_smem)[K::stages]        = al.allocate<k_tile, K::stages>();
     v_tile    (&v_smem)[K::stages]        = al.allocate<v_tile, K::stages>();
     l_col_vec (*l_smem)        = reinterpret_cast<l_col_vec(*)>(&v_smem[0].data[0]);
-    // indices_vec (&indices_smem)  = al.allocate<indices_vec>();
+    //indices_vec (&indices_smem)  = al.allocate<indices_vec>();
     qo_tile   (*qo_smem)       = reinterpret_cast<qo_tile(*)>(&k_smem[0].data[0]);
     int kv_blocks   = g.KV_N / (K::kv_height);
 
@@ -163,93 +163,93 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
     wait(qsmem_semaphore, 0);
     load(q_reg, qo_smem[0]);
-    for (int j = 0; j < K::stages - 1; j++) {
-        coord<k_tile> kv_tile_idx = {blockIdx.z, j, blockIdx.y, 0};
-        tma::expect_bytes(k_smem_arrived[j], sizeof(k_tile));
-        tma::load_async<dim::DEPTH, cache_policy::NORMAL>(k_smem[j], g.k, kv_tile_idx, k_smem_arrived[j]);
-        tma::expect_bytes(v_smem_arrived[j], sizeof(v_tile));
-        tma::load_async<dim::DEPTH, cache_policy::NORMAL>(v_smem[j], g.v, kv_tile_idx, v_smem_arrived[j]);
-    }
 
     neg_infty(max_vec);
     zero(norm_vec);
     zero(o_reg);
     zero(att_block);
-    int kv_iters;
-    if constexpr (is_causal) {
-        kv_iters = ceil_div(blockIdx.x+1, K::kv_height);
-    } else{
-        kv_iters = kv_blocks;
-    }
+    int kv_iters = g.block_count;
+    int num_chunk = g.block_size / K::kv_height;
     
-
     for (auto kv_idx = 0; kv_idx < kv_iters; kv_idx++) {
+        int kv_chunk_idx = g.indices[{blockIdx.z, blockIdx.x, blockIdx.y, kv_idx}];
+        if(blockIdx.x<kv_chunk_idx*g.block_size) {
+            continue;
+        }
 
-        wait(k_smem_arrived[(kv_idx)%K::stages], (kv_idx/K::stages)%2);
-        load(k_reg, k_smem[(kv_idx)%K::stages]);
-        mma<transpose::N, transpose::T>(att_block, q_reg, k_reg, att_block);
-        copy(max_vec_last_scaled, max_vec);
-        if constexpr (D == 64) { mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.125f); }
-        else                   { mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.08838834764f); }
+        for (int j = 0; j < K::stages - 1; j++) {
+            coord<k_tile> kv_tile_idx = {blockIdx.z, kv_chunk_idx*num_chunk+j, blockIdx.y, 0};
+            tma::expect_bytes(k_smem_arrived[j], sizeof(k_tile));
+            tma::load_async<dim::DEPTH, cache_policy::NORMAL>(k_smem[j], g.k, kv_tile_idx, k_smem_arrived[j]);
+            tma::expect_bytes(v_smem_arrived[j], sizeof(v_tile));
+            tma::load_async<dim::DEPTH, cache_policy::NORMAL>(v_smem[j], g.v, kv_tile_idx, v_smem_arrived[j]);
+        }
 
-        if constexpr (is_causal) {
-            int  kv_row_idx = kv_idx * K::kv_height;
-            if (blockIdx.x < kv_row_idx+K::kv_height){
-                int kv_row_idx_lower = kv_row_idx + (laneid() % 4)*2;
-                if(blockIdx.x < kv_row_idx_lower){
-                    att_block.tiles[0][0].data[0].x = base_types::constants<float>::neg_infty();
-                    att_block.tiles[0][0].data[1].x = base_types::constants<float>::neg_infty();
+        for(int inner_idx = 0; inner_idx < num_chunk; inner_idx++) {
+            wait(k_smem_arrived[(inner_idx)%K::stages], (inner_idx/K::stages)%2);
+            load(k_reg, k_smem[(inner_idx)%K::stages]);
+            mma<transpose::N, transpose::T>(att_block, q_reg, k_reg, att_block);
+            copy(max_vec_last_scaled, max_vec);
+            if constexpr (D == 64) { mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.125f); }
+            else                   { mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.08838834764f); }
+
+            if constexpr (is_causal) {
+                int  kv_row_idx = (kv_chunk_idx*num_chunk + inner_idx) * K::kv_height;
+                if (blockIdx.x < kv_row_idx+K::kv_height){
+                    int kv_row_idx_lower = kv_row_idx + (laneid() % 4)*2;
+                    if(blockIdx.x < kv_row_idx_lower){
+                        att_block.tiles[0][0].data[0].x = base_types::constants<float>::neg_infty();
+                        att_block.tiles[0][0].data[1].x = base_types::constants<float>::neg_infty();
+                    }
+                    if(blockIdx.x < kv_row_idx_lower+1){
+                        att_block.tiles[0][0].data[0].y = base_types::constants<float>::neg_infty();
+                        att_block.tiles[0][0].data[1].y = base_types::constants<float>::neg_infty();
+                    }
+                    if(blockIdx.x < kv_row_idx_lower+8){
+                        att_block.tiles[0][0].data[2].x = base_types::constants<float>::neg_infty();
+                        att_block.tiles[0][0].data[3].x = base_types::constants<float>::neg_infty();
+                    }
+                    if(blockIdx.x < kv_row_idx_lower+9){
+                        att_block.tiles[0][0].data[2].y = base_types::constants<float>::neg_infty();
+                        att_block.tiles[0][0].data[3].y = base_types::constants<float>::neg_infty();
+                    }
+                    __syncwarp();
                 }
-                if(blockIdx.x < kv_row_idx_lower+1){
-                    att_block.tiles[0][0].data[0].y = base_types::constants<float>::neg_infty();
-                    att_block.tiles[0][0].data[1].y = base_types::constants<float>::neg_infty();
-                }
-                if(blockIdx.x < kv_row_idx_lower+8){
-                    att_block.tiles[0][0].data[2].x = base_types::constants<float>::neg_infty();
-                    att_block.tiles[0][0].data[3].x = base_types::constants<float>::neg_infty();
-                }
-                if(blockIdx.x < kv_row_idx_lower+9){
-                    att_block.tiles[0][0].data[2].y = base_types::constants<float>::neg_infty();
-                    att_block.tiles[0][0].data[3].y = base_types::constants<float>::neg_infty();
-                }
-                __syncwarp();
             }
+
+            row_max(max_vec, att_block, max_vec);
+                
+            if constexpr (D == 64) { 
+                mul(att_block, att_block,    1.44269504089f*0.125f); 
+                mul(max_vec_scaled, max_vec, 1.44269504089f*0.125f);
+            }
+            else                   { 
+                mul(att_block, att_block,    1.44269504089f*0.08838834764f); 
+                mul(max_vec_scaled, max_vec, 1.44269504089f*0.08838834764f);
+            }
+
+            sub_row(att_block, att_block, max_vec_scaled);
+            exp2(att_block, att_block);
+            sub(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
+            exp2(max_vec_last_scaled,       max_vec_last_scaled);
+            mul(norm_vec,            norm_vec,     max_vec_last_scaled);
+            row_sum(norm_vec,  att_block, norm_vec);
+            add(att_block, att_block, 0.f);
+            copy(att_block_mma, att_block); 
+            mul_row(o_reg, o_reg, max_vec_last_scaled); 
+
+
+            wait(v_smem_arrived[(inner_idx)%K::stages], (inner_idx/K::stages)%2);
+            load(v_reg, v_smem[(inner_idx)%K::stages]);
+            if(inner_idx+1 < num_chunk && inner_idx+2 >= K::stages) {
+                coord<k_tile> kv_tile_idx = {blockIdx.z, kv_chunk_idx*num_chunk + inner_idx + 1, blockIdx.y, 0};
+                tma::expect_bytes(k_smem_arrived[(inner_idx+1)%K::stages], sizeof(k_tile));
+                tma::load_async<dim::DEPTH, cache_policy::NORMAL>(k_smem[(inner_idx+1)%K::stages], g.k, kv_tile_idx, k_smem_arrived[(inner_idx+1)%K::stages]);
+                tma::expect_bytes(v_smem_arrived[(inner_idx+1)%K::stages], sizeof(v_tile));
+                tma::load_async<dim::DEPTH, cache_policy::NORMAL>(v_smem[(inner_idx+1)%K::stages], g.v, kv_tile_idx, v_smem_arrived[(inner_idx+1)%K::stages]);
+            }
+            mma<transpose::N, transpose::N>(o_reg, att_block_mma, v_reg, o_reg);
         }
-
-        row_max(max_vec, att_block, max_vec);
-            
-        if constexpr (D == 64) { 
-            mul(att_block, att_block,    1.44269504089f*0.125f); 
-            mul(max_vec_scaled, max_vec, 1.44269504089f*0.125f);
-        }
-        else                   { 
-            mul(att_block, att_block,    1.44269504089f*0.08838834764f); 
-            mul(max_vec_scaled, max_vec, 1.44269504089f*0.08838834764f);
-        }
-
-        sub_row(att_block, att_block, max_vec_scaled);
-        exp2(att_block, att_block);
-        sub(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
-        exp2(max_vec_last_scaled,       max_vec_last_scaled);
-        mul(norm_vec,            norm_vec,     max_vec_last_scaled);
-        row_sum(norm_vec,  att_block, norm_vec);
-        add(att_block, att_block, 0.f);
-        copy(att_block_mma, att_block); 
-        mul_row(o_reg, o_reg, max_vec_last_scaled); 
-
-
-        wait(v_smem_arrived[(kv_idx)%K::stages], (kv_idx/K::stages)%2);
-        load(v_reg, v_smem[(kv_idx)%K::stages]);
-
-        if(kv_idx+1 <= kv_blocks && kv_idx+1 >= K::stages-1) {
-            coord<k_tile> kv_tile_idx = {blockIdx.z, kv_idx + 1, blockIdx.y, 0};
-            tma::expect_bytes(k_smem_arrived[(kv_idx+1)%K::stages], sizeof(k_tile));
-            tma::load_async<dim::DEPTH, cache_policy::NORMAL>(k_smem[(kv_idx+1)%K::stages], g.k, kv_tile_idx, k_smem_arrived[(kv_idx+1)%K::stages]);
-            tma::expect_bytes(v_smem_arrived[(kv_idx+1)%K::stages], sizeof(v_tile));
-            tma::load_async<dim::DEPTH, cache_policy::NORMAL>(v_smem[(kv_idx+1)%K::stages], g.v, kv_tile_idx, v_smem_arrived[(kv_idx+1)%K::stages]);
-        }
-        mma<transpose::N, transpose::N>(o_reg, att_block_mma, v_reg, o_reg);
-
     }
 
     div_row(o_reg, o_reg, norm_vec);
@@ -861,7 +861,7 @@ nsa_selection_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
         globals::v_gl vg_arg{d_v, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 128U};
         globals::o_gl og_arg{d_o, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
         globals::l_gl lg_arg{d_l, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), 1U,   static_cast<unsigned int>(qo_heads)};
-        globals::indices_gl indices_arg{indices_ptr, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 
+        globals::indices_gl indices_arg{indices_ptr, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(kv_heads), 
                                    static_cast<unsigned int>(block_count)};
         globals g{qg_arg, kg_arg, vg_arg, lg_arg, og_arg, indices_arg, static_cast<int>(seq_len), static_cast<int>(kv_len), static_cast<int>(hr), 
                   static_cast<int>(block_size), static_cast<int>(block_count)};
