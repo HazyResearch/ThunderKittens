@@ -79,34 +79,28 @@ template<int D> struct fwd_attend_ker_tile_dims {};
 template<> struct fwd_attend_ker_tile_dims<64> {
     constexpr static int tile_width = (64);
     constexpr static int qo_height  = (16);
-    constexpr static int kv_height  = (4*16);
+    constexpr static int kv_height  = (16);
     constexpr static int stages     = (2);
-    constexpr static int num_v_chunk = (1);
 };
 template<> struct fwd_attend_ker_tile_dims<128> {
     constexpr static int tile_width = (128);
     constexpr static int qo_height  = (16);
-    constexpr static int kv_height  = (4*16);
+    constexpr static int kv_height  = (16);
     constexpr static int stages     = (2);
-    constexpr static int num_v_chunk = (2);
 };
 
 template<int D> struct fwd_globals {
-    using q_tile    =         st_bf<fwd_attend_ker_tile_dims<D>::qo_height, fwd_attend_ker_tile_dims<D>::tile_width>;
+    using qo_tile   =         st_bf<fwd_attend_ker_tile_dims<D>::qo_height, fwd_attend_ker_tile_dims<D>::tile_width>;
     using k_tile    =         st_bf<fwd_attend_ker_tile_dims<D>::kv_height, fwd_attend_ker_tile_dims<D>::tile_width>;
-    using v_tile    =         st_bf<fwd_attend_ker_tile_dims<D>::kv_height, 64>;
+    using v_tile    =         st_bf<fwd_attend_ker_tile_dims<D>::kv_height, fwd_attend_ker_tile_dims<D>::tile_width>;
     using l_col_vec = col_vec<st_fl<fwd_attend_ker_tile_dims<D>::qo_height, fwd_attend_ker_tile_dims<D>::tile_width>>;
-    using o_tile    =         st_bf<fwd_attend_ker_tile_dims<D>::qo_height, 64>;
-    using o_out_tile=         st_bf<fwd_attend_ker_tile_dims<D>::qo_height, fwd_attend_ker_tile_dims<D>::tile_width>;
-    using att_tile    =       st_bf<fwd_attend_ker_tile_dims<D>::kv_height, fwd_attend_ker_tile_dims<D>::qo_height>;
-    using reduce_tile =       row_vec<st_fl<fwd_attend_ker_tile_dims<D>::kv_height, fwd_attend_ker_tile_dims<D>::qo_height>>;
     using indices_vec =       sv<int, 16>;
 
-    using q_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<q_tile, dim::ROW>>;
+    using q_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<qo_tile, dim::ROW>>;
     using k_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<k_tile, dim::DEPTH>>;
     using v_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<v_tile, dim::DEPTH>>;
     using l_gl = gl<float, -1, -1, -1, -1, l_col_vec>;
-    using o_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<o_out_tile, dim::ROW>>;
+    using o_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<qo_tile, dim::ROW>>;
     using indices_gl = gl<int, -1, -1, -1, -1>;
 
     q_gl q;
@@ -124,264 +118,160 @@ template<int D> struct fwd_globals {
 };
 
 template<int D, bool is_causal>
-__global__  __launch_bounds__((NUM_WORKERS)*kittens::WARP_THREADS, 4)
+__global__  __launch_bounds__(12*32, 12)
 void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     extern __shared__ int __shm[];
     tma_swizzle_allocator al((int*)&__shm[0]);
-    int warpid = kittens::warpid(), warpgroupid = warpid/kittens::WARPGROUP_WARPS, local_warpid = warpid % kittens::WARPGROUP_WARPS;;
+    int warpid = kittens::warpid();
     using K = fwd_attend_ker_tile_dims<D>;
-    using q_tile      =         fwd_globals<D>::q_tile;
+    using qo_tile     =         fwd_globals<D>::qo_tile;
     using k_tile      =         fwd_globals<D>::k_tile;
     using v_tile      =         fwd_globals<D>::v_tile;
     using l_col_vec   =         fwd_globals<D>::l_col_vec;
-    using o_tile      =         fwd_globals<D>::o_tile;
-    using o_out_tile  =         fwd_globals<D>::o_out_tile;
-    using att_tile    =         fwd_globals<D>::att_tile;
-    using reduce_tile =         fwd_globals<D>::reduce_tile;
     using indices_vec =         fwd_globals<D>::indices_vec;
     
 
-    q_tile    (&q_smem)          = al.allocate<q_tile>();
-    k_tile    (&k_smem)[K::stages]                 = al.allocate<k_tile, K::stages>();
-    v_tile    (&v_smem)[K::stages*K::num_v_chunk]  = al.allocate<v_tile, K::stages*K::num_v_chunk>();
-    l_col_vec   (&l_smem)        = al.allocate<l_col_vec>();
-    att_tile    (&att_smem)      = al.allocate<att_tile>();
-    indices_vec (&indices_smem)  = al.allocate<indices_vec>();
-    o_out_tile   (*o_smem)       = reinterpret_cast<o_out_tile(*)>(&q_smem.data[0]);
-    __shared__ float reduce_vec[kittens::WARPGROUP_WARPS][K::qo_height];
-    __shared__ float sum_vec[kittens::WARPGROUP_WARPS][K::qo_height];
-
+    k_tile    (&k_smem)[K::stages]        = al.allocate<k_tile, K::stages>();
+    v_tile    (&v_smem)[K::stages]        = al.allocate<v_tile, K::stages>();
+    l_col_vec (*l_smem)        = reinterpret_cast<l_col_vec(*)>(&v_smem[0].data[0]);
+    // indices_vec (&indices_smem)  = al.allocate<indices_vec>();
+    qo_tile   (*qo_smem)       = reinterpret_cast<qo_tile(*)>(&k_smem[0].data[0]);
     int kv_blocks   = g.KV_N / (K::kv_height);
-    int kv_head_idx = blockIdx.y;
-    const int seq_idx     = blockIdx.x * CONSUMER_WARPGROUPS;
-    // only have 1 consumer warpgroup for selection attention
-    const int q_idx = seq_idx;
 
-    __shared__ kittens::semaphore qsmem_semaphore, k_smem_arrived[K::stages], v_smem_arrived[K::stages*K::num_v_chunk], compute_done[K::stages];
-    if (warpid == 0) {
+    __shared__ kittens::semaphore qsmem_semaphore, k_smem_arrived[K::stages], v_smem_arrived[K::stages];
+    if(threadIdx.x == 0) {        
         init_semaphore(qsmem_semaphore, 0, 1);
         for(int j = 0; j < K::stages; j++) {
             init_semaphore(k_smem_arrived[j], 0, 1);
-            for(int c=0; c < K::num_v_chunk; c++){
-                init_semaphore(v_smem_arrived[j*K::num_v_chunk+c], 0, 1);
-            }
-            init_semaphore(compute_done[j], CONSUMER_WARPGROUPS, 0);
-        }
-
-        tma::expect_bytes(qsmem_semaphore, sizeof(q_tile));
-
-        coord<q_tile> q_tile_idx = {blockIdx.z, seq_idx, blockIdx.y, 0};
-        tma::load_async<dim::ROW, cache_policy::NORMAL>(q_smem, g.q, q_tile_idx, qsmem_semaphore);
-
-        for (int j = 0; j < K::stages - 1; j++) {
-            coord<k_tile> kv_tile_idx = {blockIdx.z, j, kv_head_idx, 0};
-            tma::expect_bytes(k_smem_arrived[j], sizeof(k_tile));
-            tma::load_async<dim::DEPTH, cache_policy::NORMAL>(k_smem[j], g.k, kv_tile_idx, k_smem_arrived[j]);
-            for(int c=0; c<K::num_v_chunk; c++){
-                tma::expect_bytes(v_smem_arrived[j*K::num_v_chunk+c], sizeof(v_tile));
-                tma::load_async<dim::DEPTH, cache_policy::NORMAL>(v_smem[j*K::num_v_chunk+c], g.v,
-                    {blockIdx.z, j, kv_head_idx, c}, v_smem_arrived[j*K::num_v_chunk+c]);
-            }
+            init_semaphore(v_smem_arrived[j], 0, 1);
         }
     }
     __syncthreads();
 
-    int pipe_idx = K::stages - 1;
+    rt_bf<K::qo_height, K::tile_width> q_reg;
+    rt_bf<K::kv_height, K::tile_width> k_reg;
+    rt_bf<K::kv_height, K::tile_width, col_l> v_reg;
+    rt_fl<K::qo_height, K::kv_height>  att_block;
+    rt_bf<K::qo_height, K::kv_height>  att_block_mma;
+    rt_fl<K::qo_height, K::tile_width> o_reg;
+    // [1, qo_height]
+    col_vec<rt_fl<K::qo_height, K::kv_height>> max_vec, norm_vec, max_vec_last_scaled, max_vec_scaled;
 
-    if(warpgroupid == NUM_WARPGROUPS-1) {
-        warpgroup::decrease_registers<32>();
+    tma::expect_bytes(qsmem_semaphore, sizeof(qo_tile));
+    coord<qo_tile> q_tile_idx = {blockIdx.z, blockIdx.x, blockIdx.y, 0};
+    tma::load_async<dim::ROW, cache_policy::NORMAL>(qo_smem[0], g.q, q_tile_idx, qsmem_semaphore);
 
-        int kv_iters;
-        if constexpr (is_causal) {
-            int q_idx_upper = (seq_idx + CONSUMER_WARPGROUPS);
-            kv_iters = ceil_div(q_idx_upper, K::kv_height) - 1;
-        }
-        else { kv_iters = kv_blocks-2; }
-
-        if(warpid == NUM_WORKERS-4) {
-            for (auto kv_idx = pipe_idx - 1; kv_idx <= kv_iters; kv_idx++) {
-                coord<k_tile> kv_tile_idx = {blockIdx.z, kv_idx + 1, kv_head_idx, 0};
-                tma::expect_bytes(k_smem_arrived[(kv_idx+1)%K::stages], sizeof(k_tile));
-                tma::load_async<dim::DEPTH, cache_policy::NORMAL>(k_smem[(kv_idx+1)%K::stages], g.k, kv_tile_idx, k_smem_arrived[(kv_idx+1)%K::stages]);
-                #pragma unroll
-                for(int c=0; c<K::num_v_chunk; c++)
-                {
-                    tma::expect_bytes(v_smem_arrived[(kv_idx+1)%K::stages*K::num_v_chunk+c], sizeof(v_tile));
-                    tma::load_async<dim::DEPTH, cache_policy::NORMAL>(v_smem[(kv_idx+1)%K::stages*K::num_v_chunk+c], g.v,
-                    {blockIdx.z, kv_idx + 1, kv_head_idx, c}, v_smem_arrived[(kv_idx+1)%K::stages*K::num_v_chunk+c]);
-                }
-                wait(compute_done[(kv_idx)%K::stages], (kv_idx/K::stages)%2);
-            }
-        }
+    wait(qsmem_semaphore, 0);
+    load(q_reg, qo_smem[0]);
+    for (int j = 0; j < K::stages - 1; j++) {
+        coord<k_tile> kv_tile_idx = {blockIdx.z, j, blockIdx.y, 0};
+        tma::expect_bytes(k_smem_arrived[j], sizeof(k_tile));
+        tma::load_async<dim::DEPTH, cache_policy::NORMAL>(k_smem[j], g.k, kv_tile_idx, k_smem_arrived[j]);
+        tma::expect_bytes(v_smem_arrived[j], sizeof(v_tile));
+        tma::load_async<dim::DEPTH, cache_policy::NORMAL>(v_smem[j], g.v, kv_tile_idx, v_smem_arrived[j]);
     }
-    else {
-        warpgroup::increase_registers<96>();
-        // [kv height. qo_height]
-        rt_fl<16, K::qo_height>  att_block;
-        // [TILE WIDTH, BG], O_SMEM: [BG, TILE WIDTH]
-        rt_fl<16, K::qo_height> o_reg[K::num_v_chunk];
 
-        // [1, qo_height]
-        row_vec<rt_fl<16, K::qo_height>> max_vec, norm_vec, max_vec_last_scaled, max_vec_scaled;
+    neg_infty(max_vec);
+    zero(norm_vec);
+    zero(o_reg);
+    zero(att_block);
+    int kv_iters;
+    if constexpr (is_causal) {
+        kv_iters = ceil_div(blockIdx.x+1, K::kv_height);
+    } else{
+        kv_iters = kv_blocks;
+    }
+    
 
-        neg_infty(max_vec);
-        zero(norm_vec);
-        #pragma unroll
-        for(int i=0; i<K::num_v_chunk; i++){
-            zero(o_reg[i]);
-        }
+    for (auto kv_idx = 0; kv_idx < kv_iters; kv_idx++) {
 
-        int kv_iters;
+        wait(k_smem_arrived[(kv_idx)%K::stages], (kv_idx/K::stages)%2);
+        load(k_reg, k_smem[(kv_idx)%K::stages]);
+        mma<transpose::N, transpose::T>(att_block, q_reg, k_reg, att_block);
+        copy(max_vec_last_scaled, max_vec);
+        if constexpr (D == 64) { mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.125f); }
+        else                   { mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.08838834764f); }
+
         if constexpr (is_causal) {
-            int q_idx_upper = (seq_idx + CONSUMER_WARPGROUPS);
-            kv_iters = ceil_div(q_idx_upper, K::kv_height) - 1;
-        }
-        else { kv_iters = kv_blocks - 1; }
-
-        wait(qsmem_semaphore, 0);
-
-
-        if(threadIdx.x%128 < 16){
-            sum_vec[local_warpid][threadIdx.x%128] = base_types::constants<float>::zero();
-        }
-
-        for (auto kv_idx = 0; kv_idx <= kv_iters; kv_idx++) {
-
-            wait(k_smem_arrived[(kv_idx)%K::stages], (kv_idx/K::stages)%2);
-            // (kv_height, width) * (qo_height, width)  ->  (kv_height, qo_height) (BKV, BG)
-            warpgroup::mm_ABt(att_block, k_smem[(kv_idx)%K::stages], q_smem);
-
-            copy(max_vec_last_scaled, max_vec);
-            if constexpr (D == 64) { mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.125f); }
-            else                   { mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.08838834764f); }
-            warpgroup::mma_async_wait();
-
-            if constexpr (is_causal) {
-                const int q_idx = seq_idx + warpgroupid;
-                int  kv_row_idx = kv_idx * K::kv_height + local_warpid * kittens::TILE_ROW_DIM<bf16>;
-
-                auto &attn_subtile = reinterpret_cast<rt_fl<16, 16>&>(att_block.tiles[0][0]);
-                if(q_idx < kv_row_idx){ neg_infty  (attn_subtile); }
-                else if (q_idx < kv_row_idx+kittens::TILE_ROW_DIM<bf16>){
-                    int kv_row_idx_lower = kv_row_idx + laneid() / 4;
-                    int kv_row_idx_upper = kv_row_idx_lower + 8;
-                    if(q_idx < kv_row_idx_lower){
-                        attn_subtile.tiles[0][0].data[0] = base_types::constants<float2>::neg_infty();
-                        attn_subtile.tiles[0][0].data[2] = base_types::constants<float2>::neg_infty();
-                    }
-                    if(q_idx < kv_row_idx_upper){
-                        attn_subtile.tiles[0][0].data[1] = base_types::constants<float2>::neg_infty();
-                        attn_subtile.tiles[0][0].data[3] = base_types::constants<float2>::neg_infty();
-                    }
+            int  kv_row_idx = kv_idx * K::kv_height;
+            if (blockIdx.x < kv_row_idx+K::kv_height){
+                int kv_row_idx_lower = kv_row_idx + (laneid() % 4)*2;
+                if(blockIdx.x < kv_row_idx_lower){
+                    att_block.tiles[0][0].data[0].x = base_types::constants<float>::neg_infty();
+                    att_block.tiles[0][0].data[1].x = base_types::constants<float>::neg_infty();
+                }
+                if(blockIdx.x < kv_row_idx_lower+1){
+                    att_block.tiles[0][0].data[0].y = base_types::constants<float>::neg_infty();
+                    att_block.tiles[0][0].data[1].y = base_types::constants<float>::neg_infty();
+                }
+                if(blockIdx.x < kv_row_idx_lower+8){
+                    att_block.tiles[0][0].data[2].x = base_types::constants<float>::neg_infty();
+                    att_block.tiles[0][0].data[3].x = base_types::constants<float>::neg_infty();
+                }
+                if(blockIdx.x < kv_row_idx_lower+9){
+                    att_block.tiles[0][0].data[2].y = base_types::constants<float>::neg_infty();
+                    att_block.tiles[0][0].data[3].y = base_types::constants<float>::neg_infty();
                 }
                 __syncwarp();
             }
-            // kv_block, qo_height
-            col_max(max_vec, att_block, max_vec);
-
-            int col = threadIdx.x % 128;
-            if(col < 16){
-                reduce_vec[local_warpid][col] = base_types::constants<float>::neg_infty();
-            }
-            warpgroup::sync(warpgroupid+4);
-
-            col = laneid() * 2;
-            if(laneid() < 4){
-                reduce_vec[local_warpid][col] = max_vec.data[0][0].x;
-                reduce_vec[local_warpid][col+1] = max_vec.data[0][0].y;
-                reduce_vec[local_warpid][col+8] = max_vec.data[0][1].x;
-                reduce_vec[local_warpid][col+9] = max_vec.data[0][1].y;
-            }
-            warpgroup::sync(warpgroupid+4);
-
-            col = laneid() % 4 * 2;
-            #pragma unroll
-            for(int i=0; i<kittens::WARPGROUP_WARPS; i++){
-                max_vec.data[0][0].x = max_vec.data[0][0].x > reduce_vec[i][col] ? max_vec.data[0][0].x : reduce_vec[i][col];
-                max_vec.data[0][0].y = max_vec.data[0][0].y > reduce_vec[i][col+1] ? max_vec.data[0][0].y : reduce_vec[i][col+1];
-                max_vec.data[0][1].x = max_vec.data[0][1].x > reduce_vec[i][col+8] ? max_vec.data[0][1].x : reduce_vec[i][col+8];
-                max_vec.data[0][1].y = max_vec.data[0][1].y > reduce_vec[i][col+9] ? max_vec.data[0][1].y : reduce_vec[i][col+9];
-            }
-
-            if constexpr (D == 64) {
-                mul(att_block, att_block,    1.44269504089f*0.125f);
-                mul(max_vec_scaled, max_vec, 1.44269504089f*0.125f);
-            }
-            else                   {
-                mul(att_block, att_block,    1.44269504089f*0.08838834764f);
-                mul(max_vec_scaled, max_vec, 1.44269504089f*0.08838834764f);
-            }
-            sub_col(att_block, att_block, max_vec_scaled);
-            exp2(att_block, att_block);
-            sub(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
-            exp2(max_vec_last_scaled,       max_vec_last_scaled);
-            mul(norm_vec,            norm_vec,     max_vec_last_scaled);
-            col_sum(norm_vec,  att_block, norm_vec);
-            add(att_block, att_block, 0.f);
-
-            warpgroup::store(att_smem, att_block);
-            warpgroup::sync(warpgroupid+4);
-
-            for(int c=0; c<K::num_v_chunk; c++)
-            {
-                mul_col(o_reg[c], o_reg[c], max_vec_last_scaled);
-                wait(v_smem_arrived[(kv_idx)%K::stages*K::num_v_chunk+c], (kv_idx/K::stages)%2);
-                // (kv_height, width) * (kv_height, qo_height) ->  (width, qo_height)
-                warpgroup::mma_AtB(o_reg[c], v_smem[(kv_idx)%K::stages*K::num_v_chunk+c], att_smem);
-            }
-            warpgroup::mma_async_wait();
-
-            if(warpgroup::laneid() == 0) arrive(compute_done[(kv_idx)%K::stages], 1);
-        }
-        int col = laneid() % 4 * 2;
-        if(laneid() < 4){
-            sum_vec[local_warpid][col] = norm_vec.data[0][0].x;
-            sum_vec[local_warpid][col+1] = norm_vec.data[0][0].y;
-            sum_vec[local_warpid][col+8] = norm_vec.data[0][1].x;
-            sum_vec[local_warpid][col+9] = norm_vec.data[0][1].y;
-        }
-        warpgroup::sync(warpgroupid+4);
-        zero(norm_vec);
-        for(int i=0; i<kittens::WARPGROUP_WARPS; i++){
-            norm_vec.data[0][0].x += sum_vec[i][col];
-            norm_vec.data[0][0].y += sum_vec[i][col+1];
-            norm_vec.data[0][1].x += sum_vec[i][col+8];
-            norm_vec.data[0][1].y += sum_vec[i][col+9];
         }
 
-        #pragma unroll
-        for(int c=0; c<K::num_v_chunk; c++){
-            div_col(o_reg[c], o_reg[c], norm_vec);
-            warpgroup_store_t(o_smem[0], o_reg[c], c*64);
-            warpgroup::sync(warpgroupid+4);
+        row_max(max_vec, att_block, max_vec);
+            
+        if constexpr (D == 64) { 
+            mul(att_block, att_block,    1.44269504089f*0.125f); 
+            mul(max_vec_scaled, max_vec, 1.44269504089f*0.125f);
+        }
+        else                   { 
+            mul(att_block, att_block,    1.44269504089f*0.08838834764f); 
+            mul(max_vec_scaled, max_vec, 1.44269504089f*0.08838834764f);
         }
 
-        if (warpid % 4 == 0) {
-            coord<o_tile> o_tile_idx = {blockIdx.z, (seq_idx) + warpgroupid, blockIdx.y, 0};
-            tma::store_async<dim::ROW, cache_policy::NORMAL>(g.o, o_smem[0], o_tile_idx);
+        sub_row(att_block, att_block, max_vec_scaled);
+        exp2(att_block, att_block);
+        sub(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
+        exp2(max_vec_last_scaled,       max_vec_last_scaled);
+        mul(norm_vec,            norm_vec,     max_vec_last_scaled);
+        row_sum(norm_vec,  att_block, norm_vec);
+        add(att_block, att_block, 0.f);
+        copy(att_block_mma, att_block); 
+        mul_row(o_reg, o_reg, max_vec_last_scaled); 
+
+
+        wait(v_smem_arrived[(kv_idx)%K::stages], (kv_idx/K::stages)%2);
+        load(v_reg, v_smem[(kv_idx)%K::stages]);
+
+        if(kv_idx+1 <= kv_blocks && kv_idx+1 >= K::stages-1) {
+            coord<k_tile> kv_tile_idx = {blockIdx.z, kv_idx + 1, blockIdx.y, 0};
+            tma::expect_bytes(k_smem_arrived[(kv_idx+1)%K::stages], sizeof(k_tile));
+            tma::load_async<dim::DEPTH, cache_policy::NORMAL>(k_smem[(kv_idx+1)%K::stages], g.k, kv_tile_idx, k_smem_arrived[(kv_idx+1)%K::stages]);
+            tma::expect_bytes(v_smem_arrived[(kv_idx+1)%K::stages], sizeof(v_tile));
+            tma::load_async<dim::DEPTH, cache_policy::NORMAL>(v_smem[(kv_idx+1)%K::stages], g.v, kv_tile_idx, v_smem_arrived[(kv_idx+1)%K::stages]);
         }
-        mul(max_vec_scaled,   max_vec_scaled, 0.69314718056f);
-        log(norm_vec, norm_vec);
-        add(norm_vec, norm_vec, max_vec_scaled);
+        mma<transpose::N, transpose::N>(o_reg, att_block_mma, v_reg, o_reg);
 
-        if constexpr (D == 64) { mul(norm_vec, norm_vec, -8.0f); }
-        else                   { mul(norm_vec, norm_vec, -11.313708499f); }
-
-        if(laneid() < 4){
-            l_smem[col] = norm_vec.data[0][0].x;
-            l_smem[col+1] = norm_vec.data[0][0].y;
-            l_smem[col+8] = norm_vec.data[0][1].x;
-            l_smem[col+9] = norm_vec.data[0][1].y;
-        }
-
-
-
-        if (local_warpid == 0) {
-            coord<l_col_vec> tile_idx = {blockIdx.z, (seq_idx) + warpgroupid, 0, blockIdx.y};
-            tma::store_async(g.l, l_smem, tile_idx);
-        }
-        tma::store_async_wait();
     }
+
+    div_row(o_reg, o_reg, norm_vec);
+    store(qo_smem[0], o_reg);
+    __syncwarp();
+    coord<qo_tile> o_tile_idx = {blockIdx.z, blockIdx.x, blockIdx.y, 0};
+    tma::store_async<dim::ROW, cache_policy::NORMAL>(g.o, qo_smem[0], o_tile_idx);
+
+    mul(max_vec_scaled,   max_vec_scaled, 0.69314718056f);
+    log(norm_vec, norm_vec);
+    add(norm_vec, norm_vec, max_vec_scaled);
+
+
+    if constexpr (D == 64) { mul(norm_vec, norm_vec, -8.0f); }
+    else                   { mul(norm_vec, norm_vec, -11.313708499f); }
+
+    store(l_smem[0], norm_vec);
+    __syncwarp();
+    coord<l_col_vec> tile_idx = {blockIdx.z, blockIdx.x, 0, blockIdx.y};
+    tma::store_async(g.l, l_smem[0], tile_idx);
+    tma::store_async_wait();
+
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -924,6 +814,7 @@ nsa_selection_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
 
     if (head_dim == 64) {
         using globals = fwd_globals<64>;
+        using tile_args = fwd_attend_ker_tile_dims<64>;
         globals::q_gl qg_arg{d_q, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads),  64U};
         globals::k_gl kg_arg{d_k, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 64U};
         globals::v_gl vg_arg{d_v, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 64U};
@@ -935,11 +826,11 @@ nsa_selection_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
         globals g{qg_arg, kg_arg, vg_arg, lg_arg, og_arg, indices_arg, static_cast<int>(seq_len), static_cast<int>(kv_len), static_cast<int>(hr), 
                   static_cast<int>(block_size), static_cast<int>(block_count)};
 
-        auto mem_size = kittens::MAX_SHARED_MEMORY;
-        auto threads  = NUM_WORKERS * kittens::WARP_THREADS;
+        auto mem_size = sizeof(globals::qo_tile) + (sizeof(globals::k_tile) + sizeof(globals::v_tile))*tile_args::stages;
+        auto threads  = 32;
 
         // TORCH_CHECK(seq_len % (CONSUMER_WARPGROUPS*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 192");
-        dim3 grid(host_ceil_div(seq_len, CONSUMER_WARPGROUPS), kv_heads, batch);
+        dim3 grid(seq_len, kv_heads, batch);
 
         if (is_causal) {
             cudaFuncSetAttribute(
@@ -948,7 +839,7 @@ nsa_selection_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
                 mem_size
             );
 
-            fwd_attend_ker<64, true><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
+            fwd_attend_ker<64, true><<<grid, threads, mem_size, stream>>>(g);
         }
         else {
             cudaFuncSetAttribute(
@@ -957,13 +848,14 @@ nsa_selection_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
                 mem_size
             );
 
-            fwd_attend_ker<64, false><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
+            fwd_attend_ker<64, false><<<grid, threads, mem_size, stream>>>(g);
         }
         CHECK_CUDA_ERROR(cudaGetLastError());
     }
 
     if (head_dim == 128) {
         using globals      = fwd_globals<128>;
+        using tile_args = fwd_attend_ker_tile_dims<128>;
         globals::q_gl qg_arg{d_q, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
         globals::k_gl kg_arg{d_k, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 128U};
         globals::v_gl vg_arg{d_v, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 128U};
@@ -974,8 +866,8 @@ nsa_selection_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
         globals g{qg_arg, kg_arg, vg_arg, lg_arg, og_arg, indices_arg, static_cast<int>(seq_len), static_cast<int>(kv_len), static_cast<int>(hr), 
                   static_cast<int>(block_size), static_cast<int>(block_count)};
 
-        auto mem_size = kittens::MAX_SHARED_MEMORY;
-        auto threads  = NUM_WORKERS * kittens::WARP_THREADS;
+        auto mem_size = sizeof(globals::qo_tile) + (sizeof(globals::k_tile) + sizeof(globals::v_tile))*tile_args::stages;
+        auto threads  = 32;
 
         // TORCH_CHECK(seq_len % (CONSUMER_WARPGROUPS*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 192");
         dim3 grid(seq_len, kv_heads, batch);
@@ -987,7 +879,7 @@ nsa_selection_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
                 mem_size
             );
 
-            fwd_attend_ker<128, true><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
+            fwd_attend_ker<128, true><<<grid, threads, mem_size, stream>>>(g);
         }
         else {
             cudaFuncSetAttribute(
@@ -996,7 +888,7 @@ nsa_selection_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor 
                 mem_size
             );
 
-            fwd_attend_ker<128, false><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
+            fwd_attend_ker<128, false><<<grid, threads, mem_size, stream>>>(g);
         }
 
         CHECK_CUDA_ERROR(cudaGetLastError());
