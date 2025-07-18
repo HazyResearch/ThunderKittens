@@ -5,11 +5,6 @@
 #include <iostream>
 #include "cuda_bf16.h"
 
-constexpr int CONSUMER_WARPGROUPS = (1);
-constexpr int PRODUCER_WARPGROUPS = (1);
-constexpr int NUM_WARPGROUPS      = (CONSUMER_WARPGROUPS+PRODUCER_WARPGROUPS);
-constexpr int NUM_WORKERS         = (NUM_WARPGROUPS*kittens::WARPGROUP_WARPS);
-
 using namespace kittens;
 namespace cg = cooperative_groups;
 
@@ -347,6 +342,33 @@ void bwd_attend_prep_ker(const __grid_constant__ bwd_prep_globals<D> g) {
     tma::store_async_wait();
 }
 
+struct prepare_mask_globals {
+    using indices_gl = gl<int,  -1, -1, -1, -1>;
+    constexpr static int seq_blocks = 128;
+    constexpr static int threads = 128;
+    indices_gl indices;
+    bool*    mask;
+    int stride_b;
+    int stride_h;
+    int block_size;
+};
+
+__global__ void prepare_mask(const __grid_constant__ prepare_mask_globals g)
+{
+ 
+    const int inner_id = threadIdx.x % g.indices.cols();
+    const int seq_id = (blockIdx.z * g.threads + threadIdx.x) / g.indices.cols();
+    const int seq_offset = g.seq_blocks * g.threads / g.indices.cols();
+    int*  indices_ptr = g.indices.raw_ptr+blockIdx.x*g.indices.template stride<0>() + blockIdx.y*g.indices.template stride<2>() + inner_id;
+    bool* mask_ptr = g.mask + blockIdx.x * g.stride_b + blockIdx.y * g.stride_h;
+
+    for(int i=seq_id; i<g.indices.depth(); i+=seq_offset){
+        int index = *(indices_ptr+i*g.indices.template stride<1>());
+        mask_ptr[index*g.indices.depth()+i] = i >= index*g.block_size;
+    }
+
+}
+
 template<int D> struct bwd_attend_ker_tile_dims {};
 template<> struct bwd_attend_ker_tile_dims<64> {
     constexpr static int tile_width = (64);
@@ -379,18 +401,19 @@ struct bwd_globals {
     using qg_tile =         st_bf<G::tile_h_qo, G::tile_width>;
     using kg_tile =         st_bf<G::tile_h,    G::tile_width>;
     using vg_tile =         st_bf<G::tile_h,    G::tile_width>;
+    using attn_tile =       st_bf<G::tile_h, G::tile_h_qo>; 
     using l_tile  = col_vec<st_fl<G::tile_h_qo, G::tile_h>>;
     using d_tile  = col_vec<st_fl<G::tile_h_qo, G::tile_h>>;
 
     using q_gl  = gl<bf16,  -1, -1, -1, -1, tma::descriptor<q_tile, dim::ROW>>;
     using k_gl  = gl<bf16,  -1, -1, -1, -1, tma::descriptor<k_tile, dim::DEPTH>>;
     using v_gl  = gl<bf16,  -1, -1, -1, -1, tma::descriptor<v_tile, dim::DEPTH>>;
-
     using og_gl = gl<bf16,  -1, -1, -1, -1, tma::descriptor<og_tile, dim::ROW>>;
-
     using qg_gl = gl<bf16, -1, -1, -1, -1, tma::descriptor<qg_tile, dim::ROW>>;
     using kg_gl = gl<bf16, -1, -1, -1, -1, tma::descriptor<kg_tile, dim::DEPTH>>;
     using vg_gl = gl<bf16, -1, -1, -1, -1, tma::descriptor<vg_tile, dim::DEPTH>>;
+    using indices_gl = gl<int, -1, -1, -1, -1>;
+    using mask_gl    = gl<bool, -1, -1, -1, -1>;
 
     using l_gl  = gl<float, -1, -1, -1, -1, l_tile>;
     using d_gl  = gl<float, -1, -1, -1, -1, d_tile>; 
@@ -404,9 +427,14 @@ struct bwd_globals {
     vg_gl vg;
     l_gl  l;
     d_gl  d;
+    bool* mask;
 
     const int N;
     const int hr;
+    const int block_size;
+    const int block_count;
+    const int mask_stride_b;
+    const int mask_stride_h;
 };
 
 __device__ static inline void
@@ -545,17 +573,16 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
     const int N = g.N, hr = g.hr;
     using G = bwd_attend_ker_tile_dims<D>;
     
-    using kg_tile   = st_bf<G::tile_h, G::tile_width>;
-    using vg_tile   = st_bf<G::tile_h, G::tile_width>;
-    using k_tile    = st_bf<G::tile_h, G::tile_width>;
-    using v_tile    = st_bf<G::tile_h, G::tile_width>;
-    using q_tile    = st_bf<G::tile_h_qo, G::tile_width>;
-    using og_tile   = st_bf<G::tile_h_qo, G::tile_width>;
-    using qg_tile   = st_bf<G::tile_h_qo, G::tile_width>;
-    using l_tile    = col_vec<st_fl<G::tile_h_qo, G::tile_h>>;
-    using d_tile    = col_vec<st_fl<G::tile_h_qo, G::tile_h>>;
-    using attn_tile = st_bf<G::tile_h, G::tile_h_qo>; 
-    using k_tile_chunk = st_bf<G::tile_h, 64>;
+    using kg_tile   = bwd_globals<D>::kg_tile;
+    using vg_tile   = bwd_globals<D>::vg_tile;
+    using k_tile    = bwd_globals<D>::k_tile;
+    using v_tile    = bwd_globals<D>::v_tile;
+    using q_tile    = bwd_globals<D>::q_tile;
+    using og_tile   = bwd_globals<D>::og_tile;
+    using qg_tile   = bwd_globals<D>::qg_tile;
+    using l_tile    = bwd_globals<D>::l_tile;
+    using d_tile    = bwd_globals<D>::d_tile;
+    using attn_tile = bwd_globals<D>::attn_tile; 
 
     k_tile  (&k_smem) [BWD_CONSUMER_WARPGROUPS] = al.allocate<k_tile, BWD_CONSUMER_WARPGROUPS>();
     v_tile  (&v_smem) [BWD_CONSUMER_WARPGROUPS] = al.allocate<v_tile, BWD_CONSUMER_WARPGROUPS>();
@@ -563,13 +590,11 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
     q_tile  (&q_smem) [2] = al.allocate<q_tile,  2>(); 
     og_tile (&og_smem)[2] = al.allocate<og_tile, 2>(); 
     qg_tile (&qg_smem)    = al.allocate<qg_tile>();
-
     l_tile   (&l_smem)[2] = al.allocate<l_tile, 2>();
     d_tile   (&d_smem)[2] = al.allocate<d_tile, 2>();
     kg_tile (*kg_smem)    = reinterpret_cast<kg_tile*>(&k_smem[0].data[0]); 
     vg_tile (*vg_smem)    = reinterpret_cast<vg_tile*>(&q_smem[0].data[0]); 
 
-    //k_tile_chunk (&k_smem_chunk)[4] = al.allocate<k_tile_chunk, 4>();
     attn_tile (&ds_smem)[BWD_CONSUMER_WARPGROUPS] = al.allocate<attn_tile, BWD_CONSUMER_WARPGROUPS>();
     const int warpid      = kittens::warpid();
     const int warpgroupid = warpid/kittens::WARPGROUP_WARPS;
@@ -581,6 +606,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
 
     int tic = 0, toc = 1;
     const int q_start = (is_causal) ? (blockIdx.x*G::tile_h*BWD_CONSUMER_WARPGROUPS) : (0);
+    // bool* mask_ptr = g.mask + blockIdx.z*g.mask_stride_b + blockIdx.y*g.mask_stride_h + (blockIdx.x+;
 
     if (threadIdx.x == 0) {
         init_semaphore(kv_b,  0, 1);
@@ -623,9 +649,9 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
         warpgroup::decrease_registers<24>();
 
         if (warpid % kittens::WARPGROUP_WARPS == 0) {
-            for (int qo_idx = q_start; qo_idx < qo_blocks; qo_idx+=1, tic ^= 1, toc ^= 1) {
+            for (int qo_idx = q_start; qo_idx < qo_blocks; qo_idx+=1) {
                 if (qo_idx + 1 < qo_blocks) {
-
+                    bool skip = mask_ptr[qo_idx+];
                     coord<l_tile> vec_idx = {blockIdx.z, qo_idx+1, 0, blockIdx.y};
                     load(l_smem[toc], g.l, vec_idx);
                     load(d_smem[toc], g.d, vec_idx);
@@ -635,6 +661,8 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
                     tma::load_async(q_smem[toc], g.q,  tile_idx, q_b[toc]);
                     tma::expect_bytes(o_b[toc],   sizeof(og_smem[0]));
                     tma::load_async(og_smem[toc], g.og, tile_idx, o_b[toc]);
+                    tic ^= 1;
+                    toc ^= 1;
 
                     // Don't use tma::load_async for l_smem and d_smem because it sames have
                     // some synchronize problem.
@@ -923,7 +951,6 @@ nsa_selection_attention_backward(torch::Tensor q,
 
     // check to see that these dimensions match for all inputs
     TORCH_CHECK(block_size == 64, "Only support block size of 64");
-    //TORCH_CHECK(block_count == 16, "Only support block count of 16");
     TORCH_CHECK(indices.size(0) == batch, "Indices batch dimension - idx 0 - must match for all inputs");
     TORCH_CHECK(q.size(0)     == batch, "Q  batch dimension - idx 0 - must match for all inputs");
     TORCH_CHECK(k.size(0)     == batch, "K  batch dimension - idx 0 - must match for all inputs");
@@ -972,6 +999,7 @@ nsa_selection_attention_backward(torch::Tensor q,
     c10::BFloat16* o_ptr  = o.data_ptr<c10::BFloat16>();
     c10::BFloat16* og_ptr = og.data_ptr<c10::BFloat16>();
     float*         l_ptr  = l_vec.data_ptr<float>();
+    int*     indices_ptr  = indices.data_ptr<int>();
 
     torch::Tensor qg = torch::zeros({static_cast<const uint>(batch),
                                     static_cast<const uint>(seq_len),
@@ -990,11 +1018,19 @@ nsa_selection_attention_backward(torch::Tensor q,
                                         static_cast<const uint>(seq_len),
                                         static_cast<const uint>(qo_heads),
                                         static_cast<const uint>(1)},       l_vec.options());
+    torch::Tensor mask = torch::zeros({static_cast<const uint>(batch),
+                                       static_cast<const uint>(kv_heads),
+                                       static_cast<const uint>(seq_len / block_size),
+                                       static_cast<const uint>(seq_len)},
+                                       torch::TensorOptions().dtype(torch::kBool).
+                                       device(l_vec.device()).memory_format(at::MemoryFormat::Contiguous)
+    );
 
     auto           qg_ptr = qg.data_ptr<c10::BFloat16>();
     auto*          kg_ptr = kg.data_ptr<c10::BFloat16>();
     auto*          vg_ptr = vg.data_ptr<c10::BFloat16>();
     float*         d_ptr  = d_vec.data_ptr<float>();
+    bool*          mask_ptr = mask.data_ptr<bool>();
 
     bf16*  d_q  = reinterpret_cast<bf16*>(q_ptr);
     bf16*  d_k  = reinterpret_cast<bf16*>(k_ptr);
@@ -1009,11 +1045,7 @@ nsa_selection_attention_backward(torch::Tensor q,
 
     auto mem_size = kittens::MAX_SHARED_MEMORY;
     auto threads  = 4 * kittens::WARP_THREADS;
-
     auto stream = at::cuda::getCurrentCUDAStream().stream();
-
-
-    // TORCH_CHECK(seq_len % (4*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 256");
 
     if (head_dim == 64)  {
         using og_tile = st_bf<16, 64>;
@@ -1040,31 +1072,20 @@ nsa_selection_attention_backward(torch::Tensor q,
         );
 
         bwd_attend_prep_ker<64><<<grid_bwd, bwd_prep_globals::seq_block_size*kittens::WARP_THREADS, mem_size, stream>>>(bwd_g);
-
-        using bwd_q_tile    =         st_bf<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_width>;
-        using bwd_k_tile    =         st_bf<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>;
-        using bwd_v_tile    =         st_bf<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>;
-        using bwd_og_tile   =         st_bf<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_width>;
-        using bwd_qg_tile   =         st_bf<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_width>;
-        using bwd_kg_tile   =         st_bf<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>;
-        using bwd_vg_tile   =         st_bf<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>;
-        using bwd_l_tile    = col_vec<st_fl<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_h>>;
-        using bwd_d_tile    = col_vec<st_fl<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_h>>;
-
-        using bwd_q_global  = gl<bf16,  -1, -1, -1, -1, tma::descriptor<bwd_q_tile, dim::ROW>>;
-        using bwd_k_global  = gl<bf16,  -1, -1, -1, -1, tma::descriptor<bwd_k_tile, dim::DEPTH>>;
-        using bwd_v_global  = gl<bf16,  -1, -1, -1, -1, tma::descriptor<bwd_v_tile, dim::DEPTH>>;
-
-        using bwd_og_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<bwd_og_tile, dim::ROW>>;
-
-        using bwd_qg_global = gl<bf16, -1, -1, -1, -1, tma::descriptor<bwd_qg_tile, dim::ROW>>;
-        using bwd_kg_global = gl<bf16, -1, -1, -1, -1, tma::descriptor<bwd_kg_tile, dim::DEPTH>>;
-        using bwd_vg_global = gl<bf16, -1, -1, -1, -1, tma::descriptor<bwd_vg_tile, dim::DEPTH>>;
-
-        using bwd_l_global  = gl<float, -1, -1, -1, -1, bwd_l_tile>;
-        using bwd_d_global  = gl<float, -1, -1, -1, -1, bwd_d_tile>;
-
         using bwd_global_args = bwd_globals<64>;
+        using bwd_q_global  = bwd_global_args::q_gl;
+        using bwd_k_global  = bwd_global_args::k_gl;
+        using bwd_v_global  = bwd_global_args::v_gl;
+        using bwd_og_global = bwd_global_args::og_gl;
+        using bwd_qg_global = bwd_global_args::qg_gl;
+        using bwd_kg_global = bwd_global_args::kg_gl;
+        using bwd_vg_global = bwd_global_args::vg_gl;
+        using bwd_l_global  = bwd_global_args::l_gl;
+        using bwd_d_global  = bwd_global_args::d_gl;
+        using bwd_indices_global = bwd_global_args::indices_gl;
+        int mask_stride_b = kv_heads*seq_len*seq_len/block_size;
+        int mask_stride_h = seq_len*seq_len/block_size;
+
         bwd_q_global  bwd_q_arg {d_q,  static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 64U};
         bwd_k_global  bwd_k_arg {d_k,  static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 64U};
         bwd_v_global  bwd_v_arg {d_v,  static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 64U};
@@ -1074,6 +1095,11 @@ nsa_selection_attention_backward(torch::Tensor q,
         bwd_vg_global bwd_vg_arg{d_vg, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 64U};
         bwd_l_global  bwd_l_arg {d_l,  static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), 1U,  static_cast<unsigned int>(qo_heads)};
         bwd_d_global  bwd_d_arg {d_d,  static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), 1U,  static_cast<unsigned int>(qo_heads)};
+        bwd_indices_global bwd_indices_arg{indices_ptr, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(block_count)};
+        prepare_mask_globals prep_mask_arg{bwd_indices_arg, mask_ptr, mask_stride_b, mask_stride_h, static_cast<int>(block_size)};
+        dim3 grid_prep_mask(batch, kv_heads, prepare_mask_globals::seq_blocks);
+        prepare_mask<<<grid_prep_mask, prepare_mask_globals::threads, 0, stream>>>(prep_mask_arg);
+
         bwd_global_args bwd_global{bwd_q_arg,
                         bwd_k_arg,
                         bwd_v_arg,
@@ -1083,10 +1109,14 @@ nsa_selection_attention_backward(torch::Tensor q,
                         bwd_vg_arg,
                         bwd_l_arg,
                         bwd_d_arg,
+                        mask_ptr,
                         static_cast<int>(seq_len),
-                        static_cast<int>(hr)};
+                        static_cast<int>(hr),
+                        static_cast<int>(block_size),
+                        static_cast<int>(block_count),
+                        mask_stride_b,
+                        mask_stride_h};
 
-        // TORCH_CHECK(seq_len % (4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_DIM) == 0, "sequence length must be divisible by 128");
         dim3 grid_bwd_2(host_ceil_div(seq_len, 4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>), kv_heads, batch);
         threads = kittens::WARP_THREADS * BWD_NUM_WORKERS;
 
@@ -1121,117 +1151,117 @@ nsa_selection_attention_backward(torch::Tensor q,
         }
     }
 
-    if (head_dim == 128) {
-        using og_tile = st_bf<16, 128>;
-        using o_tile  = st_bf<16, 128>;
-        using d_tile  = col_vec<st_fl<16, 128>>;
+    // if (head_dim == 128) {
+    //     using og_tile = st_bf<16, 128>;
+    //     using o_tile  = st_bf<16, 128>;
+    //     using d_tile  = col_vec<st_fl<16, 128>>;
 
-        using og_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<og_tile, dim::ROW>>;
-        using o_global  = gl<bf16,  -1, -1, -1, -1, tma::descriptor<o_tile, dim::ROW>>;
-        using d_global  = gl<float, -1, -1, -1, -1, d_tile>;
+    //     using og_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<og_tile, dim::ROW>>;
+    //     using o_global  = gl<bf16,  -1, -1, -1, -1, tma::descriptor<o_tile, dim::ROW>>;
+    //     using d_global  = gl<float, -1, -1, -1, -1, d_tile>;
 
-        using bwd_prep_globals = bwd_prep_globals<128>;
-        dim3 grid_bwd(host_ceil_div(seq_len, bwd_prep_globals::seq_block_size), kv_heads, batch);
+    //     using bwd_prep_globals = bwd_prep_globals<128>;
+    //     dim3 grid_bwd(host_ceil_div(seq_len, bwd_prep_globals::seq_block_size), kv_heads, batch);
 
-        og_global prep_og_arg{d_og, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
-        o_global  prep_o_arg {d_o,  static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
-        d_global  prep_d_arg {d_d,  static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), 1U,   static_cast<unsigned int>(qo_heads)};
+    //     og_global prep_og_arg{d_og, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
+    //     o_global  prep_o_arg {d_o,  static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
+    //     d_global  prep_d_arg {d_d,  static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), 1U,   static_cast<unsigned int>(qo_heads)};
 
-        bwd_prep_globals bwd_g{prep_og_arg, prep_o_arg, prep_d_arg};
+    //     bwd_prep_globals bwd_g{prep_og_arg, prep_o_arg, prep_d_arg};
 
-        cudaFuncSetAttribute(
-            bwd_attend_prep_ker<128>,
-            cudaFuncAttributeMaxDynamicSharedMemorySize,
-            mem_size
-        );
+    //     cudaFuncSetAttribute(
+    //         bwd_attend_prep_ker<128>,
+    //         cudaFuncAttributeMaxDynamicSharedMemorySize,
+    //         mem_size
+    //     );
 
-        bwd_attend_prep_ker<128><<<grid_bwd, bwd_prep_globals::seq_block_size*kittens::WARP_THREADS, mem_size, stream>>>(bwd_g);
+    //     bwd_attend_prep_ker<128><<<grid_bwd, bwd_prep_globals::seq_block_size*kittens::WARP_THREADS, mem_size, stream>>>(bwd_g);
 
-        using bwd_q_tile    =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>;
-        using bwd_k_tile    =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>;
-        using bwd_v_tile    =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>;
-        using bwd_og_tile   =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>;
-        using bwd_qg_tile   =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>;
-        using bwd_kg_tile   =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>;
-        using bwd_vg_tile   =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>;
-        using bwd_l_tile    = col_vec<st_fl<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_h>>;
-        using bwd_d_tile    = col_vec<st_fl<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_h>>;
+    //     using bwd_q_tile    =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>;
+    //     using bwd_k_tile    =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>;
+    //     using bwd_v_tile    =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>;
+    //     using bwd_og_tile   =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>;
+    //     using bwd_qg_tile   =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>;
+    //     using bwd_kg_tile   =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>;
+    //     using bwd_vg_tile   =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>;
+    //     using bwd_l_tile    = col_vec<st_fl<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_h>>;
+    //     using bwd_d_tile    = col_vec<st_fl<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_h>>;
 
-        using bwd_q_global  = gl<bf16,  -1, -1, -1, -1, tma::descriptor<bwd_q_tile, dim::ROW>>;
-        using bwd_k_global  = gl<bf16,  -1, -1, -1, -1, tma::descriptor<bwd_k_tile, dim::DEPTH>>;
-        using bwd_v_global  = gl<bf16,  -1, -1, -1, -1, tma::descriptor<bwd_v_tile, dim::DEPTH>>;
+    //     using bwd_q_global  = gl<bf16,  -1, -1, -1, -1, tma::descriptor<bwd_q_tile, dim::ROW>>;
+    //     using bwd_k_global  = gl<bf16,  -1, -1, -1, -1, tma::descriptor<bwd_k_tile, dim::DEPTH>>;
+    //     using bwd_v_global  = gl<bf16,  -1, -1, -1, -1, tma::descriptor<bwd_v_tile, dim::DEPTH>>;
 
-        using bwd_og_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<bwd_og_tile, dim::ROW>>;
+    //     using bwd_og_global = gl<bf16,  -1, -1, -1, -1, tma::descriptor<bwd_og_tile, dim::ROW>>;
 
-        using bwd_qg_global = gl<bf16, -1, -1, -1, -1, tma::descriptor<bwd_qg_tile, dim::ROW>>;
-        using bwd_kg_global = gl<bf16, -1, -1, -1, -1, tma::descriptor<bwd_kg_tile, dim::DEPTH>>;
-        using bwd_vg_global = gl<bf16, -1, -1, -1, -1, tma::descriptor<bwd_vg_tile, dim::DEPTH>>;
+    //     using bwd_qg_global = gl<bf16, -1, -1, -1, -1, tma::descriptor<bwd_qg_tile, dim::ROW>>;
+    //     using bwd_kg_global = gl<bf16, -1, -1, -1, -1, tma::descriptor<bwd_kg_tile, dim::DEPTH>>;
+    //     using bwd_vg_global = gl<bf16, -1, -1, -1, -1, tma::descriptor<bwd_vg_tile, dim::DEPTH>>;
 
-        using bwd_l_global  = gl<float, -1, -1, -1, -1, bwd_l_tile>;
-        using bwd_d_global  = gl<float, -1, -1, -1, -1, bwd_d_tile>;
+    //     using bwd_l_global  = gl<float, -1, -1, -1, -1, bwd_l_tile>;
+    //     using bwd_d_global  = gl<float, -1, -1, -1, -1, bwd_d_tile>;
 
-        using bwd_global_args = bwd_globals<128>;
+    //     using bwd_global_args = bwd_globals<128>;
 
-        bwd_q_global  bwd_q_arg {d_q,  static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
-        bwd_k_global  bwd_k_arg {d_k,  static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 128U};
-        bwd_v_global  bwd_v_arg {d_v,  static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 128U};
-        bwd_og_global bwd_og_arg{d_og, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
-        bwd_qg_global bwd_qg_arg{d_qg, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
-        bwd_kg_global bwd_kg_arg{d_kg, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 128U};
-        bwd_vg_global bwd_vg_arg{d_vg, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 128U};
-        bwd_l_global  bwd_l_arg {d_l,  static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), 1U,   static_cast<unsigned int>(qo_heads)};
-        bwd_d_global  bwd_d_arg {d_d,  static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), 1U,   static_cast<unsigned int>(qo_heads)};
+    //     bwd_q_global  bwd_q_arg {d_q,  static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
+    //     bwd_k_global  bwd_k_arg {d_k,  static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 128U};
+    //     bwd_v_global  bwd_v_arg {d_v,  static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 128U};
+    //     bwd_og_global bwd_og_arg{d_og, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
+    //     bwd_qg_global bwd_qg_arg{d_qg, static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), static_cast<unsigned int>(qo_heads), 128U};
+    //     bwd_kg_global bwd_kg_arg{d_kg, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 128U};
+    //     bwd_vg_global bwd_vg_arg{d_vg, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_len), static_cast<unsigned int>(kv_heads), 128U};
+    //     bwd_l_global  bwd_l_arg {d_l,  static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), 1U,   static_cast<unsigned int>(qo_heads)};
+    //     bwd_d_global  bwd_d_arg {d_d,  static_cast<unsigned int>(batch), static_cast<unsigned int>(seq_len), 1U,   static_cast<unsigned int>(qo_heads)};
 
-        bwd_global_args bwd_global{
-                        bwd_q_arg,
-                        bwd_k_arg,
-                        bwd_v_arg,
-                        bwd_og_arg,
-                        bwd_qg_arg,
-                        bwd_kg_arg,
-                        bwd_vg_arg,
-                        bwd_l_arg,
-                        bwd_d_arg,
-                        static_cast<int>(seq_len),
-                        static_cast<int>(hr)};
+    //     bwd_global_args bwd_global{
+    //                     bwd_q_arg,
+    //                     bwd_k_arg,
+    //                     bwd_v_arg,
+    //                     bwd_og_arg,
+    //                     bwd_qg_arg,
+    //                     bwd_kg_arg,
+    //                     bwd_vg_arg,
+    //                     bwd_l_arg,
+    //                     bwd_d_arg,
+    //                     static_cast<int>(seq_len),
+    //                     static_cast<int>(hr)};
 
-        // TORCH_CHECK(seq_len % (4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_DIM) == 0, "sequence length must be divisible by 128");
-        dim3 grid_bwd_2(host_ceil_div(seq_len, 4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>), kv_heads, batch);
-        threads = kittens::WARP_THREADS * BWD_NUM_WORKERS;
+    //     // TORCH_CHECK(seq_len % (4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_DIM) == 0, "sequence length must be divisible by 128");
+    //     dim3 grid_bwd_2(host_ceil_div(seq_len, 4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>), kv_heads, batch);
+    //     threads = kittens::WARP_THREADS * BWD_NUM_WORKERS;
 
 
-        if (is_causal) {
-            cudaFuncSetAttribute(
-                bwd_attend_ker<128, true>,
-                cudaFuncAttributeMaxDynamicSharedMemorySize,
-                194000
-            );
-            cudaFuncSetAttribute(
-                bwd_attend_ker<128, true>,
-                cudaFuncAttributePreferredSharedMemoryCarveout,
-                85
-            );
+    //     if (is_causal) {
+    //         cudaFuncSetAttribute(
+    //             bwd_attend_ker<128, true>,
+    //             cudaFuncAttributeMaxDynamicSharedMemorySize,
+    //             194000
+    //         );
+    //         cudaFuncSetAttribute(
+    //             bwd_attend_ker<128, true>,
+    //             cudaFuncAttributePreferredSharedMemoryCarveout,
+    //             85
+    //         );
 
-            bwd_attend_ker<128, true><<<grid_bwd_2, threads, 194000, stream>>>(bwd_global);
-        }
-        else {
-            cudaFuncSetAttribute(
-                bwd_attend_ker<128, false>,
-                cudaFuncAttributeMaxDynamicSharedMemorySize,
-                194000
-            );
-            cudaFuncSetAttribute(
-                bwd_attend_ker<128, false>,
-                cudaFuncAttributePreferredSharedMemoryCarveout,
-                85
-            );
+    //         bwd_attend_ker<128, true><<<grid_bwd_2, threads, 194000, stream>>>(bwd_global);
+    //     }
+    //     else {
+    //         cudaFuncSetAttribute(
+    //             bwd_attend_ker<128, false>,
+    //             cudaFuncAttributeMaxDynamicSharedMemorySize,
+    //             194000
+    //         );
+    //         cudaFuncSetAttribute(
+    //             bwd_attend_ker<128, false>,
+    //             cudaFuncAttributePreferredSharedMemoryCarveout,
+    //             85
+    //         );
 
-            bwd_attend_ker<128, false><<<grid_bwd_2, threads, 194000, stream>>>(bwd_global);
-        }
+    //         bwd_attend_ker<128, false><<<grid_bwd_2, threads, 194000, stream>>>(bwd_global);
+    //     }
 
-    }
+    // }
 
-    return {qg, kg, vg};
+    return {qg, kg, vg, mask};
 }
 
 #else
