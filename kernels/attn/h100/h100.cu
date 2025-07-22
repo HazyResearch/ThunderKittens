@@ -589,9 +589,6 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
     }
     else {
         rt_fl<16, G::tile_width> kg_reg, vg_reg;
-    
-        row_vec<rt_fl<16, 64>> row_reg; 
-
         rt_fl<16, 64> s_block_t,  p_block_t; 
         rt_fl<16, 64> ds_block_t, dp_block_t; 
         rt_bf<16, 64> ds_block_t_mma, p_block_t_mma;
