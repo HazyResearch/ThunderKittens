@@ -62,6 +62,25 @@ template<kittens_layout T> struct producer_load_args : uniform_args<T> {
     ) : uniform_args<T>(_args), input(_input), state(_state), inputs_arrived(_inputs_arrived), iter(_iter) {}
 };
 
+
+// Producer load cluster args
+template<kittens_layout T> struct producer_load_cluster_args : uniform_args<T> {
+    using CKL = complete_kittens_layout<T>;
+    typename CKL::producer_state_t & state;
+    typename CKL::input_block_t & input;
+    kittens::semaphore & inputs_arrived;
+    kittens::semaphore & inputs_cluster_arrived;
+    int iter;
+    __device__ producer_load_cluster_args(
+        typename CKL::producer_state_t& _state,
+        typename CKL::input_block_t& _input,
+        semaphore& _inputs_arrived,
+        semaphore& _inputs_cluster_arrived,
+        int _iter,
+        uniform_args<T> &_args
+    ) : uniform_args<T>(_args), input(_input), state(_state), inputs_arrived(_inputs_arrived), inputs_cluster_arrived(_inputs_cluster_arrived), iter(_iter) {}
+};
+
 // Consumer init args
 template<kittens_layout T> struct consumer_setup_args : uniform_args<T> {
     using CKL = complete_kittens_layout<T>;
