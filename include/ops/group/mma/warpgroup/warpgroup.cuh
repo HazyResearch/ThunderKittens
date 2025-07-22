@@ -168,7 +168,7 @@ __device__ static inline void mma_AB(D &d,
     // Do it
     #pragma unroll
     for(int m = 0; m < M_DIV_4; m++) {
-        rt<T_D, TILE_ROW_DIM<T_D>, TILE_COL_DIM<T_D>*N, ducks::rt_layout::row> &d_ref = subtile_inplace<TILE_ROW_DIM<T_AB>>(d, m);
+        rt<T_D, TILE_ROW_DIM<T_D>, TILE_COL_DIM<T_D>*N, ducks::rt_layout::row> &d_ref = group<1>::subtile_inplace<TILE_ROW_DIM<T_AB>>(d, m);
         base::rt_st(
             d_ref,
             a.tiles[m][0],
@@ -285,7 +285,7 @@ __device__ static inline void mma_ABt(D &d,
     // Do it
     #pragma unroll
     for(int m = 0; m < M_DIV_4; m++) {
-        rt<T_D, TILE_ROW_DIM<T_D>, TILE_COL_DIM<T_D>*N, ducks::rt_layout::row> &d_ref = subtile_inplace<TILE_ROW_DIM<T_AB>>(d, m);
+        rt<T_D, TILE_ROW_DIM<T_D>, TILE_COL_DIM<T_D>*N, ducks::rt_layout::row> &d_ref = group<1>::subtile_inplace<TILE_ROW_DIM<T_AB>>(d, m);
         base::rt_st(
             d_ref,
             a.tiles[m][0],
@@ -579,7 +579,7 @@ __device__ static inline void mma_AB(D &d,
     // Do it
     #pragma unroll // Do real part
     for(int m = 0; m < M_DIV_4; m++) {
-        rt<T_D, TILE_ROW_DIM<T_D>, TILE_COL_DIM<T_D>*N, ducks::rt_layout::row> &d_ref = subtile_inplace<TILE_ROW_DIM<T_AB>>(d.real, m);
+        rt<T_D, TILE_ROW_DIM<T_D>, TILE_COL_DIM<T_D>*N, ducks::rt_layout::row> &d_ref = group<1>::subtile_inplace<TILE_ROW_DIM<T_AB>>(d.real, m);
         base::rt_st(
             d_ref,
             a.real.tiles[m][0],
@@ -607,7 +607,7 @@ __device__ static inline void mma_AB(D &d,
     }
     #pragma unroll // Do imaginary part
     for(int m = 0; m < M_DIV_4; m++) {
-        rt<T_D, TILE_ROW_DIM<T_AB>, TILE_COL_DIM<T_AB>*N, ducks::rt_layout::row> &d_ref = subtile_inplace<TILE_ROW_DIM<T_AB>>(d.imag, m);
+        rt<T_D, TILE_ROW_DIM<T_AB>, TILE_COL_DIM<T_AB>*N, ducks::rt_layout::row> &d_ref = group<1>::subtile_inplace<TILE_ROW_DIM<T_AB>>(d.imag, m);
         base::rt_st(
             d_ref,
             a.real.tiles[m][0],
@@ -769,7 +769,7 @@ __device__ static inline void mma_ABt(D &d,
     // Do it
     #pragma unroll
     for(int m = 0; m < M_DIV_4; m++) {
-        rt<T_D, TILE_ROW_DIM<T_D>, TILE_ROW_DIM<T_D>*N, ducks::rt_layout::row> &d_ref = subtile_inplace<TILE_ROW_DIM<T_AB>>(d.real, m);
+        rt<T_D, TILE_ROW_DIM<T_D>, TILE_ROW_DIM<T_D>*N, ducks::rt_layout::row> &d_ref = group<1>::subtile_inplace<TILE_ROW_DIM<T_AB>>(d.real, m);
         base::rt_st(
             d_ref,
             a.real.tiles[m][0],
@@ -797,7 +797,7 @@ __device__ static inline void mma_ABt(D &d,
     }
     #pragma unroll
     for(int m = 0; m < M_DIV_4; m++) {
-        rt<T_D, TILE_ROW_DIM<T_AB>, TILE_ROW_DIM<T_AB>*N, ducks::rt_layout::row> &d_ref = subtile_inplace<TILE_ROW_DIM<T_AB>>(d.imag, m);
+        rt<T_D, TILE_ROW_DIM<T_AB>, TILE_ROW_DIM<T_AB>*N, ducks::rt_layout::row> &d_ref = group<1>::subtile_inplace<TILE_ROW_DIM<T_AB>>(d.imag, m);
         base::rt_st(
             d_ref,
             a.real.tiles[m][0],
