@@ -488,16 +488,12 @@ compute_bwd_loop(
 {
     group<4>::sync(11); 
     wait(q_b[tic], ((stage_flag - q_start)/2)%2);
-    // wait(vec_b[tic], ((qo_idx - q_start)/2)%2);
     stream_tile(s_block_t, l_smem, tic);
-    
-    // [BlockKV, Width] * [BlockQ, Width] -> [BlockKV, BlockQ]
     // [BlockKV, Width] * [G, Width] -> [BlockKV, G]
     warpgroup::mma_ABt(s_block_t, k_smem, q_smem[tic]);
     warpgroup::mma_commit_group();
 
     wait(o_b[tic], ((stage_flag - q_start)/2)%2);
-    // [BlockKV, Width] * [BlockQ, Width] -> [BlockKV, BlockQ]
     // [BlockKV, Width] * [G, Width] -> [BlockKV, G]
     warpgroup::mm_ABt(dp_block_t, v_smem, og_smem[tic]);
     warpgroup::mma_commit_group();
@@ -625,13 +621,6 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
                 break;
             }
         }
-
-        // Don't use tma::load_async for l_smem and d_smem because it sames have
-        // some synchronize problem.
-        // coord<l_tile> vec_idx = {blockIdx.z, q_start, 0, blockIdx.y};
-        // tma::expect_bytes(vec_b[tic], sizeof(l_smem[0])+sizeof(d_smem[0]));
-        // tma::load_async(l_smem[tic], g.l, vec_idx, vec_b[tic]);
-        // tma::load_async(d_smem[tic], g.d, vec_idx, vec_b[tic]);
     }
     if(warpid==0){
         coord<l_tile> vec_idx = {blockIdx.z, q_start, 0, blockIdx.y};
@@ -647,7 +636,6 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
             int stage_flag = q_start;
             for (int qo_idx = q_start; qo_idx < qo_blocks; qo_idx+=1) {
                 if (qo_idx + 1 < qo_blocks && mask_ptr[qo_idx+1]) {
-                    // bool skip = mask_ptr[qo_idx+];
                     coord<l_tile> vec_idx = {blockIdx.z, qo_idx+1, 0, blockIdx.y};
                     load(l_smem[toc], g.l, vec_idx);
                     load(d_smem[toc], g.d, vec_idx);
@@ -661,12 +649,6 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
                     stage_flag += 1;
                     tic ^= 1;
                     toc ^= 1;
-                    // Don't use tma::load_async for l_smem and d_smem because it sames have
-                    // some synchronize problem.
-                    // coord<l_tile> vec_idx = {blockIdx.z, qo_idx+1, 0, blockIdx.y};
-                    // tma::expect_bytes(vec_b[toc], sizeof(l_smem[0])+sizeof(d_smem[0]));
-                    // tma::load_async(l_smem[toc], g.l, vec_idx, vec_b[toc]);
-                    // tma::load_async(d_smem[toc], g.d, vec_idx, vec_b[toc]);
                 }
             }
         }
@@ -1247,7 +1229,7 @@ nsa_selection_attention_backward(torch::Tensor q,
 
     }
 
-    return {qg, kg, vg, mask};
+    return {qg, kg, vg};
 }
 
 #else

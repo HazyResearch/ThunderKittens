@@ -167,13 +167,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
 
         int kv_iters; 
         if constexpr (is_causal) {
-            // Normal casual mask
-            // kv_iters = (seq_idx * 4) - 1 + (CONSUMER_WARPGROUPS * 4);
-            // kv_iters = (kv_iters/8);
-            // Comression causal mask
             int q_idx_upper = (seq_idx + CONSUMER_WARPGROUPS) * K::qo_height - 1;
-            // kv_iters = ceil_div(q_idx_upper, K::kv_height) - 1;
-
             int kv_idx = (q_idx_upper-g.block_size) / g.block_stride;
             kv_idx = kv_idx >= 0 ? kv_idx : 0;
             kv_iters = ceil_div(kv_idx, K::kv_height) - 1;
@@ -203,10 +197,6 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
                     for (auto j = 0; j < (K::kv_height/kittens::TILE_ROW_DIM<bf16>); j++) {
                         auto k_idx = k_blk + j;
                         auto &attn_subtile = reinterpret_cast<rt_fl<16, 16>&>(att_block.tiles[0][j]);
-
-                        // if      (k_idx >  q_blk) { neg_infty  (attn_subtile); }
-                        // else if (k_idx == q_blk) { make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
-
                         int q_lower_id = q_blk * kittens::TILE_ROW_DIM<bf16>;
                         int q_upper_id = q_lower_id + kittens::TILE_ROW_DIM<bf16> - 1;
                         int kv_lower_id = k_idx * kittens::TILE_ROW_DIM<bf16>;
@@ -487,8 +477,6 @@ causal_mask(auto &reg_tile, int qo_idx, int block_stride, int block_size) {
     for (int j = 0; j < (tile_h_qo/kittens::TILE_ROW_DIM<bf16>); j++) {
         int q_idx = q_blk + j;
         auto &attn_subtile = reinterpret_cast<rt_fl<16, 16>&>(reg_tile.tiles[0][j]);
-        // if      (q_idx  < k_blk) { neg_infty(attn_subtile); }
-        // else if (q_idx == k_blk) { make_causal_t(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
         int q_lower_id = q_idx * kittens::TILE_ROW_DIM<bf16>;
         int q_upper_id = q_lower_id + kittens::TILE_ROW_DIM<bf16> - 1;
 
@@ -838,7 +826,6 @@ nsa_compress_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v
     float* l_ptr = reinterpret_cast<float*>(l_vec.data_ptr<float>());
     float* d_l   = reinterpret_cast<float*>(l_ptr);
 
-    cudaDeviceSynchronize();
     auto stream = at::cuda::getCurrentCUDAStream().stream(); 
 
     if (head_dim == 64) {
@@ -888,8 +875,6 @@ nsa_compress_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v
 
             fwd_attend_ker<64, false><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
         }
-        CHECK_CUDA_ERROR(cudaGetLastError());
-        cudaStreamSynchronize(stream);
     }
 
     if (head_dim == 128) {
@@ -940,12 +925,9 @@ nsa_compress_attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v
             fwd_attend_ker<128, false><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
         }
 
-        CHECK_CUDA_ERROR(cudaGetLastError());
-        cudaStreamSynchronize(stream);
     }
 
     return {o, l_vec};
-    cudaDeviceSynchronize();
 }
 
 std::vector<torch::Tensor> 
@@ -1054,10 +1036,7 @@ nsa_compress_attention_backward(torch::Tensor q,
     auto mem_size = kittens::MAX_SHARED_MEMORY; 
     auto threads  = 4 * kittens::WARP_THREADS;
 
-    cudaDeviceSynchronize();
     auto stream = at::cuda::getCurrentCUDAStream().stream();
-
-    cudaStreamSynchronize(stream);
 
     // TORCH_CHECK(seq_len % (4*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 256");
     dim3 grid_bwd(host_ceil_div(seq_len, 4*kittens::TILE_ROW_DIM<bf16>*4), qo_heads, batch);
@@ -1136,12 +1115,8 @@ nsa_compress_attention_backward(torch::Tensor q,
                         static_cast<int>(hr),
                         block_size,
                         block_stride};
-
-        // TORCH_CHECK(seq_len % (4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_DIM) == 0, "sequence length must be divisible by 128");
         dim3 grid_bwd_2(host_ceil_div(kv_len, 4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>), qo_heads, batch);
         threads = kittens::WARP_THREADS * BWD_NUM_WORKERS;
-
-        cudaDeviceSynchronize();
 
         if (is_causal) {
             cudaFuncSetAttribute(
@@ -1171,13 +1146,6 @@ nsa_compress_attention_backward(torch::Tensor q,
             
             bwd_attend_ker<64, false><<<grid_bwd_2, threads, 194000, stream>>>(bwd_global); 
         }
-
-        // CHECK_CUDA_ERROR(cudaGetLastError());
-        cudaStreamSynchronize(stream);
-        cudaDeviceSynchronize();
-        // const auto kernel_end = std::chrono::high_resolution_clock::now();
-        // std::cout << "Kernel Time: " << std::chrono::duration_cast<std::chrono::microseconds>(kernel_end - start).count() << "us" << std::endl;
-        // std::cout << "---" << std::endl;
     }
 
     if (head_dim == 128) {
@@ -1260,9 +1228,6 @@ nsa_compress_attention_backward(torch::Tensor q,
         dim3 grid_bwd_2(host_ceil_div(kv_len, 4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>), qo_heads, batch);
         threads = kittens::WARP_THREADS * BWD_NUM_WORKERS;
 
-        cudaStreamSynchronize(stream);
-        cudaDeviceSynchronize(); 
-        
         if (is_causal) {
             cudaFuncSetAttribute(
                 bwd_attend_ker<128, true>,
@@ -1291,14 +1256,9 @@ nsa_compress_attention_backward(torch::Tensor q,
             
             bwd_attend_ker<128, false><<<grid_bwd_2, threads, 194000, stream>>>(bwd_global); 
         }
-
-        // CHECK_CUDA_ERROR(cudaGetLastError());
-        cudaStreamSynchronize(stream);
-        cudaDeviceSynchronize();
     }
 
     return {qg, kg, vg};
-    cudaDeviceSynchronize();
 }
 
 
