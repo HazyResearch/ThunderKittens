@@ -45,4 +45,3 @@ $(TARGET): $(SRC)
 clean:
 	rm -f build/$(TARGET)
 	rm -rf build/*.o
-	

@@ -132,9 +132,6 @@ struct attn_bwd_layout {
 
 template <int D, bool is_causal>
 struct attn_bwd_template {
-  // static constexpr int NUM_CONSUMER_WARPS = 12,
-  //                      NUM_WORKERS = NUM_CONSUMER_WARPS / 4,
-  //                      INPUT_PIPE_STAGES = 1;
   static constexpr int NUM_CONSUMER_WARPS = 8,
                        NUM_CONSUMER_WARPGROUPS = NUM_CONSUMER_WARPS / 4,
                        INPUT_PIPE_STAGES = 1;
@@ -183,14 +180,6 @@ struct attn_bwd_template {
                          ? (args.globals.Q.rows() + layout::qo_tile::rows - 1) /
                                (layout::qo_tile::rows)
                          : -1;
-
-    if (warpgroup::laneid() == 0) {
-      if (args.num_iters > 0) {
-        printf("common_setup: batch %d, head %d, seq %d, num_iters %d\n",
-               args.common.batch, args.common.head, args.common.seq,
-               args.num_iters);
-      }
-    }
   }
 
   struct producer {
@@ -342,10 +331,13 @@ struct attn_bwd_template {
         warpgroup::store(args.scratch.qg_smem, args.state.qg_reg);
         group<4>::sync(warpgroup::groupid() + 4);
 
-        coord<typename layout::dq_tile> tiled_idx = {blockIdx.z, blockIdx.y,
-                                                     blockIdx.x, 0};
-        tma::store_add_async(args.globals.qg, args.scratch.qg_smem, tiled_idx);
-        tma::store_async_wait();
+        if (warpgroup::warpid() % 4 == 0) {
+          coord<typename layout::dq_tile> tiled_idx = {
+              args.common.batch, args.common.head, args.iter, 0};
+          tma::store_add_async(args.globals.qg, args.scratch.qg_smem,
+                               tiled_idx);
+          tma::store_async_wait();
+        }
       }
 
       if (laneid() == 0) arrive(args.inputs_finished);
@@ -456,8 +448,6 @@ struct FlashAttentionBwd {
                          cudaFuncAttributeMaxDynamicSharedMemorySize,
                          MAX_SHARED_MEMORY - 1024);
     dim3 block(kittens::prototype::detail::NUM_THREADS_v<ker_template>);
-    // printf("thread nums: %d.\n",
-    //        kittens::prototype::detail::NUM_THREADS_v<ker_template>);
     prototype::lcf::kernel<ker_template>
         <<<num_sms, block, MAX_SHARED_MEMORY - 1024, stream>>>(g);
   }
