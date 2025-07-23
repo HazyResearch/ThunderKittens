@@ -127,7 +127,7 @@ struct matmul_template {
                 } else {
                     tma::expect(args.inputs_cluster_arrived, args.input.b);
                     tma::load_async(args.input.b, args.globals.B,
-                        {args.common.group_idx, args.common.block_n_idx, args.iter}, args.inputs_arrived);
+                        {args.common.group_idx, args.common.block_n_idx, args.iter}, args.inputs_cluster_arrived);
                 }
             }
         }
