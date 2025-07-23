@@ -5,46 +5,6 @@ using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::lcf;
 
-// New causal_mask function for LCF backward pass
-template <int tile_h_qo, int tile_h>
-__device__ static inline void causal_mask(auto& reg_tile, int q_block_idx,
-                                          int k_block_idx) {
-  // q_block_idx corresponds to args.common.seq (current Q block index in the
-  // sequence) k_block_idx corresponds to args.iter (current K/V block index in
-  // the sequence)
-
-  // Iterate over rows of the Q tile within the current attention block
-  for (int j = 0; j < (tile_h_qo / kittens::TILE_ROW_DIM<bf16>); j++) {
-    // Absolute row index for the current Q element being processed
-    // This takes into account the block's overall position in the sequence and
-    // the row within the current tile
-    int q_abs_idx_in_seq =
-        q_block_idx * (tile_h_qo / kittens::TILE_ROW_DIM<bf16>)+j;
-
-    auto& attn_subtile = reinterpret_cast<rt_fl<16, 16>&>(reg_tile.tiles[0][j]);
-
-    // Absolute starting index of the current K block in the sequence
-    int k_abs_start_idx_in_seq =
-        k_block_idx *
-        (tile_h /
-         kittens::TILE_ROW_DIM<bf16>);  // Assuming K tiles have same height as
-                                        // Q tiles for row-wise processing
-
-    // If the current Q row's absolute index is less than the current K block's
-    // absolute starting index, it means the Q block is entirely before the K
-    // block in sequence. For causal attention, we must mask out such elements.
-    if (q_abs_idx_in_seq < k_abs_start_idx_in_seq) {
-      neg_infty(attn_subtile);
-    } else if (q_abs_idx_in_seq == k_abs_start_idx_in_seq) {
-      // If the Q block and K block are at the same sequence position,
-      // apply an intra-tile causal mask (upper triangle elements set to
-      // negative infinity).
-      make_causal_t(attn_subtile, attn_subtile,
-                    kittens::base_types::constants<float>::neg_infty());
-    }
-  }
-}
-
 template <int D>
 struct bwd_attend_ker_tile_dims {};
 template <>
@@ -136,6 +96,48 @@ struct attn_bwd_template {
                        NUM_CONSUMER_WARPGROUPS = NUM_CONSUMER_WARPS / 4,
                        INPUT_PIPE_STAGES = 1;
   using layout = attn_bwd_layout<D, NUM_CONSUMER_WARPGROUPS>;
+
+  // New causal_mask function for LCF backward pass
+  template <int tile_h_qo, int tile_h>
+  __device__ static inline void causal_mask(auto& reg_tile, int q_block_idx,
+                                            int k_block_idx) {
+    // q_block_idx corresponds to args.common.seq (current Q block index in the
+    // sequence) k_block_idx corresponds to args.iter (current K/V block index
+    // in the sequence)
+
+    // Iterate over rows of the Q tile within the current attention block
+    for (int j = 0; j < (tile_h_qo / kittens::TILE_ROW_DIM<bf16>); j++) {
+      // Absolute row index for the current Q element being processed
+      // This takes into account the block's overall position in the sequence
+      // and the row within the current tile
+      int q_abs_idx_in_seq =
+          q_block_idx * (tile_h_qo / kittens::TILE_ROW_DIM<bf16>)+j;
+
+      auto& attn_subtile =
+          reinterpret_cast<rt_fl<16, 16>&>(reg_tile.tiles[0][j]);
+
+      // Absolute starting index of the current K block in the sequence
+      int k_abs_start_idx_in_seq =
+          k_block_idx *
+          (tile_h /
+           kittens::TILE_ROW_DIM<bf16>);  // Assuming K tiles have same height
+                                          // as Q tiles for row-wise processing
+
+      // If the current Q row's absolute index is less than the current K
+      // block's absolute starting index, it means the Q block is entirely
+      // before the K block in sequence. For causal attention, we must mask out
+      // such elements.
+      if (q_abs_idx_in_seq < k_abs_start_idx_in_seq) {
+        neg_infty(attn_subtile);
+      } else if (q_abs_idx_in_seq == k_abs_start_idx_in_seq) {
+        // If the Q block and K block are at the same sequence position,
+        // apply an intra-tile causal mask (upper triangle elements set to
+        // negative infinity).
+        make_causal_t(attn_subtile, attn_subtile,
+                      kittens::base_types::constants<float>::neg_infty());
+      }
+    }
+  }
 
   __device__ static inline void stream_tile(auto& reg_tile, auto& smem_vec) {
 #pragma unroll
@@ -234,11 +236,15 @@ struct attn_bwd_template {
             {args.common.batch, kv_idx, seq_idx + warpgroup::groupid(), 0});
       }
 
-      // if (warpgroup::groupid() == 0) {
-      //   warpgroup::increase_registers<256>();
-      // } else {
-      //   warpgroup::increase_registers<224>();
-      // }
+      // Increase register allocation based on warpgroup ID
+      // First warpgroup (ID 0) needs more registers for QG computation
+      if (warpgroup::groupid() == 0) {
+        warpgroup::increase_registers<256>();  // Allocate 256 registers for
+                                               // warpgroup 0
+      } else {
+        warpgroup::increase_registers<224>();  // Allocate 224 registers for
+                                               // other warpgroups
+      }
     }
 
     __device__ static inline void compute(consumer_compute_args<layout> args) {
@@ -310,8 +316,6 @@ struct attn_bwd_template {
       // identifier, which can help avoid conflicts between different sync
       // points in the code.
       group<8>::sync(10);
-      // NOTE(KuangjuX): fix warp number to 4
-      // group<4>::sync(10);
 
       // If this is the first consumer warpgroup (warpgroupid == 0), compute
       // Q gradient dQ = dS * K^T
@@ -384,23 +388,6 @@ struct attn_bwd_template {
       }
 
       tma::store_async_wait();
-
-      // // Store dQ to shared memory for later global store
-      // warpgroup::store(args.scratch.qg_smem, args.state.qg_reg);
-
-      // // Optionally, synchronize with other warps in the warpgroup if
-      // // needed
-      // group<4>::sync(warpgroup::groupid() + 4);
-
-      // if (warpgroup::warpid() % 4 == 0) {
-      //   coord<typename layout::dq_tile> tiled_idx = {blockIdx.z, blockIdx.y,
-      //                                                blockIdx.x, 0};
-      //   tma::store_add_async(args.globals.qg, args.scratch.qg_smem,
-      //   tiled_idx); tma::store_async_wait();
-
-      //   // warpgroup::store(args.globals.qg, args.scratch.qg_smem,
-      //   tiled_idx);
-      // }
 
       if (laneid() == 0) arrive(args.finish_finished);
     }
