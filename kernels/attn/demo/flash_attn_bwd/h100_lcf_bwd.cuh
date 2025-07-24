@@ -3,7 +3,8 @@
 
 using namespace kittens;
 using namespace kittens::prototype;
-using namespace kittens::prototype::lcf;
+// using namespace kittens::prototype::lcf;
+using namespace kittens::prototype::lcsf;
 
 template <int D>
 struct bwd_attend_ker_tile_dims {};
@@ -62,13 +63,16 @@ struct attn_bwd_layout {
     denom_tile d;
   };
 
+  struct output_block {
+    dq_tile qg_smem;
+  };
+
   struct scratch_block {
     kv_tile k[BWD_CONSUMER_WARPGROUPS];
     kv_tile v[BWD_CONSUMER_WARPGROUPS];
     attn_tile ds_smem[BWD_CONSUMER_WARPGROUPS];
     dk_tile dk_smem[BWD_CONSUMER_WARPGROUPS];
     dv_tile dv_smem[BWD_CONSUMER_WARPGROUPS];
-    dq_tile qg_smem;
   };
 
   struct common_state {
@@ -213,6 +217,17 @@ struct attn_bwd_template {
         arrive(args.inputs_arrived);
       }
     }
+
+    __device__ static inline void store(producer_store_args<layout> args) {
+      if (warpgroup::warpid() % 4 == 0) {
+        tma::store_add_async(
+            args.globals.qg, args.output.qg_smem,
+            {args.common.batch, args.common.head, args.iter, 0});
+        tma::store_async_wait();
+      }
+
+      if (laneid() == 0) arrive(args.outputs_finished);
+    }
   };
 
   struct consumer {
@@ -255,7 +270,6 @@ struct attn_bwd_template {
           args.input.q                           // Q tile (bfloat16)
       );
       warpgroup::mma_commit_group();
-      // warpgroup::mma_async_wait();
 
       warpgroup::mm_ABt(args.state.dp_block_t,
                         args.scratch.v[warpgroup::groupid()], args.input.og);
@@ -332,19 +346,14 @@ struct attn_bwd_template {
         warpgroup::mma_commit_group();
         warpgroup::mma_async_wait();
 
-        warpgroup::store(args.scratch.qg_smem, args.state.qg_reg);
+        warpgroup::store(args.output.qg_smem, args.state.qg_reg);
         group<4>::sync(warpgroup::groupid() + 4);
-
-        if (warpgroup::warpid() % 4 == 0) {
-          coord<typename layout::dq_tile> tiled_idx = {
-              args.common.batch, args.common.head, args.iter, 0};
-          tma::store_add_async(args.globals.qg, args.scratch.qg_smem,
-                               tiled_idx);
-          tma::store_async_wait();
-        }
       }
 
-      if (laneid() == 0) arrive(args.inputs_finished);
+      if (laneid() == 0) {
+        arrive(args.inputs_finished);
+        arrive(args.outputs_arrived);
+      }
     }
 
     __device__ static inline void finish(consumer_finish_args<layout> args) {
@@ -362,8 +371,9 @@ struct attn_bwd_template {
       // atomicity if needed or simply for load balancing TMA units.
       if (warpgroup::warpid() % 4 == 0) {
         coord<typename layout::dk_tile> tile_idx = {
-            blockIdx.z, blockIdx.y,
-            blockIdx.x * NUM_CONSUMER_WARPGROUPS + warpgroup::groupid(), 0};
+            args.common.batch, args.common.head,
+            args.common.seq * NUM_CONSUMER_WARPGROUPS + warpgroup::groupid(),
+            0};
         tma::store_add_async(args.globals.kg,
                              args.scratch.dk_smem[warpgroup::groupid()],
                              tile_idx);
@@ -378,8 +388,9 @@ struct attn_bwd_template {
 
       if (warpgroup::warpid() % 4 == 0) {
         coord<typename layout::dv_tile> tile_idx = {
-            blockIdx.z, blockIdx.y,
-            blockIdx.x * NUM_CONSUMER_WARPGROUPS + warpgroup::groupid(), 0};
+            args.common.batch, args.common.head,
+            args.common.seq * NUM_CONSUMER_WARPGROUPS + warpgroup::groupid(),
+            0};
 
         tma::store_add_async(args.globals.vg,
                              args.scratch.dv_smem[warpgroup::groupid()],
@@ -431,11 +442,11 @@ struct FlashAttentionBwd {
                                              .L = Lg,
                                              .D = Dg};
 
-    cudaFuncSetAttribute(prototype::lcf::kernel<ker_template>,
+    cudaFuncSetAttribute(prototype::lcsf::kernel<ker_template>,
                          cudaFuncAttributeMaxDynamicSharedMemorySize,
                          MAX_SHARED_MEMORY - 1024);
     dim3 block(kittens::prototype::detail::NUM_THREADS_v<ker_template>);
-    prototype::lcf::kernel<ker_template>
+    prototype::lcsf::kernel<ker_template>
         <<<num_sms, block, MAX_SHARED_MEMORY - 1024, stream>>>(g);
   }
 };

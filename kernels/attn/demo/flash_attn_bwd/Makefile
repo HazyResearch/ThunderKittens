@@ -13,7 +13,6 @@ NVCCFLAGS=-DNDEBUG -Xcompiler=-fPIE -Xcompiler -fopenmp --expt-extended-lambda -
          -I/usr/local/cuda/include \
          -I${THUNDERKITTENS_ROOT}/include \
          -I${THUNDERKITTENS_ROOT}/prototype \
-         -I$(PROJ_ROOT)/csrc/include \
          -I$(PYTORCH_ROOT)/include \
          -I$(PYTORCH_ROOT)/include/torch/csrc/api/include \
          -I$(PYTORCH_ROOT)/include/ATen \
