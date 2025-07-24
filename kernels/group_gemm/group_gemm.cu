@@ -52,12 +52,11 @@ struct matmul_layout {
         c_tile c[M_BLOCK]; 
     };
     struct scratch_block  {
-        float* scale_b; // scale_b is a single value for the whole group
     };
     struct common_state   {
          uint32_t block_m_idx, block_n_idx;
          uint32_t group_idx;
-         scale_dtype scale_b; // scale_b is a single value for the whole group
+         scale_dtype scale_b; // scale_b is a single value
          bool is_tma_multicast_valid;
      };
     struct consumer_state { 
@@ -74,7 +73,7 @@ struct matmul_template {
     static constexpr int NUM_CONSUMER_WARPS=M_BLOCK*4, INPUT_PIPE_STAGES=4, PRODUCER_BARRIER_ARRIVALS=1;
     // Helper functions
     template<bool PERISISTENT_GRID=true> __host__ static inline dim3 grid(int M, int N, int K) {
-        return dim3(PERISISTENT_GRID ? 128 : M*N/(M_BLOCK*layout::c_tile::num_elements));
+        return dim3(PERISISTENT_GRID ? 132 : M*N/(M_BLOCK*layout::c_tile::num_elements));
     }
     // ThunderKittens template functions
     __device__ static inline void common_setup(common_setup_args<layout> args, bool is_prepared = false) {

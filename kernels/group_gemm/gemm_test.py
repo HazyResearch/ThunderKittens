@@ -145,8 +145,8 @@ def test_m_grouped_gemm_contiguous_tk() -> None:
             ht_out)
         ht_out = torch.where((m_indices == -1).unsqueeze(1), torch.zeros_like(out), ht_out)
         diff = calc_diff(ht_out, ref_out)
-        assert diff < 0.001, f'HT has big difference with float: {m=}, {k=}, {n=}, {diff:.5f}'
-        assert torch.allclose(out, ht_out.bfloat16(), atol=1e-3, rtol=1e-2), f'HT has big difference with deepgemm: {m=}, {k=}, {n=}'
+        assert diff < 0.001, f'TK has big difference with float: {m=}, {k=}, {n=}, {diff:.5f}'
+        assert torch.allclose(out, ht_out.bfloat16(), atol=1e-3, rtol=1e-2), f'TK has big difference with deepgemm: {m=}, {k=}, {n=}'
 
         # tk scale shape need to b (k, m)
         x_fp8 = (x_fp8[0], x_fp8[1].transpose(0, 1).contiguous())
