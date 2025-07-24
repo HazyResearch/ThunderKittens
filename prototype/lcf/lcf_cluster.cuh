@@ -94,7 +94,7 @@ void cluster_kernel(const __grid_constant__ typename lcft::layout::globals globa
     }
 
     // Initialize semaphores. This is constant for all two-stage producer-consumer kernels.
-    __shared__ kittens::semaphore inputs_arrived[INPUT_PIPE_STAGES], inputs_finished[INPUT_PIPE_STAGES], inputs_cluster_arrived[INPUT_PIPE_STAGES];
+    __shared__ kittens::semaphore inputs_arrived[INPUT_PIPE_STAGES], inputs_finished[INPUT_PIPE_STAGES], inputs_cluster_arrived[INPUT_PIPE_STAGES], inputs_used[INPUT_PIPE_STAGES];
     __shared__ kittens::semaphore finish_finished;
     uint32_t semaphore_bitfield = 0xFFFF0000; // ***_finished phase bits start as 1s, ***_arrived phase bits start as 0s
     common_state common;
@@ -108,8 +108,9 @@ void cluster_kernel(const __grid_constant__ typename lcft::layout::globals globa
         if (warpid() == NUM_CONSUMER_WARPS) { // a single warp (in fact a single thread) does these.
             for(int i = 0; i < INPUT_PIPE_STAGES; i++) {
                 init_semaphore(inputs_arrived[i], detail::PRODUCER_BARRIER_ARRIVALS_v<lcft>, 0); // needs to wait on each producer warp
-                init_semaphore(inputs_cluster_arrived[i], detail::PRODUCER_BARRIER_ARRIVALS_v<lcft>, 0); // needs to wait on each producer warp
+                init_semaphore(inputs_cluster_arrived[i], detail::PRODUCER_BARRIER_ARRIVALS_v<lcft>,  0); // needs to wait on each producer warp
                 init_semaphore(inputs_finished[i], detail::CONSUMER_BARRIER_ARRIVALS_v<lcft>, 0); // needs to wait on one thread from each consumer warp
+                init_semaphore(inputs_used[i], 2*detail::CONSUMER_BARRIER_ARRIVALS_v<lcft>, 0); // needs to wait on one thread from each consumer warp
             }
             init_semaphore(finish_finished, detail::CONSUMER_BARRIER_ARRIVALS_v<lcft>, 0); // consumer warps must say they are done with the finish block
         }
@@ -126,13 +127,18 @@ void cluster_kernel(const __grid_constant__ typename lcft::layout::globals globa
             lcft::producer::setup({p_state, unif});
             for(load_iter = 0; load_iter < SAFE_STAGES_BETWEEN_BLOCKS && load_iter<num_iters; load_iter++) { // fill the pipeline
                 wait(inputs_finished[input_ring], get_phasebit<1>(semaphore_bitfield, input_ring));
+                if (cluster_ctarank() == 0)
+                    wait(inputs_used[input_ring], get_phasebit<1>(semaphore_bitfield, input_ring));
                 update_phasebit<1>(semaphore_bitfield, input_ring);
-                lcft::producer::load({p_state, *input_smem[input_ring], inputs_arrived[input_ring], inputs_cluster_arrived[input_ring], load_iter, unif});
+                lcft::producer::load({p_state, *input_smem[input_ring], inputs_arrived[input_ring],  inputs_cluster_arrived[input_ring], load_iter, unif});
                 input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
             }
             wait(finish_finished, (task_iter%2)^1); // wait for consumer to finish their finish stage before we can do the rest.
             for(; load_iter<num_iters; load_iter++) { // fill the pipeline
                 wait(inputs_finished[input_ring], get_phasebit<1>(semaphore_bitfield, input_ring));
+                if (cluster_ctarank() == 0) {
+                    wait(inputs_used[input_ring], get_phasebit<1>(semaphore_bitfield, input_ring));
+                }
                 update_phasebit<1>(semaphore_bitfield, input_ring);
                 lcft::producer::load({p_state, *input_smem[input_ring], inputs_arrived[input_ring], inputs_cluster_arrived[input_ring], load_iter, unif});
                 input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
@@ -142,7 +148,6 @@ void cluster_kernel(const __grid_constant__ typename lcft::layout::globals globa
     } // producer warpgroup
     else { // code path for consumer warps
         using consumers = group<NUM_CONSUMER_WARPS>;
-        // all warps must arrive here, confirming semaphore initialization is visible to all threads.
         tma::cluster::sync();
         for(task_iter = 0; true; task_iter++) {
             num_iters = -1;
@@ -160,7 +165,7 @@ void cluster_kernel(const __grid_constant__ typename lcft::layout::globals globa
                 wait(inputs_arrived[input_ring], get_phasebit<0>(semaphore_bitfield, input_ring)); // wait for memory to arrive, phase changes at half the rate of the ring
                 wait(inputs_cluster_arrived[input_ring], get_phasebit<0>(semaphore_bitfield, input_ring)); // wait for memory to arrive, phase changes at half the rate of the ring
                 update_phasebit<0>(semaphore_bitfield, input_ring);
-                lcft::consumer::compute({c_state, *input_smem[input_ring], inputs_finished[input_ring], it, unif});
+                lcft::consumer::compute({c_state, *input_smem[input_ring], inputs_finished[input_ring], inputs_used[input_ring], it, unif});
                 input_ring=ring_advance<INPUT_PIPE_STAGES>(input_ring);
             } // work loop
             consumers::sync(14); // cannot overwrite finish block until all consumer warps are done.

@@ -134,7 +134,7 @@ struct matmul_template {
 
 
     struct consumer {
-        __device__ static void setup(consumer_setup_args<layout> args, bool is_prepared = true, int iter = 0) {
+        __device__ static void setup(consumer_setup_cluster_args<layout> args, bool is_prepared = true, int iter = 0) {
             if (is_prepared) {
                 warpgroup::increase_registers<232>(); // increase registers for consumers
                 zero(args.state.accum);
@@ -157,7 +157,10 @@ struct matmul_template {
             warpgroup::load(scale_a_rv, args.input.scale_a_sv[warpgroup::groupid()]);
             mul(scale_a_rv, scale_a_rv, args.common.scale_b);
             warpgroup::mma_async_wait();
-            if(laneid() == 0) arrive(args.inputs_finished);
+            if(laneid() == 0) {
+                arrive(args.inputs_finished);
+                tma::cluster::arrive(args.inputs_used, 0, 1);
+            }
             mul_add(args.state.accum, accum_tmp, args.state.accum, scale_a_rv);
             
         }

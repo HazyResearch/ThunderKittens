@@ -107,6 +107,24 @@ template<kittens_layout T> struct consumer_compute_args : uniform_args<T> {
     ) : uniform_args<T>(_args), input(_input), state(_state), inputs_finished(_inputs_finished), iter(_iter) {}
 };
 
+// Consumer compute cluster args
+template<kittens_layout T> struct consumer_compute_cluster_args : uniform_args<T> {
+    using CKL = complete_kittens_layout<T>;
+    typename CKL::consumer_state_t & state;
+    typename CKL::input_block_t & input;
+    kittens::semaphore & inputs_finished;
+    kittens::semaphore & inputs_used;
+    int iter;
+    __device__ consumer_compute_cluster_args(
+        typename CKL::consumer_state_t& _state,
+        typename CKL::input_block_t& _input,
+        semaphore& _inputs_finished,
+        semaphore& _inputs_used,
+        int _iter,
+        uniform_args<T> &_args
+    ) : uniform_args<T>(_args), input(_input), state(_state), inputs_finished(_inputs_finished), inputs_used(_inputs_used), iter(_iter) {}
+};
+
 // Consumer finish args
 template<kittens_layout T> struct consumer_finish_args : uniform_args<T> {
     using CKL = complete_kittens_layout<T>;
