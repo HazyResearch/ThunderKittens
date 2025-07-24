@@ -56,7 +56,7 @@ struct matmul_layout {
     struct common_state   {
          uint32_t block_m_idx, block_n_idx;
          uint32_t group_idx;
-         scale_dtype scale_b; // scale_b is a single value
+         scale_dtype scale_b; // scale_b is a single value for a block tile 128x128
          bool is_tma_multicast_valid;
      };
     struct consumer_state { 
@@ -134,7 +134,7 @@ struct matmul_template {
 
 
     struct consumer {
-        __device__ static void setup(consumer_setup_cluster_args<layout> args, bool is_prepared = true, int iter = 0) {
+        __device__ static void setup(consumer_setup_args<layout> args, bool is_prepared = true, int iter = 0) {
             if (is_prepared) {
                 warpgroup::increase_registers<232>(); // increase registers for consumers
                 zero(args.state.accum);
@@ -146,7 +146,7 @@ struct matmul_template {
                 }];
             }
         }
-        __device__ static void compute(consumer_compute_args<layout> args) {
+        __device__ static void compute(consumer_compute_cluster_args<layout> args) {
             rt_fl<16, layout::c_tile::cols> accum_tmp;
             warpgroup::mm_ABt(
                 accum_tmp,
@@ -262,4 +262,3 @@ torch::Tensor& group_gemm(
 }
 #else
 #endif
-
