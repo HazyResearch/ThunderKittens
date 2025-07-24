@@ -30,8 +30,8 @@ NVCCFLAGS=-DNDEBUG -Xcompiler=-fPIE -Xcompiler -fopenmp --expt-extended-lambda -
          -lcudadevrt \
          -lgomp
 
-TARGET=flash_attn_bwd
-SRC=test_h100_lcf_bwd.cu
+TARGET=bench_h100_lcsf_bwd
+SRC=bench_h100_lcsf_bwd.cu
 
 # Default target
 all: $(TARGET)
