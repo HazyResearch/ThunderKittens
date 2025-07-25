@@ -25,10 +25,11 @@
 class KittensClub {
 public:
     __host__ inline KittensClub(const int *device_ids, const int num_devices);
+    __host__ inline KittensClub(const int *device_ids, const cudaStream_t *streams, const int num_devices);
     __host__ inline ~KittensClub();
 
     // Dispatches `task` to all threads, and waits for all threads to finish (using cv)
-    __host__ inline void execute(std::function<void(int)> task);
+    __host__ inline void execute(std::function<void(int, cudaStream_t)> task);
 
 private:
     // Condition indicators
@@ -39,11 +40,14 @@ private:
     // Threadpool
     std::vector<std::thread> workers;
     
+    // Streams for each device
+    std::vector<cudaStream_t> streams;
+    
     // Main entry point for each thread
     __host__ inline void worker(int worker_id, int device_id);
 
     // Used to dispatch work to all threads
-    std::function<void(int)> current_task;
+    std::function<void(int, cudaStream_t)> current_task;
 
     // Synchronization
     std::mutex mutex;
@@ -54,6 +58,15 @@ private:
 __host__ inline KittensClub::KittensClub(const int *device_ids, const int num_devices) : stop(false), n_task_done(0) {
     for (size_t dev_idx = 0; dev_idx < num_devices; ++dev_idx) {
         task_available.push_back(false);
+        streams.push_back(0); // Use default stream (null stream)
+        workers.emplace_back([this, dev_idx, device_ids] { worker(dev_idx, device_ids[dev_idx]); });
+    }
+}
+
+__host__ inline KittensClub::KittensClub(const int *device_ids, const cudaStream_t *streams_in, const int num_devices) : stop(false), n_task_done(0) {
+    for (size_t dev_idx = 0; dev_idx < num_devices; ++dev_idx) {
+        task_available.push_back(false);
+        streams.push_back(streams_in[dev_idx]);
         workers.emplace_back([this, dev_idx, device_ids] { worker(dev_idx, device_ids[dev_idx]); });
     }
 }
@@ -69,7 +82,7 @@ __host__ inline KittensClub::~KittensClub() {
     }
 }
     
-__host__ inline void KittensClub::execute(std::function<void(int)> task) {
+__host__ inline void KittensClub::execute(std::function<void(int, cudaStream_t)> task) {
     {
         std::lock_guard<std::mutex> lock(mutex);
         current_task = task;
@@ -87,7 +100,7 @@ __host__ inline void KittensClub::execute(std::function<void(int)> task) {
 __host__ inline void KittensClub::worker(int worker_id, int device_id) {
     cudaSetDevice(device_id); // done once and never again! This saves a LOT of time
     while (true) {
-        std::function<void(int)> task;
+        std::function<void(int, cudaStream_t)> task;
         {
             std::unique_lock<std::mutex> lock(mutex);
             cond_task_available.wait(lock, [this, worker_id] { return stop || task_available[worker_id]; });
@@ -98,7 +111,7 @@ __host__ inline void KittensClub::worker(int worker_id, int device_id) {
             task = current_task;
             task_available[worker_id] = false;
         }
-        task(worker_id);
+        task(worker_id, streams[worker_id]);
         {
             std::lock_guard<std::mutex> lock(mutex); // adds about 10 microseconds overhead
             ++n_task_done;

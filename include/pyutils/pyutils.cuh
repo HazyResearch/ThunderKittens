@@ -191,9 +191,27 @@ static void bind_multigpu_boilerplate(auto m) {
             if (device_count < device_ids.size())
                 throw std::runtime_error("Not enough CUDA devices available");
             auto club = std::make_shared<KittensClub>(device_ids.data(), device_ids.size());
-            club->execute([&](int dev_idx) {}); // warmup
+            club->execute([&](int dev_idx, cudaStream_t stream) {}); // warmup
             return club;
-        }), pybind11::arg("device_ids"));
+        }), pybind11::arg("device_ids"))
+        .def(pybind11::init([](const std::vector<int>& device_ids, const std::vector<pybind11::object>& streams) {
+            int device_count;
+            CUDACHECK(cudaGetDeviceCount(&device_count));
+            if (device_count < device_ids.size())
+                throw std::runtime_error("Not enough CUDA devices available");
+            if (streams.size() != device_ids.size())
+                throw std::runtime_error("Number of streams must match number of devices");
+            
+            std::vector<cudaStream_t> raw_streams(streams.size());
+            for (size_t i = 0; i < streams.size(); ++i) {
+                uintptr_t stream_ptr = streams[i].attr("cuda_stream").cast<uintptr_t>();
+                raw_streams[i] = reinterpret_cast<cudaStream_t>(stream_ptr);
+            }
+            
+            auto club = std::make_shared<KittensClub>(device_ids.data(), raw_streams.data(), device_ids.size());
+            club->execute([&](int dev_idx, cudaStream_t stream) {}); // warmup
+            return club;
+        }), pybind11::arg("device_ids"), pybind11::arg("streams"));
 }
 template<auto kernel, typename TGlobal> static void bind_multigpu_kernel(auto m, auto name, auto TGlobal::*... member_ptrs) {
     static_assert(is_multigpu_globals<TGlobal>, "Multigpu globals must have a member num_devices >= 1 and dev_idx");
@@ -208,14 +226,14 @@ template<auto kernel, typename TGlobal> static void bind_multigpu_kernel(auto m,
             __g__.back().dev_idx = i;
         }
         if constexpr (has_dynamic_shared_memory<TGlobal>) {
-            club->execute([&](int dev_idx) {
+            club->execute([&](int dev_idx, cudaStream_t stream) {
                 int __dynamic_shared_memory__ = (int)__g__[dev_idx].dynamic_shared_memory();
                 cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, __dynamic_shared_memory__);
-                kernel<<<__g__[dev_idx].grid(), __g__[dev_idx].block(), __dynamic_shared_memory__>>>(__g__[dev_idx]);
+                kernel<<<__g__[dev_idx].grid(), __g__[dev_idx].block(), __dynamic_shared_memory__, stream>>>(__g__[dev_idx]);
             });
         } else {
-            club->execute([&](int dev_idx) {
-                kernel<<<__g__[dev_idx].grid(), __g__[dev_idx].block(), 0>>>(__g__[dev_idx]);
+            club->execute([&](int dev_idx, cudaStream_t stream) {
+                kernel<<<__g__[dev_idx].grid(), __g__[dev_idx].block(), 0, stream>>>(__g__[dev_idx]);
             });
         }
     });
