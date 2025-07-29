@@ -54,7 +54,10 @@ struct pgl {
     using _GL = GL;
     using T = GL::dtype;
     using dtype = T;
-    
+
+    static constexpr bool _INIT_MC = INIT_MC;
+    static constexpr bool _INIT_TMA = INIT_TMA;
+
     GL gls[NUM_DEVICES];
     
     size_t mc_size;     // size of the multicast handle
@@ -89,9 +92,6 @@ struct pgl {
                         ducks::gl::make_arg_t<GL::__r__> _rows,
                         ducks::gl::make_arg_t<GL::__c__> _cols) : 
             gls{GL(_data[I], _batch, _depth, _rows, _cols)...}, mc_handle(0), mc_vas{} {
-        static_assert(NUM_DEVICES > 1, 
-            "SKILL ISSUE: No point in using pgl with a single device (CUDA doesn't allow it).");
-
         for (int i = 0; i < NUM_DEVICES; i++) {
             multicast_check(_device_ids[i]); // check if device supports multicast
             device_ids[i] = _device_ids[i];
@@ -111,6 +111,11 @@ struct pgl {
     // There is a constraint on mc objects, which is apparently around 130 for 8 H100s on NVSwitch platform
     // NVIDIA does not document this and does not provide any driver APIs to clean resources during process runtime
     __host__ inline void multicast_init() {
+        if (NUM_DEVICES <= 1) {
+            std::cerr << "ERROR: CUDA does not allow multicast objects with a single device." << std::endl;
+            std::exit(EXIT_FAILURE);
+        }
+
         cuInit(0); // should be called before any Driver API calls (arg SBZ)
 
         if (mc_handle) {
@@ -167,8 +172,13 @@ struct pgl {
         }
 
         // Bind the underlying GLs (with memory alloc'ed by pglCudaMalloc) to the multicast handle
+        size_t mc_granularity = detail::get_mc_granularity(NUM_DEVICES);
         for (int i = 0; i < NUM_DEVICES; ++i) {
             CUDACHECK(cudaSetDevice(device_ids[i]));
+            if ((size_t)gls[i].raw_ptr % mc_granularity != 0) {
+                std::cerr << "ERROR: GL raw pointer must be aligned to the multicast granularity of " << mc_granularity << " bytes." << std::endl;
+                std::exit(EXIT_FAILURE);
+            }
             CUCHECK(cuMulticastBindAddr(mc_handle, 0, (CUdeviceptr)gls[i].raw_ptr, mem_handle_size(gl_size()), 0));
         }
     }
@@ -262,6 +272,33 @@ struct pgl {
         return tma_descs[dev_idx].template get<U, axis>();
     }
 };
+
+template<ducks::pgl::all PGL, bool safe=true> __host__ inline PGL make_pgl(
+    int device_ids[PGL::num_devices], uint64_t data[PGL::num_devices], int b, int d, int r, int c
+) {
+    if constexpr (safe) {
+        if(PGL::_GL::__b__ > 0 && b != PGL::_GL::__b__) {
+            throw std::runtime_error("Batch dimension mismatch. Expected: " + std::to_string(PGL::_GL::__b__) + ", Got: " + std::to_string(b));
+        }
+        if(PGL::_GL::__d__ > 0 && d != PGL::_GL::__d__) {
+            throw std::runtime_error("Depth dimension mismatch. Expected: " + std::to_string(PGL::_GL::__d__) + ", Got: " + std::to_string(d));
+        }
+        if(PGL::_GL::__r__ > 0 && r != PGL::_GL::__r__) {
+            throw std::runtime_error("Row dimension mismatch. Expected: " + std::to_string(PGL::_GL::__r__) + ", Got: " + std::to_string(r));
+        }
+        if(PGL::_GL::__c__ > 0 && c != PGL::_GL::__c__) {
+            throw std::runtime_error("Column dimension mismatch. Expected: " + std::to_string(PGL::_GL::__c__) + ", Got: " + std::to_string(c));
+        }
+    }
+    return PGL(
+        device_ids,
+        reinterpret_cast<typename PGL::dtype**>(data),
+        make_unsafe_gl_arg<PGL::_GL::__b__>(b),
+        make_unsafe_gl_arg<PGL::_GL::__d__>(d),
+        make_unsafe_gl_arg<PGL::_GL::__r__>(r),
+        make_unsafe_gl_arg<PGL::_GL::__c__>(c)
+    );
+}
 
 template <bool ROUND_UP = false, typename T>
 __host__ inline void pglCudaMalloc(int num_devices, int* device_ids, int device_id, T **ptr, size_t size) {
