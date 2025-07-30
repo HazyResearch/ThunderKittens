@@ -9,7 +9,7 @@ THUNDERKITTENS_ROOT := ../../
 NVCCFLAGS := -DNDEBUG -Xcompiler=-fPIE -Xcompiler -fopenmp --expt-extended-lambda --expt-relaxed-constexpr 
 NVCCFLAGS += -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler 
 NVCCFLAGS += -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt 
-NVCCFLAGS += -lpthread -ldl -DKITTENS_HOPPER -arch=sm_100a -lcuda -lcudadevrt -lcudart_static -lcublas -lgomp 
+NVCCFLAGS += -lpthread -ldl -DKITTENS_HOPPER -lcuda -lcudadevrt -lcudart_static -lcublas -lgomp 
 NVCCFLAGS += -I${THUNDERKITTENS_ROOT}/include -I${THUNDERKITTENS_ROOT}/prototype
 
 # Architecture-specific flags
