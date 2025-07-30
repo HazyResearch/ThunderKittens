@@ -142,6 +142,17 @@ extern torch::Tensor scaled_matmul(
 );
 #endif
 
+#ifdef TK_COMPILE_GROUP_GEMM
+extern torch::Tensor& group_gemm(
+    const torch::Tensor& a,
+    const torch::Tensor& b,
+    const torch::Tensor& scale_a,
+    const torch::Tensor& scale_b,
+    const torch::Tensor& index,
+    torch::Tensor& c
+);
+#endif
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.doc() = "ThunderKittens Kernels"; // optional module docstring
 
@@ -190,6 +201,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
 #ifdef TK_COMPILE_SCALED_MATMUL
     m.def("scaled_matmul", scaled_matmul, "Scaled Matmul TK. Takes tensors (a, b, scale_a, scale_b). a, b are fp8e4m3, scale_a, scale_b are float. Returns (M, N) in float.");
+#endif
+
+#ifdef TK_COMPILE_GROUP_GEMM
+    m.def("group_gemm", group_gemm, "Group GEMM TK. Takes tensors (a, b, scale_a, scale_b, index). a, b are fp8, scale_a, scale_b are float, index is int64. Returns (M, N) in bf16.");
 #endif
 
 }
