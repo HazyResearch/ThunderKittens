@@ -73,4 +73,13 @@ template<ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD=coor
 __device__ static inline void load_async(CST &dst, const CGL &src, const COORD &idx) {
     load_async<2, false, CST, CGL, COORD>(dst, src, idx);
 }
+template<int axis, bool assume_aligned, ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD=coord<CST>>
+__device__ static inline void load_async(CST &dst, const CGL &src, const COORD &idx, semaphore &bar) {
+    load_async<axis, assume_aligned, typename CST::component, typename CGL::component>(dst.real, src.real, idx, bar);
+    load_async<axis, assume_aligned, typename CST::component, typename CGL::component>(dst.imag, src.imag, idx, bar);
+}
+template<ducks::cst::all CST, ducks::cgl::all CGL, ducks::coord::tile COORD=coord<CST>>
+__device__ static inline void load_async(CST &dst, const CGL &src, const COORD &idx, semaphore &bar) {
+    load_async<2, false, CST, CGL, COORD>(dst, src, idx, bar);
+}
 }
