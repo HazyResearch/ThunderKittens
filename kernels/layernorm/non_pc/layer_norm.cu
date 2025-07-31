@@ -206,7 +206,7 @@ void dispatch_layernorm(
 
     dim3 grid(n_tile_size, B, 1);
     layernorm_tk<D><<<grid,NUM_THREADS,mem_size>>>(g, n_per_tile);
-    cudaDeviceSynchronize();
+    // cudaDeviceSynchronize();
 }
 
 
