@@ -142,6 +142,20 @@ template<> __device__ inline bf16_2 log2::op<bf16_2>(const bf16_2 &x) { return h
 template<> __device__ inline half   log2::op<half>  (const half &x  ) { return hlog2(x);                          }
 template<> __device__ inline half_2 log2::op<half_2>(const half_2 &x) { return h2log2(x);                         }
 /**
+ * @brief Hyperbolic tangent operation.
+ *
+ * This operation calculates the hyperbolic tangent of the input value.
+ *
+ * @tparam T The data type of the input and output values.
+ * @param x[in] The input value.
+ * @return The hyperbolic tangent of the input value.
+ */
+struct tanh {
+    template<typename T> static __device__ inline T op(const T &x) { return tanhf(x); }
+};
+template<> __device__ inline float  tanh::op<float> (const float &x ) { return tanhf(x);                        }
+template<> __device__ inline float2 tanh::op<float2>(const float2 &x) { return float2{tanhf(x.x), tanhf(x.y)}; }
+/**
  * @brief Absolute value operation.
  *
  * This operation calculates the absolute value of the input.
