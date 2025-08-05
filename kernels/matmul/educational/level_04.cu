@@ -38,6 +38,7 @@ __global__ void kernel(const __grid_constant__ matmul_globals g) {
     int col = blockIdx.x; 
     int row = blockIdx.y; 
 
+    zero(C_accum);
     int num_tiles = (g.N + BLOCK_SIZE - 1) / BLOCK_SIZE;
     for (int tile = 0; tile < num_tiles; ++tile) {
         load(As, g.A, {0, 0, row, tile});
