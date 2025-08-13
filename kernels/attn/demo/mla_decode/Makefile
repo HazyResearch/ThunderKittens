@@ -10,11 +10,11 @@ NVCCFLAGS+= -I${THUNDERKITTENS_ROOT}/include -I${THUNDERKITTENS_ROOT}/prototype 
 
 # Conditional setup based on the target GPU
 ifeq ($(GPU),4090)
-NVCCFLAGS+= -DKITTENS_4090 -arch=sm_89
+NVCCFLAGS+= -DKITTENS_4090 -gencode arch=compute_89,code=sm_89
 else ifeq ($(GPU),A100)
-NVCCFLAGS+= -DKITTENS_A100 -arch=sm_80
+NVCCFLAGS+= -DKITTENS_A100 -gencode arch=compute_80,code=sm_80
 else
-NVCCFLAGS+= -DKITTENS_HOPPER -arch=sm_90a
+NVCCFLAGS+= -DKITTENS_HOPPER -gencode arch=compute_90a,code=sm_90a
 endif
 
 # Default target
