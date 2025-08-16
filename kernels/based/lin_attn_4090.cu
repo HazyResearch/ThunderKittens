@@ -296,7 +296,7 @@ void dispatch_based(
 
     // launch
     unsigned long mem_size = 100000; // 4090
-    cudaDeviceSynchronize();
+    // cudaDeviceSynchronize();
     cudaFuncSetAttribute(
         based_linear_attention,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
@@ -305,7 +305,7 @@ void dispatch_based(
     dim3 grid(ATTN_H, ATTN_B);
     based_linear_attention<<<grid,NUM_THREADS,mem_size>>>(g);
     CHECK_CUDA_ERROR(cudaGetLastError());
-    cudaDeviceSynchronize();
+    // cudaDeviceSynchronize();
 }
 
 std::tuple<torch::Tensor, torch::Tensor> based(
@@ -361,7 +361,7 @@ std::tuple<torch::Tensor, torch::Tensor> based(
 
     CHECK_CUDA_ERROR(cudaGetLastError());
     return std::make_tuple(out, kv_concat);
-    cudaDeviceSynchronize();
+    // cudaDeviceSynchronize();
 }
 #else
 #include "harness_4090.impl"
