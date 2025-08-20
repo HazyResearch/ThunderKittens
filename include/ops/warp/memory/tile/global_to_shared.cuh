@@ -26,9 +26,9 @@ __device__ static inline void load(ST &dst, const GL &src, const COORD &idx) {
     const int row_stride = src.template stride<axis>();
     // we can handle this many rows each time we run a memcpy_async
     constexpr int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
-    constexpr int memcpy_per_row = dst.cols / elem_per_memcpy;
-    constexpr int total_calls = (dst.height*dst.width * kittens::TILE_ROW_DIM<T>*kittens::TILE_COL_DIM<T> + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
-    constexpr int total_rows = dst.height*dst.width;
+    constexpr int memcpy_per_row = ST::cols / elem_per_memcpy;
+    constexpr int total_calls = (ST::height*ST::width * kittens::TILE_ROW_DIM<T>*kittens::TILE_COL_DIM<T> + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
+    constexpr int total_rows = ST::height*ST::width;
 
     coord<> unit_coord = idx.template unit_coord<axis, 3>();
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src[unit_coord];
@@ -80,8 +80,8 @@ __device__ static inline void store(const GL &dst, const ST &src, const COORD &i
     const int row_stride = dst.template stride<axis>();
     // we can handle this many rows each time we run a memcpy_async
     constexpr int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
-    constexpr int memcpy_per_row = src.cols / elem_per_memcpy;
-    constexpr int total_calls = (src.height*src.width * kittens::TILE_ROW_DIM<T>*kittens::TILE_COL_DIM<T> + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
+    constexpr int memcpy_per_row = ST::cols / elem_per_memcpy;
+    constexpr int total_calls = (ST::height*ST::width * kittens::TILE_ROW_DIM<T>*kittens::TILE_COL_DIM<T> + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
 
     coord<> unit_coord = idx.template unit_coord<axis, 3>();
     typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst[unit_coord];
@@ -130,8 +130,8 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
     const int row_stride = src.template stride<axis>();
     // we can handle this many rows each time we run a memcpy_async
     constexpr int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
-    constexpr int memcpy_per_row = dst.cols / elem_per_memcpy;
-    constexpr int total_calls = (dst.height*dst.width * kittens::TILE_ROW_DIM<T>*kittens::TILE_COL_DIM<T> + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
+    constexpr int memcpy_per_row = ST::cols / elem_per_memcpy;
+    constexpr int total_calls = (ST::height*ST::width * kittens::TILE_ROW_DIM<T>*kittens::TILE_COL_DIM<T> + N_THREADS*elem_per_memcpy-1) / (N_THREADS*elem_per_memcpy); // round up
 
     coord<> unit_coord = idx.template unit_coord<axis, 3>();
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src[unit_coord];
