@@ -28,7 +28,7 @@ __device__ inline static void load(RV &dst, const SV &src) {
     using U2 = base_types::packing<U>::packed_type;
     using T = base_types::packing<T2>::unpacked_type;
 
-    static_assert(src.length == dst.length);
+    static_assert(SV::length == RV::length);
     
     int laneid = ::kittens::laneid();
     uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src.data[0]));
@@ -107,7 +107,7 @@ __device__ inline static void store(SV &dst, const RV &src) {
     using U2 = base_types::packing<U>::packed_type;
     using T = base_types::packing<T2>::unpacked_type;
 
-    static_assert(dst.length == src.length);
+    static_assert(SV::length == RV::length);
     
     int laneid = ::kittens::laneid();
     uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));

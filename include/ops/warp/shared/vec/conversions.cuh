@@ -27,7 +27,7 @@ namespace kittens {
  */
 template<ducks::sv::all SV1, ducks::sv::all SV2>
 __device__ static inline void copy(SV1 &dst, const SV2 &src) {
-    static_assert(dst.length == src.length, "Source and destination vectors must have the same length.");
+    static_assert(SV1::length == SV2::length && "Source and destination vectors must have the same length.");
     #pragma unroll
     for(int i = kittens::laneid(); i < dst.length; i+=WARP_THREADS) {
         dst[i] = base_types::convertor<typename SV1::dtype, typename SV2::dtype>::convert(src[i]);
@@ -48,8 +48,8 @@ __device__ static inline void copy(SV1 &dst, const SV2 &src) {
 * @note The subvec length must evenly divide the vector length.
 */
 template<int subvec_length, ducks::sv::all SV>
-__device__ inline typename SV::subvec<subvec_length> &subvec_inplace(SV &src, int vec_idx) {
-    return *(typename SV::subvec<subvec_length>*)(&src[vec_idx*subvec_length]);
+__device__ inline typename SV::template subvec<subvec_length> &subvec_inplace(SV &src, int vec_idx) {
+    return *(typename SV::template subvec<subvec_length>*)(&src[vec_idx*subvec_length]);
 }
 
 }

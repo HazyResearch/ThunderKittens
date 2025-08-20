@@ -47,8 +47,8 @@ __device__ static inline void row_reduce(V &row_accum, const T &src, const V &sr
             }
         }
         dtype accum_packed;
-        accum_packed.x = op::template op<base_types::packing<dtype>::unpacked_type>(accum_top_row.x,    accum_top_row.y);
-        accum_packed.y = op::template op<base_types::packing<dtype>::unpacked_type>(accum_bottom_row.x, accum_bottom_row.y);
+        accum_packed.x = op::template op<typename base_types::packing<dtype>::unpacked_type>(accum_top_row.x,    accum_top_row.y);
+        accum_packed.y = op::template op<typename base_types::packing<dtype>::unpacked_type>(accum_bottom_row.x, accum_bottom_row.y);
 
         // Now we need to do a lil shuffle to make everyone happy.
 
@@ -223,8 +223,8 @@ __device__ static inline void col_reduce(V &col_accum, const T &src, const V &sr
             }
         }
         dtype accum_packed;
-        accum_packed.x = op::template op<base_types::packing<dtype>::unpacked_type>(accum_left_col.x,  accum_left_col.y);
-        accum_packed.y = op::template op<base_types::packing<dtype>::unpacked_type>(accum_right_col.x, accum_right_col.y);
+        accum_packed.x = op::template op<typename base_types::packing<dtype>::unpacked_type>(accum_left_col.x,  accum_left_col.y);
+        accum_packed.y = op::template op<typename base_types::packing<dtype>::unpacked_type>(accum_right_col.x, accum_right_col.y);
 
         // Now we need to do a lil shuffle to make everyone happy.
 

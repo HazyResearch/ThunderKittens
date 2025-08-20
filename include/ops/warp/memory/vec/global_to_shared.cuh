@@ -23,7 +23,7 @@ namespace kittens {
 template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void load(SV &dst, const GL &src, const COORD &idx) {
     constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
-    constexpr int total_calls = (dst.length + WARP_THREADS*elem_per_transfer - 1) / (WARP_THREADS*elem_per_transfer); // round up
+    constexpr int total_calls = (SV::length + WARP_THREADS*elem_per_transfer - 1) / (WARP_THREADS*elem_per_transfer); // round up
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src[(idx.template unit_coord<-1, 3>())];
     uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
     #pragma unroll
@@ -47,7 +47,7 @@ __device__ static inline void load(SV &dst, const GL &src, const COORD &idx) {
 template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void store(const GL &dst, const SV &src, const COORD &idx) {
     constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
-    constexpr int total_calls = (src.length + WARP_THREADS*elem_per_transfer-1) / (WARP_THREADS*elem_per_transfer); // round up
+    constexpr int total_calls = (SV::length + WARP_THREADS*elem_per_transfer-1) / (WARP_THREADS*elem_per_transfer); // round up
     typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst[(idx.template unit_coord<-1, 3>())];
     uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src.data[0]));
     #pragma unroll
@@ -71,7 +71,7 @@ __device__ static inline void store(const GL &dst, const SV &src, const COORD &i
 template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void load_async(SV &dst, const GL &src, const COORD &idx) {
     constexpr uint32_t elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
-    constexpr uint32_t total_calls = (dst.length + WARP_THREADS*elem_per_transfer-1) / (WARP_THREADS*elem_per_transfer); // round up
+    constexpr uint32_t total_calls = (SV::length + WARP_THREADS*elem_per_transfer-1) / (WARP_THREADS*elem_per_transfer); // round up
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src[(idx.template unit_coord<-1, 3>())];
     uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
     __syncwarp();
