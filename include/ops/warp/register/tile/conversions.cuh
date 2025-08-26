@@ -268,15 +268,22 @@ __device__ static inline void copy(rt<T2, _height, _width, layout> &dst, const r
                         val2 = src.tiles[i][2*j + k/2].data[(k%2)+0];
                     }
 
+                    // column index in val1: 0 5 2 7
+                    // column index in val2: 4 1 6 3
+
                     // Shuffle first 4 floats
-                    int row_mask = 4 * ( laneid / 4 );
-                    int row_offset = row_mask + ( (laneid-row_mask) / 2 ) + ( laneid % 2 );
-                    int src_offset = (laneid % 2 == 0 ) ? row_offset + 0 : ( row_offset + 1 );
+                    int row_mask = 4 * (laneid / 4);
+                    // thread index for each row: 0 2 1 3
+                    int src_offset = row_mask + ( (laneid-row_mask) / 2 ) + 2 * ( laneid % 2 );
                     src_t val01 = packed_shfl_sync(MASK_ALL, val1, src_offset);  // Get from even thread
 
-                    int src_offset2 = (laneid % 4 < 2 ) ? src_offset + 1 : (src_offset - 1);
+                    // thread index for each row: 1 3 0 2
+                    int src_offset2 = src_offset ^ 1;
                     src_t val23 = packed_shfl_sync(MASK_ALL, val2, src_offset2);  // Get from odd thread
-                    
+
+                    // column index in val01: 0 2 5 7
+                    // column index in val23: 1 3 4 6
+
                     // Convert to fp8e4m3_4
                     float4 f4;
                     using fp8_4_t = std::conditional_t<std::is_same_v<T2, fp8e4m3>, fp8e4m3_4, fp8e5m2_4>;
