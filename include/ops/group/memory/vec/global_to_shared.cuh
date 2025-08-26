@@ -17,7 +17,7 @@
 template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void load(SV &dst, const GL &src, const COORD &idx) {
     constexpr uint32_t elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
-    constexpr uint32_t total_calls = dst.length / elem_per_transfer; // guaranteed to divide
+    constexpr uint32_t total_calls = SV::length / elem_per_transfer; // guaranteed to divide
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src[(idx.template unit_coord<-1, 3>())];
     uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
     #pragma unroll
@@ -44,7 +44,7 @@ __device__ static inline void load(SV &dst, const GL &src, const COORD &idx) {
 template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void store(GL &dst, const SV &src, const COORD &idx) {
     constexpr uint32_t elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
-    constexpr uint32_t total_calls = src.length / elem_per_transfer; // guaranteed to divide
+    constexpr uint32_t total_calls = SV::length / elem_per_transfer; // guaranteed to divide
     typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst[(idx.template unit_coord<-1, 3>())];
     uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src.data[0]));
     #pragma unroll
@@ -60,7 +60,7 @@ __device__ static inline void store(GL &dst, const SV &src, const COORD &idx) {
 template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
 __device__ static inline void load_async(SV &dst, const GL &src, const COORD &idx) {
     constexpr uint32_t elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
-    constexpr uint32_t total_calls = dst.length / elem_per_transfer; // guaranteed to divide
+    constexpr uint32_t total_calls = SV::length / elem_per_transfer; // guaranteed to divide
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src[(idx.template unit_coord<-1, 3>())];
     uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
     #pragma unroll
