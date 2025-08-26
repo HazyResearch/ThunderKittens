@@ -113,8 +113,15 @@ struct blockwise {
             asm volatile ("{fence.proxy.alias;}" ::: "memory"); // nvidia says this is needed
             while (sys_uc.load(cuda::memory_order_acquire) < NUM_DEVICES);
     
-            // All devices synced. Now clean up and proceed
+            // All devices synced. Now clean up
             sys_uc.store(0, cuda::memory_order_release);
+
+            // Must wait for all devices to finish cleaning up
+            uint32_t val = 9999;
+            do {
+                asm volatile ("{multimem.ld_reduce.relaxed.sys.global.add.u32 %0, [%1];}": 
+                    "=r"(val) : "l"(sp.sys_mc) : "memory");
+            } while (val > 0);
         }
 
         __syncthreads();
