@@ -364,8 +364,7 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
 #endif
             wait(instruction_arrived[ps.task_iter%2], ((ps.task_iter/2)%2));
             int opcode = ps.instruction[0];
-            if(opcode == 0) return; // Stop Op
-            dispatch_consumer<config, ops...>::run(opcode, globals, ps);
+            if(opcode != 0) dispatch_consumer<config, ops...>::run(opcode, globals, ps);
 #ifdef KITTENS_TIMINGS
             if(threadIdx.x < 64) {
                 if(ps.timings[threadIdx.x] != 0) {
@@ -395,8 +394,7 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
 #endif
             wait(instruction_arrived[ps.task_iter%2], ((ps.task_iter/2)%2));
             int opcode = ps.instruction[0];
-            if(opcode == 0) break; // Stop Op
-            dispatch_producer<config, ops...>::run(opcode, globals, ps);
+            if(opcode != 0) dispatch_producer<config, ops...>::run(opcode, globals, ps);
             if(laneid() == 0) arrive(instruction_finished[ps.task_iter%2]);
         }
     }
