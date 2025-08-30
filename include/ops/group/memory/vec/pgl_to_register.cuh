@@ -72,7 +72,7 @@ __device__ static inline void ld_reduce_op(RV &dst, const PGL &src, const coord<
         }
     }
     else {
-        ::kittens::group<1>::ld_reduce_op(dst, src, coord<RV>(idx.b, idx.d, idx.r, idx.c*GROUP_WARPS+warpid()), dev_idx);
+        ::kittens::group<1>::template ld_reduce_op<OP>(dst, src, coord<RV>{idx.b, idx.d, idx.r, idx.c*GROUP_WARPS+warpid()}, dev_idx);
     }
    
 }
@@ -180,7 +180,7 @@ __device__ inline static void reduce_op(const PGL &dst, const RV &src, const coo
         }
     }
     else {
-        ::kittens::group<1>::reduce_op(dst, src, coord<RV>(idx.b, idx.d, idx.r, idx.c*GROUP_WARPS+warpid()), dev_idx);
+        ::kittens::group<1>::template reduce_op<OP>(dst, src, coord<RV>{idx.b, idx.d, idx.r, idx.c*GROUP_WARPS+warpid()}, dev_idx);
     }
 }
 
@@ -249,6 +249,6 @@ __device__ inline static void broadcast(const PGL &dst, const RV &src, const coo
         }
     }
     else {
-        ::kittens::group<1>::broadcast(dst, src, coord<RV>(idx.b, idx.d, idx.r, idx.c*GROUP_WARPS+warpid()), dev_idx);
+        ::kittens::group<1>::broadcast(dst, src, coord<RV>{idx.b, idx.d, idx.r, idx.c*GROUP_WARPS+warpid()}, dev_idx);
     }
 }

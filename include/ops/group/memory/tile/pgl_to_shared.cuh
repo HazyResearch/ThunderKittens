@@ -4,7 +4,7 @@
  */
 
 template <int axis, bool assume_aligned, ReduceOp OP, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
-__device__ static inline void ld_reduce_op(ST &dst, const PGL &src, int dev_idx, const COORD &idx) {
+__device__ static inline void ld_reduce_op(ST &dst, const PGL &src, const COORD &idx, int dev_idx) {
     using T = typename ST::dtype;
     using U = typename PGL::dtype;
 
@@ -58,13 +58,13 @@ __device__ static inline void ld_reduce_op(ST &dst, const PGL &src, int dev_idx,
  * @param[in] src The source PGL to load data across devices from
  */
 template <int axis, bool assume_aligned, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
-__device__ static inline void all_reduce_add(ST &dst, const PGL &src, int dev_idx, const COORD &idx) {
-    ld_reduce_op<axis, assume_aligned, ReduceOp::ADD>(dst, src, dev_idx, idx);
+__device__ static inline void all_reduce_add(ST &dst, const PGL &src, const COORD &idx, int dev_idx) {
+    ld_reduce_op<axis, assume_aligned, ReduceOp::ADD>(dst, src, idx, dev_idx);
 }
 
 template <ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
-__device__ static inline void all_reduce_add(ST &dst, const PGL &src, int dev_idx, const COORD &idx) {
-    ld_reduce_op<2, false, ReduceOp::ADD>(dst, src, dev_idx, idx);
+__device__ static inline void all_reduce_add(ST &dst, const PGL &src, const COORD &idx, int dev_idx) {
+    ld_reduce_op<2, false, ReduceOp::ADD>(dst, src, idx, dev_idx);
 }
 
 /**
@@ -76,13 +76,13 @@ __device__ static inline void all_reduce_add(ST &dst, const PGL &src, int dev_id
  * @param[in] src The source PGL to load data across devices from
  */
 template <int axis, bool assume_aligned, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
-__device__ static inline void all_reduce_min(ST &dst, const PGL &src, int dev_idx, const COORD &idx) {
-    ld_reduce_op<axis, assume_aligned, ReduceOp::MIN>(dst, src, dev_idx, idx);
+__device__ static inline void all_reduce_min(ST &dst, const PGL &src, const COORD &idx, int dev_idx) {
+    ld_reduce_op<axis, assume_aligned, ReduceOp::MIN>(dst, src, idx, dev_idx);
 }
 
 template <ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
-__device__ static inline void all_reduce_min(ST &dst, const PGL &src, int dev_idx, const COORD &idx) {
-    ld_reduce_op<2, false, ReduceOp::MIN>(dst, src, dev_idx, idx);
+__device__ static inline void all_reduce_min(ST &dst, const PGL &src, const COORD &idx, int dev_idx) {
+    ld_reduce_op<2, false, ReduceOp::MIN>(dst, src, idx, dev_idx);
 }
 
 /**
@@ -94,17 +94,17 @@ __device__ static inline void all_reduce_min(ST &dst, const PGL &src, int dev_id
  * @param[in] src The source PGL to load data across devices from
  */
 template <int axis, bool assume_aligned, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
-__device__ static inline void all_reduce_max(ST &dst, const PGL &src, int dev_idx, const COORD &idx) {
-    ld_reduce_op<axis, assume_aligned, ReduceOp::MAX>(dst, src, dev_idx, idx);
+__device__ static inline void all_reduce_max(ST &dst, const PGL &src, const COORD &idx, int dev_idx) {
+    ld_reduce_op<axis, assume_aligned, ReduceOp::MAX>(dst, src, idx, dev_idx);
 }
 
 template <ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
-__device__ static inline void all_reduce_max(ST &dst, const PGL &src, int dev_idx, const COORD &idx) {
-    ld_reduce_op<2, false, ReduceOp::MAX>(dst, src, dev_idx, idx);
+__device__ static inline void all_reduce_max(ST &dst, const PGL &src, const COORD &idx, int dev_idx) {
+    ld_reduce_op<2, false, ReduceOp::MAX>(dst, src, idx, dev_idx);
 }
 
 template <int axis, bool assume_aligned, ReduceOp OP, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
-__device__ static inline void reduce_op(const PGL &dst, const ST &src, int dev_idx, const COORD &idx) {
+__device__ static inline void reduce_op(const PGL &dst, const ST &src, const COORD &idx, int dev_idx) {
     using T = typename ST::dtype;
     using U = typename PGL::dtype;
     const int row_stride = dst.template stride<axis>();
@@ -155,13 +155,13 @@ __device__ static inline void reduce_op(const PGL &dst, const ST &src, int dev_i
  * @param[in] src The source shared tile to load data from
  */
 template <int axis, bool assume_aligned, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
-__device__ static inline void atomic_add(const PGL &dst, const ST &src, int dev_idx, const COORD &idx) {
-    reduce_op<axis, assume_aligned, ReduceOp::ADD>(dst, src, dev_idx, idx);
+__device__ static inline void atomic_add(const PGL &dst, const ST &src, const COORD &idx, int dev_idx) {
+    reduce_op<axis, assume_aligned, ReduceOp::ADD>(dst, src, idx, dev_idx);
 }
 
 template <ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
-__device__ static inline void atomic_add(const PGL &dst, const ST &src, int dev_idx, const COORD &idx) {
-    reduce_op<2, false, ReduceOp::ADD>(dst, src, dev_idx, idx);
+__device__ static inline void atomic_add(const PGL &dst, const ST &src, const COORD &idx, int dev_idx) {
+    reduce_op<2, false, ReduceOp::ADD>(dst, src, idx, dev_idx);
 }
 
 /**
@@ -173,7 +173,7 @@ __device__ static inline void atomic_add(const PGL &dst, const ST &src, int dev_
  * @param[in] src The source shared tile to load data from
  */
 template <int axis, bool assume_aligned, ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
-__device__ static inline void broadcast(const PGL &dst, const ST &src, int dev_idx, const COORD &idx) {
+__device__ static inline void broadcast(const PGL &dst, const ST &src, const COORD &idx, int dev_idx) {
     using T = typename ST::dtype;
     using U = typename PGL::dtype;
     const int row_stride = dst.template stride<axis>();
@@ -216,6 +216,6 @@ __device__ static inline void broadcast(const PGL &dst, const ST &src, int dev_i
 }
 
 template <ducks::st::all ST, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<ST>>
-__device__ static inline void broadcast(const PGL &dst, const ST &src, int dev_idx, const COORD &idx) {
-    broadcast<2, false>(dst, src, dev_idx, idx);
+__device__ static inline void broadcast(const PGL &dst, const ST &src, const COORD &idx, int dev_idx) {
+    broadcast<2, false>(dst, src, idx, dev_idx);
 }
