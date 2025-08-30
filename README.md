@@ -1,6 +1,12 @@
 # ThunderKittens
 
-### Recent Updates (Nov 23, 2024)
+### Recent Updates (August 30, 2025)
+- large-scale merge of blackwell-derived branches (incl Megakernels) into main, including a large-scale code refactor. Most important change is that warp scope must now be explicitly stated as kittens::warp::
+- this has likely broken many kernels in kernels/ which will be gradually fixed over time. They are nonetheless still reasonable references algorithmically, even if syntax is somewhat broken.
+- we are intending to merge in various industry contributions over the course of the next week, and will do a proper release of TK 3.0 within a few weeks.
+
+
+### Previous Updates (Nov 23, 2024)
 - kernels/example_bind has a newer, simpler way to get started binding TK kernels up to PyTorch.
 - FP8 support.
 - New-axis loads, automatic padding, and other QoL improvements.
