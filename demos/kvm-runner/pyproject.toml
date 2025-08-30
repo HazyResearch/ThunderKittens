@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "blorc"
+version = "0.0.1"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "transformers==4.48.3",
+    "pydra-config>=0.0.13",
+    "accelerate",
+    "tabulate",
+    "torch>=2.6.0",
+    "tqdm",
+    "matplotlib",
+    "einops",
+    "pyright",
+]
+
+[tool.setuptools]
+packages = {find = {}}

@@ -125,7 +125,7 @@ struct partial_template {
 #ifdef KITTENS_TIMINGS
             if(group<8>::laneid() == 0) args.timings[1] = clock64();
 #endif
-            auto q_st = subtile_inplace<16, QKVO_D/2>(args.scratch.q, {warpgroup::warpid(), warpgroup::groupid()});
+            auto q_st = args.scratch.q.template subtile<16, QKVO_D/2>({warpgroup::warpid(), warpgroup::groupid()});
             load_async(q_st, args.globals.Q, {args.common.q_batch_idx, args.common.q_seq_idx + warpgroup::warpid(), 0, warpgroup::groupid()});
             zero(args.state.norm_vec);
             if(args.num_iters > 0) neg_infty(args.state.max_vec);

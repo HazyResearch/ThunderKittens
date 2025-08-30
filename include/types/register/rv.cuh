@@ -30,6 +30,22 @@ namespace rv {
  * If a type quacks like ducks::rv::identifier, it will be treated as an rv by compiler checks.
  */
 struct identifier {};
+/**
+* @brief Concept for all register vectors.
+* @tparam T The type to check against the concept requirements.
+*
+* Requires:
+* - T has a nested type identifier that is the same as rv::identifier.
+*/
+template<typename T>
+concept all = requires {
+    typename T::identifier; // Checks if T::identifier exists
+} && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::rv::identifier.
+
+template<typename T> concept naive_layout = all<T> && std::is_same_v<typename T::layout, ducks::rv_layout::naive>;
+template<typename T> concept align_layout = all<T> && std::is_same_v<typename T::layout, ducks::rv_layout::align>;
+template<typename T> concept ortho_layout = all<T> && std::is_same_v<typename T::layout, ducks::rv_layout::ortho>;
+template<typename T> concept tile_layout  = align_layout<T> || ortho_layout<T>; // vector layouts for interacting with tiles.
 }
 }
 /**
@@ -53,7 +69,7 @@ struct rv {
     static constexpr bool is_naive = std::is_same_v<layout, ducks::rv_layout::naive>;
     using T = kittens::base_types::packing<_T>::unpacked_type;
     using T2 = kittens::base_types::packing<_T>::packed_type;
-    using dtype = std::conditional_t<is_naive, T, T2>; ///< Data type of the matrix elements
+    using dtype = std::conditional_t<is_naive, T, T2>; ///< Data type of the vector elements
 
     static constexpr int length = _length; ///< Length in elements.
     static_assert(length % kittens::TILE_ROW_DIM<T> == 0, "Length must be divisible by the tile dimension");
@@ -98,30 +114,6 @@ struct rv {
         }
     }
 };
-
-/* ----------  CONCEPTS  ---------- */
-
-namespace ducks {
-namespace rv {
-/**
-* @brief Concept for all register vectors.
-* @tparam T The type to check against the concept requirements.
-*
-* Requires:
-* - T has a nested type identifier that is the same as rv::identifier.
-*/
-template<typename T>
-concept all = requires {
-    typename T::identifier; // Checks if T::identifier exists
-} && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::rv::identifier.
-
-template<typename T> concept naive_layout = all<T> && std::is_same_v<typename T::layout, ducks::rv_layout::naive>;
-template<typename T> concept align_layout = all<T> && std::is_same_v<typename T::layout, ducks::rv_layout::align>;
-template<typename T> concept ortho_layout = all<T> && std::is_same_v<typename T::layout, ducks::rv_layout::ortho>;
-template<typename T> concept tile_layout  = align_layout<T> || ortho_layout<T>; // vector layouts for interacting with tiles.
-
-} // namespace rv
-} // namespace ducks
 
 template<int _l, ducks::rv_layout::all layout=ducks::rv_layout::naive> using rv_fl = rv<float, _l, layout>;
 template<int _l, ducks::rv_layout::all layout=ducks::rv_layout::naive> using rv_bf = rv<bf16,  _l, layout>;

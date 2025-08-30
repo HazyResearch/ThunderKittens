@@ -28,6 +28,17 @@ namespace sv {
  * If a type quacks like ducks::sv::identifier, it will be treated as an sv by compiler checks.
  */
 struct identifier {};
+/**
+* @brief Concept for all shared vectors.
+* @tparam T The type to check against the concept requirements.
+*
+* Requires:
+* - T has a nested type identifier that is the same as sv::identifier.
+*/
+template<typename T>
+concept all = requires {
+    typename T::identifier; // Checks if T::identifier exists
+} && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::sv::identifier
 }
 }
 
@@ -69,7 +80,12 @@ struct KITTENS_DEFAULT_ALIGN sv {
     __device__ inline       dtype& operator[](size_t idx)       { return data[idx]; }
     __device__ inline const dtype& operator[](size_t idx) const { return data[idx]; }
 
-    template<size_t sub_length> using subvec = sv<dtype, sub_length>; ///< A subvector which allows warpgroups and blocks to work cooperatively.
+    template<int sub_length> __device__ inline sv<_T, sub_length> &subvec(int idx) {
+        return *(sv<dtype, sub_length>*)&data[idx * sub_length];
+    }
+    template<int sub_length> __device__ inline const sv<_T, sub_length> &subvec(int idx) const {
+        return *(sv<dtype, sub_length>*)&data[idx * sub_length];
+    }
 
     __device__ inline void operator=(const dtype &value) { // runs at warp scope by default
         #pragma unroll
@@ -78,26 +94,6 @@ struct KITTENS_DEFAULT_ALIGN sv {
         }
     }
 };
-
-/* ----------  CONCEPTS  ---------- */
-
-namespace ducks {
-namespace sv {
-/**
-* @brief Concept for all shared vectors.
-* @tparam T The type to check against the concept requirements.
-*
-* Requires:
-* - T has a nested type identifier that is the same as sv::identifier.
-*/
-template<typename T>
-concept all = requires {
-    typename T::identifier; // Checks if T::identifier exists
-} && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::sv::identifier
-
-} // namespace sv
-} // namespace ducks
-
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
@@ -110,21 +106,19 @@ template<size_t _length> using sv_fl = sv<float, _length>;
 
 template<ducks::sv::all SV>
 __device__ inline void print(const SV& sv) {
-    if(laneid() == 0) {
-        printf("Shared Vector %d:\n", SV::length);
-        for(int i = 0; i < SV::length; i++) {
-            if constexpr (std::is_same_v<typename SV::dtype, bf16>) {
-                printf("%f ", __bfloat162float(sv[i]));
-            } else if constexpr (std::is_same_v<typename SV::dtype, half>) {
-                printf("%f ", __half2float(sv[i]));
-            } else if constexpr (std::is_same_v<typename SV::dtype, float>) {
-                printf("%f ", sv[i]);
-            } else {
-                printf("%d ", (int)(sv[i]));
-            }
+    printf("Shared Vector %d:\n", SV::length);
+    for(int i = 0; i < SV::length; i++) {
+        if constexpr (std::is_same_v<typename SV::dtype, bf16>) {
+            printf("%f ", __bfloat162float(sv[i]));
+        } else if constexpr (std::is_same_v<typename SV::dtype, half>) {
+            printf("%f ", __half2float(sv[i]));
+        } else if constexpr (std::is_same_v<typename SV::dtype, float>) {
+            printf("%f ", sv[i]);
+        } else {
+            printf("%d ", (int)(sv[i]));
         }
-        printf("\n");
     }
+    printf("\n");
 }
 
 } // namespace kittens

@@ -220,7 +220,15 @@ struct copy2 { // this turns out to be a slightly hacky op that makes some code 
 struct sum {
     template<typename T> static __device__ inline T op(const T &a, const T &b) { return a+b; }
 };
-template<> __device__ inline float2 sum::op<float2>(const float2 &a, const float2 &b) { return float2{a.x+b.x, a.y+b.y}; }
+template<> __device__ inline float2 sum::op<float2>(const float2 &a, const float2 &b) {
+#ifdef KITTENS_BLACKWELL
+    float2 c;
+    asm volatile("add.f32x2 %0, %1, %2;" : "=l"(*(uint64_t*)&c) : "l"(*(uint64_t*)&a), "l"(*(uint64_t*)&b));
+    return c;
+#else
+    return float2{a.x+b.x, a.y+b.y};
+#endif
+}
 template<> __device__ inline bf16   sum::op<bf16>  (const bf16   &a, const bf16   &b) { return __hadd(a, b);             }
 template<> __device__ inline bf16_2 sum::op<bf16_2>(const bf16_2 &a, const bf16_2 &b) { return __hadd2(a, b);            }
 template<> __device__ inline half   sum::op<half>  (const half   &a, const half   &b) { return __hadd(a, b);             }
@@ -238,7 +246,15 @@ template<> __device__ inline half_2 sum::op<half_2>(const half_2 &a, const half_
 struct sub {
     template<typename T> static __device__ inline T op(const T &a, const T &b) { return a-b; }
 };
-template<> __device__ inline float2 sub::op<float2>(const float2 &a, const float2 &b) { return float2{a.x-b.x, a.y-b.y}; }
+template<> __device__ inline float2 sub::op<float2>(const float2 &a, const float2 &b) { 
+#ifdef KITTENS_BLACKWELL
+    float2 c;
+    asm volatile("sub.f32x2 %0, %1, %2;" : "=l"(*(uint64_t*)&c) : "l"(*(uint64_t*)&a), "l"(*(uint64_t*)&b));
+    return c;
+#else
+    return float2{a.x-b.x, a.y-b.y}; 
+#endif
+}
 template<> __device__ inline bf16   sub::op<bf16>  (const bf16   &a, const bf16   &b) { return __hsub(a, b);             }
 template<> __device__ inline bf16_2 sub::op<bf16_2>(const bf16_2 &a, const bf16_2 &b) { return __hsub2(a, b);            }
 template<> __device__ inline half   sub::op<half>  (const half   &a, const half   &b) { return __hsub(a, b);             }
@@ -256,7 +272,15 @@ template<> __device__ inline half_2 sub::op<half_2>(const half_2 &a, const half_
 struct mul {
     template<typename T> static __device__ inline T op(const T &a, const T &b) { return a*b; }
 };
-template<> __device__ inline float2 mul::op<float2>(const float2 &a, const float2 &b) { return float2{a.x*b.x, a.y*b.y}; }
+template<> __device__ inline float2 mul::op<float2>(const float2 &a, const float2 &b) { 
+#ifdef KITTENS_BLACKWELL
+    float2 c;
+    asm volatile("mul.f32x2 %0, %1, %2;" : "=l"(*(uint64_t*)&c) : "l"(*(uint64_t*)&a), "l"(*(uint64_t*)&b));
+    return c;
+#else
+    return float2{a.x*b.x, a.y*b.y}; 
+#endif
+}
 template<> __device__ inline bf16   mul::op<bf16>  (const bf16   &a, const bf16   &b) { return __hmul(a, b);             }
 template<> __device__ inline bf16_2 mul::op<bf16_2>(const bf16_2 &a, const bf16_2 &b) { return __hmul2(a, b);            }
 template<> __device__ inline half   mul::op<half>  (const half   &a, const half   &b) { return __hmul(a, b);             }
@@ -335,6 +359,15 @@ struct fma_AxBtC {
         return sum::op<T>(mul::op<T>(a, b), c);
     }
 };
+template<> __device__ inline float2 fma_AxBtC::op<float2>(const float2 &a, const float2 &b, const float2 &c) {
+#ifdef KITTENS_BLACKWELL
+    float2 d;
+    asm volatile("fma.rn.f32x2 %0, %1, %2, %3;" : "=l"(*(uint64_t*)&d) : "l"(*(uint64_t*)&a), "l"(*(uint64_t*)&b), "l"(*(uint64_t*)&c));
+    return d;
+#else
+    return float2{a.x*b.x+c.x, a.y*b.y+c.y};
+#endif
+}
 /**
  * @brief Fused multiply-add operation A * C + B.
  *
@@ -352,6 +385,15 @@ struct fma_AxCtB { // this is the one needed for attention
         return sum::op<T>(mul::op<T>(a, c), b);
     }
 };
+template<> __device__ inline float2 fma_AxCtB::op<float2>(const float2 &a, const float2 &b, const float2 &c) {
+#ifdef KITTENS_BLACKWELL
+    float2 d;
+    asm volatile("fma.rn.f32x2 %0, %1, %2, %3;" : "=l"(*(uint64_t*)&d) : "l"(*(uint64_t*)&a), "l"(*(uint64_t*)&c), "l"(*(uint64_t*)&b));
+    return d;
+#else
+    return float2{a.x*c.x+b.x, a.y*c.y+b.y};
+#endif
+}
 
 } // namespace base_ops
 

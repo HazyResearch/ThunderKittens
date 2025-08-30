@@ -21,30 +21,37 @@ struct group_load_store {
 };
 
 void group::memory::tile::global_to_register::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/group/memory/tile/global_to_register tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/group/memory/tile/global_to_register tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
                          
+    sweep_size_2d<group_load_store<float>, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d<group_load_store<float>, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
     sweep_size_2d<group_load_store<float>, SIZE, SIZE, 2, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_2d<group_load_store<float>, SIZE, SIZE, 2, kittens::ducks::rt_layout::col>::run(results);
     sweep_size_2d<group_load_store<float>, SIZE, SIZE, 4, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_2d<group_load_store<float>, SIZE, SIZE, 4, kittens::ducks::rt_layout::col>::run(results);
     sweep_size_2d<group_load_store<float>, SIZE, SIZE, 12, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_2d<group_load_store<float>, SIZE, SIZE, 12, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d<group_load_store<kittens::bf16>, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d<group_load_store<kittens::bf16>, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
     sweep_size_2d<group_load_store<kittens::bf16>, SIZE, SIZE, 2, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_2d<group_load_store<kittens::bf16>, SIZE, SIZE, 2, kittens::ducks::rt_layout::col>::run(results);
     sweep_size_2d<group_load_store<kittens::bf16>, SIZE, SIZE, 4, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_2d<group_load_store<kittens::bf16>, SIZE, SIZE, 4, kittens::ducks::rt_layout::col>::run(results);
     sweep_size_2d<group_load_store<kittens::bf16>, SIZE, SIZE, 12, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_2d<group_load_store<kittens::bf16>, SIZE, SIZE, 12, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d<group_load_store<kittens::half>, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d<group_load_store<kittens::half>, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
     sweep_size_2d<group_load_store<kittens::half>, SIZE, SIZE, 2, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_2d<group_load_store<kittens::half>, SIZE, SIZE, 2, kittens::ducks::rt_layout::col>::run(results);
     sweep_size_2d<group_load_store<kittens::half>, SIZE, SIZE, 4, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_2d<group_load_store<kittens::half>, SIZE, SIZE, 4, kittens::ducks::rt_layout::col>::run(results);
     sweep_size_2d<group_load_store<kittens::half>, SIZE, SIZE, 12, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_2d<group_load_store<kittens::half>, SIZE, SIZE, 12, kittens::ducks::rt_layout::col>::run(results);
+    std::cout << std::endl;
 }
 
 #endif

@@ -68,17 +68,27 @@ constexpr int WARPGROUP_WARPS{4};
  * @brief Get the warp ID of the current thread.
  * @return The warp ID.
  */
-__device__ __forceinline__ int warpid() { return threadIdx.x >> 5; } 
+__device__ static __forceinline__ int warpid() {
+    // uint32_t wid;
+    // asm volatile("mov.u32 %0, %warpid;" : "=r"(wid));
+    // return wid;
+    return threadIdx.x >> 5;
+}
 /**
  * @brief Get the warpgroup ID of the current thread.
  * @return The warpgroup ID.
  */
-__device__ __forceinline__ int warpgroupid() { return threadIdx.x >> 7; } 
+__device__ static __forceinline__ int warpgroupid() { return warpid() >> 2; }
 /**
  * @brief Get the lane ID of the current thread within its warp.
  * @return The lane ID.
  */
-__device__ __forceinline__ int laneid() { return threadIdx.x & 0x1f; }
+__device__ static __forceinline__ int laneid() {
+    // uint32_t lid;
+    // asm volatile("mov.u32 %0, %laneid;" : "=r"(lid));
+    // return lid;
+    return threadIdx.x & 31;
+}
 
 #if defined(KITTENS_HOPPER)
 constexpr int MAX_SHARED_MEMORY = 227000;
@@ -279,12 +289,26 @@ struct shared_allocator {
             return *p;
         }
 };
-#ifdef KITTENS_HOPPER
+#if (defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL))
 /**
  * @brief A wrapper for an allocator that enforces sufficient alignment to be used for TMA loads and stores.
  */
 using tma_allocator = shared_allocator<1024>;
 using tma_swizzle_allocator = tma_allocator; // swizzled TMA modes require up to 1024 byte alignments :/
+
+/* Get CTA ID within a cluster */
+__device__ static inline int3 clusterIdx() {
+    int3 cluster_idx;
+    asm volatile("mov.u32 %0, %clusterid.x;\n" : "=r"(cluster_idx.x));
+    asm volatile("mov.u32 %0, %clusterid.y;\n" : "=r"(cluster_idx.y));
+    asm volatile("mov.u32 %0, %clusterid.z;\n" : "=r"(cluster_idx.z));
+    return cluster_idx;
+}
+__device__ static inline int cluster_ctarank() {
+    uint32_t ctarank;
+    asm volatile("mov.u32 %0, %cluster_ctarank;\n" : "=r"(ctarank));
+    return ctarank;
+}
 #endif
 
 } // namespace kittens

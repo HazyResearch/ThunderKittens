@@ -23,7 +23,7 @@ struct vec_add1 {
 };
 
 void group::shared::vec::maps::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/group/shared/vec/maps tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/group/shared/vec/maps tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
@@ -32,6 +32,7 @@ void group::shared::vec::maps::tests(test_data &results) {
     sweep_size_1d<vec_add1, SIZE, 2>::run(results);
     sweep_size_1d<vec_add1, SIZE, 4>::run(results);
     sweep_size_1d<vec_add1, SIZE, 12>::run(results);
+    std::cout << std::endl;
 }
 
 #endif

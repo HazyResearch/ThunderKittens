@@ -19,9 +19,28 @@ Timing meanings, all relative to start of kernel, and measured in cycles.
 63 -- end of consumer finish write (and instruction), relative to start of kernel.
 """
 
-def save_gantt_chart(Timings, Instructions, name=None, verbose=False):
+def save_gantt_chart(Timings, Instructions, save_all=False, name=None, verbose=False, clock_rate=1800):
+    Timings = Timings.to(torch.float64)
+
+    # breakpoint()
+
+    Mask = torch.zeros_like(Timings, dtype=torch.bool)
+    Mask[:,:,0] = True
+    Mask[:,:,63] = True
+    # Get indices of non-zero values in the mask
+    Timings[Timings == 0] = 9e99
+    # Mask = torch.logical_and(Mask, Timings > 0)
+
+    Timings[Mask] -= Timings[Mask].min()
+
     # Convert cycles to microseconds (1.8 GHz = 1800 MHz = 1.8 cycles/ns = 0.0018 cycles/us)
-    timings_us = Timings.float() / 1800
+    timings_us = Timings / clock_rate
+
+    # breakpoint()
+    
+
+    print(timings_us[:,:,0].max(), (timings_us[:,:,0]).min())
+    print(timings_us[:,:,63].max(), (timings_us[:,:,63]).min())
 
     # Get unique instruction types for coloring
     instruction_types = Instructions[:,:,0].unique()
@@ -61,9 +80,9 @@ def save_gantt_chart(Timings, Instructions, name=None, verbose=False):
     for proc in range(Timings.shape[0]):
         for instr in range(Timings.shape[1]):
             # Only process if there's valid timing data
-            if Timings[proc, instr, 0].item() > 0:
+            if Timings[proc, instr, 63].item() > 0:
                 start = timings_us[proc, instr, 0].item()
-                end = timings_us[proc, instr, 63].item() if Timings[proc, instr, 63].item() > 0 else start
+                end = timings_us[proc, instr, 63].item()
                 duration = end - start
                 
                 if duration > 0:  # Only plot if there was actual work
@@ -73,34 +92,40 @@ def save_gantt_chart(Timings, Instructions, name=None, verbose=False):
                            alpha=0.7)
                     
                     # Add markers for timing events
-                    for event_id, event_props in timing_events.items():
-                        if Timings[proc, instr, event_id].item() > 0:
-                            event_time = timings_us[proc, instr, event_id].item()
-                            ax.scatter(event_time, proc, 
-                                      marker=event_props['marker'], 
-                                      color=event_props['color'], 
-                                      s=event_props['size'],
-                                      zorder=5)  # Ensure markers are on top
+                    if save_all:
+                        for event_id, event_props in timing_events.items():
+                            if Timings[proc, instr, event_id].item() > 0:
+                                event_time = timings_us[proc, instr, event_id].item()
+                                ax.scatter(event_time, proc, 
+                                        marker=event_props['marker'], 
+                                        color=event_props['color'], 
+                                        s=event_props['size'],
+                                        zorder=5)  # Ensure markers are on top
 
     # Customize the chart
-    ax.set_xlabel('Time (microseconds)')
-    ax.set_ylabel('Processor ID')
-    ax.set_title('Instruction Execution Timeline with Event Markers')
+    ax.set_xlabel('Time (us)')
+    ax.set_ylabel('SM')
+    ax.set_title('ThunderMLA Execution Timeline (Heap Scheduler)')
+    ax.set_yticks(np.arange(Timings.shape[0])[-4::-4])
+    ax.set_yticklabels(np.arange(Timings.shape[0])[-4::-4])
 
     # Add legend for instruction bars
     bar_legend_elements = [plt.Rectangle((0,0),1,1, facecolor=color_map[t.item()], 
-                          label=f'Instruction {t.item()}: {instruction_names[t.item()]}')
+                          label=f'{instruction_names[t.item()]}')
                           for t in instruction_types if t.item() in [1,2]]
     
     # Add legend for timing event markers
-    marker_legend_elements = [plt.Line2D([0], [0], marker=props['marker'], color='w', 
-                             markerfacecolor=props['color'], markersize=10, 
-                             label=props['label'])
-                             for event_id, props in timing_events.items()
-                             if event_id in [1,2,8,32,62]]
+    if save_all:
+        marker_legend_elements = [plt.Line2D([0], [0], marker=props['marker'], color='w', 
+                                 markerfacecolor=props['color'], markersize=10, 
+                                 label=props['label'])
+                                 for event_id, props in timing_events.items()
+                                 if event_id in [1,2,8,32,62]]
     
-    # Combine legends
-    all_legend_elements = bar_legend_elements + marker_legend_elements
+        # Combine legends
+        all_legend_elements = bar_legend_elements + marker_legend_elements
+    else:
+        all_legend_elements = bar_legend_elements
     
     # Add the legend outside the plot
     ax.legend(handles=all_legend_elements, loc='center left', bbox_to_anchor=(1, 0.5))

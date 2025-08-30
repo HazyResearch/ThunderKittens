@@ -11,11 +11,14 @@ struct persistent_state {
     int *shmem;
     int max_finish_offset;
     kittens::semaphore *inputs_arrived, *outputs_arrived, *inputs_finished, *outputs_finished, *finish_finished;
-    int *instruction;
     uint32_t semaphore_bitfield;
+#ifdef KITTENS_BLACKWELL
+    tensor_allocator<1, 1> &tensor_alloc;
+#endif
 #ifdef KITTENS_TIMINGS
     uint64_t *timings;
 #endif
+    int *instruction;
 };
 
 // All template functions take these args
@@ -26,35 +29,45 @@ template<kittens_layout T> struct uniform_args {
     int & num_iters; // how many iters are there for this task?
     const typename CKL::globals_t & globals;
     typename CKL::scratch_block_t & scratch;
-    int *instruction;
+#ifdef KITTENS_BLACKWELL
+    tensor_allocator<1, 1> &tensor_alloc;
+#endif
 #ifdef KITTENS_TIMINGS
     uint64_t *timings;
 #endif
+    int *instruction;
     __device__ uniform_args(
         typename CKL::common_state_t & _common,
         int & _task_iter,
         int & _num_iters,
         const typename CKL::globals_t& _globals,
         typename CKL::scratch_block_t& _scratch,
+#ifdef KITTENS_BLACKWELL
+        tensor_allocator<1, 1> &_tensor_alloc,
+#endif
         int * _instruction
     ) : common(_common),
         task_iter(_task_iter),
         num_iters(_num_iters),
         globals(_globals),
         scratch(_scratch),
-        instruction(_instruction)
-    {}
+#ifdef KITTENS_BLACKWELL
+        tensor_alloc(_tensor_alloc),
+#endif
+        instruction(_instruction) {}
     __device__ uniform_args(uniform_args<T> &_args) :
         common(_args.common),
         task_iter(_args.task_iter),
         num_iters(_args.num_iters),
         globals(_args.globals),
         scratch(_args.scratch),
-        instruction(_args.instruction)
-#ifdef KITTENS_TIMINGS
-        , timings(_args.timings)
+#ifdef KITTENS_BLACKWELL
+        tensor_alloc(_args.tensor_alloc),
 #endif
-    {}
+#ifdef KITTENS_TIMINGS
+        timings(_args.timings),
+#endif
+        instruction(_args.instruction) {}
 };
 
 // Setup args are the same as uniform args

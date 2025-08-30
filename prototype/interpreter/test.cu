@@ -5,7 +5,7 @@ using namespace kittens::prototype;
 using namespace kittens::prototype::interpreter;
 struct config {
     struct globals {
-        using instructions_global = kittens::gl<int, 1, -1, -1, 1>;
+        using instructions_global = kittens::gl<int, 1, -1, -1, 4>;
         instructions_global instructions;
         int dynamic_shared_memory() { return 224000; }
         dim3 grid()  { return dim3(132); }
@@ -84,16 +84,17 @@ template<typename _config> struct OpB {
 
 
 int main() {
+    constexpr int INSTRUCTIONS_WIDTH = config::globals::instructions_global::__c__;
     constexpr int NUM_INSTRUCTIONS = 5;
     int instructions[NUM_INSTRUCTIONS] = {1, 2, 1, 0, 2}; // last 2 should not execute.
-    std::vector<int> instructions_vec(132*NUM_INSTRUCTIONS);
+    std::vector<int> instructions_vec(132*NUM_INSTRUCTIONS*INSTRUCTIONS_WIDTH);
     for(int i = 0; i < 132*NUM_INSTRUCTIONS; i++) {
-        instructions_vec[i] = instructions[i % NUM_INSTRUCTIONS];
+        instructions_vec[i*INSTRUCTIONS_WIDTH] = instructions[i % NUM_INSTRUCTIONS];
     }
     int *instructions_d;
-    cudaMalloc(&instructions_d, sizeof(int) * NUM_INSTRUCTIONS*132);
-    cudaMemcpy(instructions_d, instructions_vec.data(), sizeof(int) * NUM_INSTRUCTIONS*132, cudaMemcpyHostToDevice);
-    kittens::gl<int, 1, -1, -1, 1> instructions_gl{instructions_d, nullptr, 132, NUM_INSTRUCTIONS, nullptr};
+    cudaMalloc(&instructions_d, sizeof(int) * NUM_INSTRUCTIONS*132*INSTRUCTIONS_WIDTH);
+    cudaMemcpy(instructions_d, instructions_vec.data(), sizeof(int) * NUM_INSTRUCTIONS*132*INSTRUCTIONS_WIDTH, cudaMemcpyHostToDevice);
+    typename config::globals::instructions_global instructions_gl{instructions_d, nullptr, 132, NUM_INSTRUCTIONS, nullptr};
     config::globals G{instructions_gl};
     kittens::prototype::interpreter::run<config, OpA<config>, OpB<config>>(G);
     cudaError_t err = cudaGetLastError();
