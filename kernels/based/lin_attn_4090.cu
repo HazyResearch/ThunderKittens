@@ -144,12 +144,12 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
     sv_fl<64> &a0_total = al.allocate<sv_fl<64>>();
 
     if (warpid == 0) {
-        zero(a0_total);
+        kittens::warp::zero(a0_total);
     }
     if (warpid < ACTIVE_TILES + 1) {
-        zero(a1_s[warpid]);
+        kittens::warp::zero(a1_s[warpid]);
     }
-    zero(a2); 
+    kittens::warp::zero(a2); 
 
     int n_blocks = g.n / (ACTIVE_TILES * kittens::TILE_ROW_DIM<bf16>);
 
@@ -162,41 +162,41 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
         int cur_idx;
         if(warpid < ACTIVE_TILES) {
             cur_idx = block*ACTIVE_TILES + warpid;
-            load(q_s[warpid], g.q, {batch, head, cur_idx, 0});
-            load(k_s[warpid], g.k, {batch, head, cur_idx, 0});
+            kittens::warp::load(q_s[warpid], g.q, {batch, head, cur_idx, 0});
+            kittens::warp::load(k_s[warpid], g.k, {batch, head, cur_idx, 0});
         }
         else {
             cur_idx = block*ACTIVE_TILES + warpid - ACTIVE_TILES;
-            load(v_s[warpid-8], g.v, {batch, head, cur_idx, 0});
+            kittens::warp::load(v_s[warpid-8], g.v, {batch, head, cur_idx, 0});
         }
         __syncthreads();
 
         if(warpid < ACTIVE_TILES) {
-            load(q, q_s[warpid]);
-            load(k, k_s[warpid]);
+            kittens::warp::load(q, q_s[warpid]);
+            kittens::warp::load(k, k_s[warpid]);
 
-            zero(local_attn);
-            mma_ABt(local_attn, q, k, local_attn);
+            kittens::warp::zero(local_attn);
+            kittens::warp::mma_ABt(local_attn, q, k, local_attn);
 
-            copy(temp_attn_accum, local_attn);
+            kittens::warp::copy(temp_attn_accum, local_attn);
 
-            mul(temp_attn_accum, temp_attn_accum, temp_attn_accum);
-            mul(temp_attn_accum, temp_attn_accum, 0.5f); 
-            add(temp_attn_accum, temp_attn_accum, local_attn);
+            kittens::warp::mul(temp_attn_accum, temp_attn_accum, temp_attn_accum);
+            kittens::warp::mul(temp_attn_accum, temp_attn_accum, 0.5f); 
+            kittens::warp::add(temp_attn_accum, temp_attn_accum, local_attn);
 
-            copy(local_attn_bf, temp_attn_accum);
-            make_causal(local_attn_bf, local_attn_bf, kittens::base_types::constants<bf16>::zero());
+            kittens::warp::copy(local_attn_bf, temp_attn_accum);
+            kittens::warp::apply(local_attn_bf, local_attn_bf, [](int row, int col, float val) { return row >= col ? val : 0.0f; });
 
-            load(v, v_s[warpid]);
-            auto &v_col = swap_layout_inplace(v);
+            kittens::warp::load(v, v_s[warpid]);
+            auto &v_col = kittens::warp::swap_layout_inplace(v);
 
-            zero(o);
-            mma_AB(o, local_attn_bf, v_col, o);
+            kittens::warp::zero(o);
+            kittens::warp::mma_AB(o, local_attn_bf, v_col, o);
 
-            zero(accum);
-            auto &kt = transpose_inplace(k);
-            mma_AB(accum, kt, v_col, accum);
-            store(a1_s[(total_block_idx+warpid+1)%(ACTIVE_TILES+1)], accum);
+            kittens::warp::zero(accum);
+            auto &kt = kittens::warp::transpose_inplace(k);
+            kittens::warp::mma_AB(accum, kt, v_col, accum);
+            kittens::warp::store(a1_s[(total_block_idx+warpid+1)%(ACTIVE_TILES+1)], accum);
         }
 
         __syncthreads();
@@ -205,34 +205,34 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
 
         if(warpid < ACTIVE_TILES) {
             rt_bf<16, 64> a1;
-            load(q, q_s[warpid]); 
-            load(a1, a1_s[(total_block_idx+warpid)%(ACTIVE_TILES+1)]);
-            auto &a1_col = swap_layout_inplace(a1);
-            mma_AB(o, q, a1_col, o); 
-            store(o_s[warpid], o);
+            kittens::warp::load(q, q_s[warpid]); 
+            kittens::warp::load(a1, a1_s[(total_block_idx+warpid)%(ACTIVE_TILES+1)]);
+            auto &a1_col = kittens::warp::swap_layout_inplace(a1);
+            kittens::warp::mma_AB(o, q, a1_col, o); 
+            kittens::warp::store(o_s[warpid], o);
         }
         total_block_idx = (total_block_idx+ACTIVE_TILES)%(ACTIVE_TILES+1); // count backwards on the ring
         __syncthreads();
 
         for(int t = 0; t < ACTIVE_TILES; t++) {
-            load(q, q_s[t]);
+            kittens::warp::load(q, q_s[t]);
             mul_slice(q);
 
             rt_bf<16, 64> a2_bf;
-            copy(a2_bf, a2);
-            auto &a2_bf_col = swap_layout_inplace(a2_bf);
-            zero(o);
-            mma_AB(o, q, a2_bf_col, o);
+            kittens::warp::copy(a2_bf, a2);
+            auto &a2_bf_col = kittens::warp::swap_layout_inplace(a2_bf);
+            kittens::warp::zero(o);
+            kittens::warp::mma_AB(o, q, a2_bf_col, o);
 
-            load(k, k_s[t]);
+            kittens::warp::load(k, k_s[t]);
             mul_slice(k);
-            auto &kt = transpose_inplace(k); 
+            auto &kt = kittens::warp::transpose_inplace(k); 
 
-            load(v, v_s[t]);
-            auto &v_col = swap_layout_inplace(v);
-            mma_AB(a2, kt, v_col, a2);
+            kittens::warp::load(v, v_s[t]);
+            auto &v_col = kittens::warp::swap_layout_inplace(v);
+            kittens::warp::mma_AB(a2, kt, v_col, a2);
 
-            store(a2_o_accum[warpid], o);
+            kittens::warp::store(a2_o_accum[warpid], o);
 
             __syncthreads();
             tile_reduce<NUM_WORKERS>(o_s[t], a2_o_accum);
@@ -243,7 +243,7 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
         __syncthreads();
 
         if(warpid < ACTIVE_TILES) {
-            store(g.o, o_s[warpid], {batch, head, cur_idx, 0});
+            kittens::warp::store(g.o, o_s[warpid], {batch, head, cur_idx, 0});
         }
         __syncthreads();
     }

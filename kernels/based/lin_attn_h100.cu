@@ -76,7 +76,7 @@ __device__ static void mul_slice_row(rt_bf<1*16,4*16> &dst, const rt_bf<1*16,1*1
     // each thread is responsible for two rows
     #pragma unroll
     for(int i = 0; i < 4; i++) {
-        copy(reinterpret_cast<rt_bf<1*16,1*16>&>(dst.tiles[0][i]), src);
+        kittens::warp::copy(reinterpret_cast<rt_bf<1*16,1*16>&>(dst.tiles[0][i]), src);
         const int target_col = starting_col + i;
         #pragma unroll
         for(int row_offset = 0; row_offset < 2; row_offset++) {
@@ -97,7 +97,7 @@ __device__ static void mul_slice_col(rt_bf<16,64> &dst, const rt_bf<64,16,col_l>
 
     const int lane = kittens::laneid(); // 0...31    
     // each thread is responsible for two cols
-    copy(dst, reinterpret_cast<const rt_bf<16,64>&>(src));
+    kittens::warp::copy(dst, reinterpret_cast<const rt_bf<16,64>&>(src));
     #pragma unroll
     for(int i = 0; i < 4; i++) {
         #pragma unroll
@@ -143,10 +143,10 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
 
     warpgroup::zero(a1_trans_s);
     warpgroup::zero(a0_float);
-    zero(a1_trans); // everyone zeroes a2.
+    kittens::warp::zero(a1_trans); // everyone zeroes a2.
     #pragma unroll
     for(int i = 0; i < 4; i++) {
-        zero(a2[i]); // everyone zeroes a2.
+        kittens::warp::zero(a2[i]); // everyone zeroes a2.
     }
 
     int n_blocks = g.n / (q_s[0].rows);
@@ -154,17 +154,17 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
     // initial load
     __shared__ semaphore bar;
     if (warpid == 0) {
-        init_semaphore(bar, 0, 1);
-        tma::expect_bytes(bar,
+        warp::init_semaphore(bar, 0, 1);
+        warp::tma::expect_bytes(bar,
             size_bytes<typeof(q_s[0])> +
             size_bytes<typeof(k_s[0])> +
             size_bytes<typeof(v_s[0])>*2
         );
         int tile_idx = blockIdx.x * n_blocks;
-        tma::load_async(q_s[tic],   g.q, {batch, head, 0, 0}, bar);
-        tma::load_async(k_s[tic],   g.k, {batch, head, 0, 0}, bar);
-        tma::load_async(v_s[tic],   g.v, {batch, head, 0, 0}, bar); // it's actually faster to have TMA fill a few copies than for the warps to do it.
-        tma::load_async(v_s_2[tic], g.v, {batch, head, 0, 0}, bar);
+        warp::tma::load_async(q_s[tic],   g.q, {batch, head, 0, 0}, bar);
+        warp::tma::load_async(k_s[tic],   g.k, {batch, head, 0, 0}, bar);
+        warp::tma::load_async(v_s[tic],   g.v, {batch, head, 0, 0}, bar); // it's actually faster to have TMA fill a few copies than for the warps to do it.
+        warp::tma::load_async(v_s_2[tic], g.v, {batch, head, 0, 0}, bar);
     }
     __syncthreads();
 
@@ -174,22 +174,22 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
         rt_fl<16,64> o; // 32 registers each -- 64
 
         // arrive memory
-        wait(bar, tic);
+        kittens::warp::wait(bar, tic);
 
         // we start by doing the very local computations. Then, we'll follow up later with the rest.
         // note that local_attn rt shape is 1x4 since it's done by a warpgroup. 
         // even though you might think 4x4 since q_s x k_s is (4x1) x (1x4).
         warpgroup::mm_ABt(local_attn, q_s[tic], k_s[tic]); // clear registers -- note mm_ABt, not mma_ABt.
         if (warpid == 0 && block+1<n_blocks) { // go get the next QKV from HBM
-            tma::expect_bytes(bar,
+            warp::tma::expect_bytes(bar,
                 size_bytes<typeof(q_s[0])> +
                 size_bytes<typeof(k_s[0])> +
                 size_bytes<typeof(v_s[0])>*2
             );
-            tma::load_async(q_s[toc],   g.q, {batch, head, block+1, 0}, bar);
-            tma::load_async(k_s[toc],   g.k, {batch, head, block+1, 0}, bar);
-            tma::load_async(v_s[toc],   g.v, {batch, head, block+1, 0}, bar);
-            tma::load_async(v_s_2[toc], g.v, {batch, head, block+1, 0}, bar);
+            warp::tma::load_async(q_s[toc],   g.q, {batch, head, block+1, 0}, bar);
+            warp::tma::load_async(k_s[toc],   g.k, {batch, head, block+1, 0}, bar);
+            warp::tma::load_async(v_s[toc],   g.v, {batch, head, block+1, 0}, bar);
+            warp::tma::load_async(v_s_2[toc], g.v, {batch, head, block+1, 0}, bar);
         }
         // now we do the sum of the previous a0 onto o
         #pragma unroll
@@ -208,21 +208,21 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
         warpgroup::mma_async_wait(); // ding dong! matmuls arrived.
 
         // temperature scaling; divide a1 term by sqrt(d)
-        mul(local_attn, local_attn, 0.25f);
+        kittens::warp::mul(local_attn, local_attn, 0.25f);
         // our goal is to store local_attn + (local_attn^2 / 2) in local_attn_bf
-        copy(temp_attn_accum, local_attn);
+        kittens::warp::copy(temp_attn_accum, local_attn);
 
-        mul(temp_attn_accum, temp_attn_accum, temp_attn_accum); // square it
-        mul(temp_attn_accum, temp_attn_accum, 0.5f); // divide by 2
-        add(temp_attn_accum, temp_attn_accum, local_attn); // add back in 1x for the linear term
-        add(temp_attn_accum, temp_attn_accum, 1.f); // cumulative sum for a0
-        copy(local_attn_bf, temp_attn_accum); // now stored.
+        kittens::warp::mul(temp_attn_accum, temp_attn_accum, temp_attn_accum); // square it
+        kittens::warp::mul(temp_attn_accum, temp_attn_accum, 0.5f); // divide by 2
+        kittens::warp::add(temp_attn_accum, temp_attn_accum, local_attn); // add back in 1x for the linear term
+        kittens::warp::add(temp_attn_accum, temp_attn_accum, 1.f); // cumulative sum for a0
+        kittens::warp::copy(local_attn_bf, temp_attn_accum); // now stored.
         // now make causal
         #pragma unroll
         for(int j = 0; j < 4; j++) {
             auto &attn_subtile = reinterpret_cast<rt_bf<1*16,1*16>&>(local_attn_bf.tiles[0][j]);
-            if (j>warpid) zero(attn_subtile);
-            else if (j==warpid) make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<bf16>::zero());
+            if (j>warpid) kittens::warp::zero(attn_subtile);
+            else if (j==warpid) kittens::warp::apply(attn_subtile, attn_subtile, [](int row, int col, float val) { return row >= col ? val : 0.0f; });
         }
 
         warpgroup::mma_AB(o, local_attn_bf, v_s[tic]); // reset o here, and do local chunk.
@@ -230,7 +230,7 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
         rt_bf<1*16,1*16> q_src; // the source 16x16 tiles -- we'll draw on these for future mul_slice's.
         warpgroup::load(q_src, q_s[tic]);
         // temperature scaling; divide by d
-        mul(q_src, q_src, __float2bfloat16(0.25));
+        kittens::warp::mul(q_src, q_src, __float2bfloat16(0.25));
         warpgroup::mma_async_wait(); // tmp
         
         warpgroup::mma_ABt(o, q_src, a1_trans_s); // incorporate a1 onto o (SA: FLAG WAS q_smem[tic] HERE)
@@ -242,9 +242,9 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
         }
         warpgroup::mma_async_wait(); // tmp
         warpgroup::store(a1_trans_s, a1_trans);
-        mul(q_src, q_src, __float2bfloat16(0.70710678118)); // divide by 2 for A2 here; the mul_slices 
+        kittens::warp::mul(q_src, q_src, __float2bfloat16(0.70710678118)); // divide by 2 for A2 here; the mul_slices 
         rt_bf<64,16,col_l> k_src;
-        load(k_src, k_s[tic]);
+        kittens::warp::load(k_src, k_s[tic]);
 
         // about 75% of execution time is in this loop
         __syncthreads();
@@ -276,10 +276,10 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
     warpgroup::copy(a0_total, a0_float);
     #pragma unroll
     for (int rt = 0; rt < 4; rt++) {
-        mul(a2[rt], a2[rt], (0.70710678118f*0.25f)); // divides by math.sqrt(math.sqrt(D_QK))
+        kittens::warp::mul(a2[rt], a2[rt], (0.70710678118f*0.25f)); // divides by math.sqrt(math.sqrt(D_QK))
         warpgroup::store(a2_s[rt], a2[rt]);
     }
-    mul(a1_trans, a1_trans, 0.5);  // divides by math.sqrt(math.sqrt(D_QK))
+    kittens::warp::mul(a1_trans, a1_trans, 0.5);  // divides by math.sqrt(math.sqrt(D_QK))
     warpgroup::store(a1_trans_s, a1_trans);   // from individual warps to shared address
     tma::store_async_read_wait();
     __syncthreads();
