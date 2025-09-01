@@ -37,22 +37,24 @@ template<typename T> concept all = requires {
 } // namespace descriptor
 } // namespace tma
 } // namespace ducks
-namespace tma {
 namespace detail {
+namespace tma {
 template<typename T> struct descriptor_copy_helper {};
 template<kittens::ducks::tma::descriptor::all _T> struct descriptor_copy_helper<_T> { static constexpr int value = _T::axis; using T = _T::T; };
 template<kittens::ducks::st::all _T> struct descriptor_copy_helper<_T> { static constexpr int value = 2; using T = _T; };
 template<kittens::ducks::sv::all _T> struct descriptor_copy_helper<_T> { static constexpr int value = -1; using T = _T; };
 template<typename T> using descriptor_copy_helper_t = descriptor_copy_helper<T>::T;
 template<typename T> static constexpr int descriptor_copy_helper_v = descriptor_copy_helper<T>::value;
+} // namespace tma
 } // namespace detail
+namespace tma {
 template<typename _T, int _axis=-9999> struct descriptor {
     using identifier = ducks::tma::descriptor::identifier;
-    using T = detail::descriptor_copy_helper_t<_T>;
+    using T = detail::tma::descriptor_copy_helper_t<_T>;
     static_assert(ducks::st::all<T> || ducks::sv::all<T> || ducks::tma::descriptor::all<T>, "Must be a shared TK type to generate a TMA descriptor.");
     static constexpr int axis = (
-        ducks::tma::descriptor::all<_T> ? detail::descriptor_copy_helper_v<_T> : // if a copy, inherit the axis from the original descriptor. 
-        (_axis != -9999) ? _axis : detail::descriptor_copy_helper_v<_T>); // if a default value was provided, use it.
+        ducks::tma::descriptor::all<_T> ? detail::tma::descriptor_copy_helper_v<_T> : // if a copy, inherit the axis from the original descriptor. 
+        (_axis != -9999) ? _axis : detail::tma::descriptor_copy_helper_v<_T>); // if a default value was provided, use it.
     static_assert((kittens::ducks::st::all<T> && axis >= 0 && axis <= 2) || (kittens::ducks::sv::all<T> && axis == -1), "Internal template error detected.");
 };
 } // namespace tma
@@ -78,12 +80,12 @@ struct descriptor_dict {
 template<typename _T, typename... Args>
 struct descriptor_dict<_T, Args...> {
     static_assert(ducks::sv::all<_T> || ducks::st::all<_T> || ducks::tma::descriptor::all<_T>, "Must be a shared TK type to generate a TMA descriptor.");
-    using DESC = tma::descriptor<_T>; // copy or initialize with a default value
+    using DESC = kittens::tma::descriptor<_T>; // copy or initialize with a default value
     CUtensorMap tma_desc;
     descriptor_dict<Args...> other_descs;
     __host__ descriptor_dict() {}
     __host__ descriptor_dict(typename DESC::T::dtype *data, int b, int d, int r, int c): other_descs(data, b, d, r, c) {
-        tma::detail::create_tensor_map<typename DESC::T, DESC::axis>(&tma_desc, data, b, d, r, c);
+        kittens::detail::tma::create_tensor_map<typename DESC::T, DESC::axis>(&tma_desc, data, b, d, r, c);
     }
     __host__ __device__ inline descriptor_dict(const descriptor_dict &other) :
         tma_desc(other.tma_desc), other_descs(other.other_descs) {}
@@ -197,16 +199,16 @@ template<int N> auto make_unsafe_gl_arg(int param) { // typename std::conditiona
 template<ducks::gl::all GL, bool safe=true> __host__ inline GL make_gl(uint64_t data, int b, int d, int r, int c) {
     if constexpr (safe) {
         if(GL::__b__ > 0 && b != GL::__b__) {
-            throw std::runtime_error("Batch dimension mismatch.");
+            throw std::runtime_error("Batch dimension mismatch. Expected: " + std::to_string(GL::__b__) + ", Got: " + std::to_string(b));
         }
         if(GL::__d__ > 0 && d != GL::__d__) {
-            throw std::runtime_error("Depth dimension mismatch.");
+            throw std::runtime_error("Depth dimension mismatch. Expected: " + std::to_string(GL::__d__) + ", Got: " + std::to_string(d));
         }
         if(GL::__r__ > 0 && r != GL::__r__) {
-            throw std::runtime_error("Row dimension mismatch.");
+            throw std::runtime_error("Row dimension mismatch. Expected: " + std::to_string(GL::__r__) + ", Got: " + std::to_string(r));
         }
         if(GL::__c__ > 0 && c != GL::__c__) {
-            throw std::runtime_error("Column dimension mismatch.");
+            throw std::runtime_error("Column dimension mismatch. Expected: " + std::to_string(GL::__c__) + ", Got: " + std::to_string(c));
         }
     }
     return GL(
@@ -217,5 +219,37 @@ template<ducks::gl::all GL, bool safe=true> __host__ inline GL make_gl(uint64_t 
         make_unsafe_gl_arg<GL::__c__>(c)
     );
 }
+
+namespace ducks {
+namespace gl_array {
+struct identifier {};
+template<typename T> concept all = requires {
+    typename T::identifier;
+} && std::is_same_v<typename T::identifier, identifier>;
+}
+}
+
+/*
+    Basically a lightweight PGL; useful for cross-device access without multimem instructions
+    (only because C++ doesn't allow returning C-style arrays as R-values)
+*/
+template<ducks::gl::all _GL, size_t _N>
+struct gl_array {
+    using identifier = ducks::gl_array::identifier;
+    using GL = _GL;
+    static constexpr int N = _N;
+
+    GL gls[N];
+
+    __host__ inline gl_array(uint64_t _data_ptr[N], int _batch, int _depth, int _rows, int _cols) : 
+        gl_array(std::make_index_sequence<N>{}, _data_ptr, _batch, _depth, _rows, _cols) { }
+
+    template<size_t... I> __host__ inline gl_array(std::index_sequence<I...>,
+            uint64_t _data_ptr[N], int _batch, int _depth, int _rows, int _cols) : 
+        gls{make_gl<GL>(_data_ptr[I], _batch, _depth, _rows, _cols)...} { }
+
+    __host__ __device__ GL& operator[](size_t i) { return gls[i]; }
+    __host__ __device__ const GL& operator[](size_t i) const { return gls[i]; }
+};
 
 } // namespace kittens

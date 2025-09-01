@@ -112,11 +112,11 @@ struct group_p2s_all_reduce_test {
                 for(int k = 0; k < num_rows; k++) {
                     for(int l = 0; l < input.cols()/shared_tile.cols; l++) {
                         if constexpr (op == kittens::ReduceOp::ADD) {
-                            G::template all_reduce_add<axis::value, false>(shared_tile, input, dev_idx, {i, j, k, l});
+                            G::template all_reduce_add<axis::value, false>(shared_tile, input, {i, j, k, l}, dev_idx);
                         } else if constexpr (op == kittens::ReduceOp::MIN) {
-                            G::template all_reduce_min<axis::value, false>(shared_tile, input, dev_idx, {i, j, k, l});
+                            G::template all_reduce_min<axis::value, false>(shared_tile, input, {i, j, k, l}, dev_idx);
                         } else if constexpr (op == kittens::ReduceOp::MAX) {
-                            G::template all_reduce_max<axis::value, false>(shared_tile, input, dev_idx, {i, j, k, l});
+                            G::template all_reduce_max<axis::value, false>(shared_tile, input, {i, j, k, l}, dev_idx);
                         }
                         G::template store<axis::value, false>(output[dev_idx], shared_tile, {i, j, k, l});
                     }
@@ -167,7 +167,7 @@ struct group_p2s_atomic_add_test {
                 for(int k = 0; k < num_rows; k++) {
                     for(int l = 0; l < input.cols()/shared_tile.cols; l++) {
                         G::template load<axis::value, false>(shared_tile, input[dev_idx], {i, j, k, l});
-                        G::template atomic_add<axis::value, false>(output, shared_tile, dev_idx, {i, j, k, l});
+                        G::template atomic_add<axis::value, false>(output, shared_tile, {i, j, k, l}, dev_idx);
                     }
                 }
             }
@@ -209,7 +209,7 @@ struct group_p2s_broadcast_test {
                 for(int k = 0; k < num_rows; k++) {
                     for(int l = 0; l < input.cols()/shared_tile.cols; l++) {
                         G::template load<axis::value, false>(shared_tile, input[dev_idx], {i, j, k, l});
-                        G::template broadcast<axis::value, false>(output, shared_tile, dev_idx, {i, j, k, l});
+                        G::template broadcast<axis::value, false>(output, shared_tile, {i, j, k, l}, dev_idx);
                     }
                 }
             }

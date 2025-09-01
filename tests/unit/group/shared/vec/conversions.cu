@@ -21,7 +21,7 @@ struct vec_copy {
 };
 
 void group::shared::vec::conversions::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/group/shared/vec/conversions tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/group/shared/vec/conversions tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
@@ -30,6 +30,7 @@ void group::shared::vec::conversions::tests(test_data &results) {
     sweep_size_1d<vec_copy, SIZE, 2>::run(results);
     sweep_size_1d<vec_copy, SIZE, 4>::run(results);
     sweep_size_1d<vec_copy, SIZE, 12>::run(results);
+    std::cout << std::endl;
 }
 
 #endif

@@ -110,11 +110,11 @@ struct group_p2r_all_reduce_test {
                 for(int k = 0; k < num_rows; k++) {
                     for(int l = 0; l < input.cols()/reg_tile.cols; l++) {
                         if constexpr (op == kittens::ReduceOp::ADD) {
-                            G::template all_reduce_add<axis::value>(reg_tile, input, dev_idx, {i, j, k, l});
+                            G::template all_reduce_add<axis::value>(reg_tile, input, {i, j, k, l}, dev_idx);
                         } else if constexpr (op == kittens::ReduceOp::MIN) {
-                            G::template all_reduce_min<axis::value>(reg_tile, input, dev_idx, {i, j, k, l});
+                            G::template all_reduce_min<axis::value>(reg_tile, input, {i, j, k, l}, dev_idx);
                         } else if constexpr (op == kittens::ReduceOp::MAX) {
-                            G::template all_reduce_max<axis::value>(reg_tile, input, dev_idx, {i, j, k, l});
+                            G::template all_reduce_max<axis::value>(reg_tile, input, {i, j, k, l}, dev_idx);
                         }
                         G::template store<axis::value>(output[dev_idx], reg_tile, {i, j, k, l});
                     }
@@ -163,7 +163,7 @@ struct group_p2r_atomic_add_test {
                 for(int k = 0; k < num_rows; k++) {
                     for(int l = 0; l < input.cols()/reg_tile.cols; l++) {
                         G::template load<axis::value>(reg_tile, input[dev_idx], {i, j, k, l});
-                        G::template atomic_add<axis::value>(output, reg_tile, dev_idx, {i, j, k, l});
+                        G::template atomic_add<axis::value>(output, reg_tile, {i, j, k, l}, dev_idx);
                     }
                 }
             }
@@ -203,7 +203,7 @@ struct group_p2r_broadcast_test {
                 for(int k = 0; k < num_rows; k++) {
                     for(int l = 0; l < input.cols()/reg_tile.cols; l++) {
                         G::template load<axis::value>(reg_tile, input[dev_idx], {i, j, k, l});
-                        G::template broadcast<axis::value>(output, reg_tile, dev_idx, {i, j, k, l});
+                        G::template broadcast<axis::value>(output, reg_tile, {i, j, k, l}, dev_idx);
                     }
                 }
             }

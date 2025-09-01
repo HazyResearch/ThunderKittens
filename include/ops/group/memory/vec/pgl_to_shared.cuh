@@ -4,7 +4,7 @@
  */
 
 template<ReduceOp OP, ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
-__device__ static inline void ld_reduce_op(SV &dst, const PGL &src, int dev_idx, const COORD &idx) {
+__device__ static inline void ld_reduce_op(SV &dst, const PGL &src, const COORD &idx, const int dev_idx) {
     using U = typename PGL::dtype;
     using T = typename SV::dtype;
     constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
@@ -35,8 +35,8 @@ __device__ static inline void ld_reduce_op(SV &dst, const PGL &src, int dev_idx,
  * @param[in] src The source PGL to load data across devices from
  */
 template<ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
-__device__ static inline void all_reduce_add(SV &dst, const PGL &src, int dev_idx, const COORD &idx) {
-    ld_reduce_op<ReduceOp::ADD>(dst, src, dev_idx, idx);
+__device__ static inline void all_reduce_add(SV &dst, const PGL &src, const COORD &idx, const int dev_idx) {
+    ld_reduce_op<ReduceOp::ADD>(dst, src, idx, dev_idx);
 }
 
 /**
@@ -48,8 +48,8 @@ __device__ static inline void all_reduce_add(SV &dst, const PGL &src, int dev_id
  * @param[in] src The source PGL to load data across devices from
  */
 template<ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
-__device__ static inline void all_reduce_min(SV &dst, const PGL &src, int dev_idx, const COORD &idx) {
-    ld_reduce_op<ReduceOp::MIN>(dst, src, dev_idx, idx);
+__device__ static inline void all_reduce_min(SV &dst, const PGL &src, const COORD &idx, const int dev_idx) {
+    ld_reduce_op<ReduceOp::MIN>(dst, src, idx, dev_idx);
 }
 
 /**
@@ -61,12 +61,12 @@ __device__ static inline void all_reduce_min(SV &dst, const PGL &src, int dev_id
  * @param[in] src The source PGL to load data across devices from
  */
 template<ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
-__device__ static inline void all_reduce_max(SV &dst, const PGL &src, int dev_idx, const COORD &idx) {
-    ld_reduce_op<ReduceOp::MAX>(dst, src, dev_idx, idx);
+__device__ static inline void all_reduce_max(SV &dst, const PGL &src, const COORD &idx, const int dev_idx) {
+    ld_reduce_op<ReduceOp::MAX>(dst, src, idx, dev_idx);
 }
 
 template<ReduceOp OP, ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
-__device__ static inline void reduce_op(const PGL &dst, const SV &src, int dev_idx, const COORD &idx) {
+__device__ static inline void reduce_op(const PGL &dst, const SV &src, const COORD &idx, const int dev_idx) {
     using U = typename PGL::dtype;
     static_assert(std::is_same_v<U, kittens::bf16> || std::is_same_v<U, half> || std::is_same_v<U, float>, 
         "Unsupported type for ld_reduce_op");
@@ -95,8 +95,8 @@ __device__ static inline void reduce_op(const PGL &dst, const SV &src, int dev_i
  * @param[in] src The source shared vector to load data from.
  */
 template<ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
-__device__ static inline void atomic_add(const PGL &dst, const SV &src, int dev_idx, const COORD &idx) {
-    reduce_op<ReduceOp::ADD>(dst, src, dev_idx, idx);
+__device__ static inline void atomic_add(const PGL &dst, const SV &src, const COORD &idx, const int dev_idx) {
+    reduce_op<ReduceOp::ADD>(dst, src, idx, dev_idx);
 }
 
 /**
@@ -108,7 +108,7 @@ __device__ static inline void atomic_add(const PGL &dst, const SV &src, int dev_
  * @param[in] src The source shared vector to load data from.
  */
 template<ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>>
-__device__ static inline void broadcast(const PGL &dst, const SV &src, int dev_idx, const COORD &idx) {
+__device__ static inline void broadcast(const PGL &dst, const SV &src, const COORD &idx, const int dev_idx) {
     using U = typename PGL::dtype;
     constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
     constexpr uint32_t total_calls = src.length / elem_per_transfer; // guaranteed to divide

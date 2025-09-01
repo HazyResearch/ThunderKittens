@@ -14,7 +14,7 @@ def generate_random_workloads(num_workloads: int):
         schedule_length = 9999
         while schedule_length > 100 and random.random() > np.exp(-(schedule_length-100)/100):
             num_processors = random.randint(1, 132)
-            num_tokens = random.randint(1, 4) 
+            num_tokens = random.randint(1, 8) 
             seq_length = random.randint(1, 65536)
             schedule_length = get_length(seq_length, num_processors, num_tokens)
         yield num_processors, num_tokens, seq_length, schedule_length

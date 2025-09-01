@@ -9,9 +9,9 @@ using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::lcf;
 struct matmul_layout {
-    using  a_tile         = st_fl8_e4m3<64,  128>; // SA: note that if we could accum in fp16, then we could use <64, 256>
-    using  b_tile         = st_fl8_e4m3<256, 128>;
-    using  c_tile         = st_fl8_e4m3<64,  256>;
+    using  a_tile         = st_fp8e4m3<64,  128>; // SA: note that if we could accum in fp16, then we could use <64, 256>
+    using  b_tile         = st_fp8e4m3<256, 128>;
+    using  c_tile         = st_fp8e4m3<64,  256>;
     using  a_layout       = gl<fp8e4m3, 1, 1, -1, -1, a_tile>;
     using  b_layout       = gl<fp8e4m3, 1, 1, -1, -1, b_tile>;
     using  c_layout       = gl<fp8e4m3, 1, 1, -1, -1, c_tile>;
@@ -21,7 +21,7 @@ struct matmul_layout {
     struct common_state   { int2 coord; };
     struct consumer_state { 
         rt_fl<16, c_tile::cols> accum;  // Changed to single tall accumulator
-        rt_fl8_e4m3<16, c_tile::cols> accum_fp8;  // Changed to match tall format
+        rt_fp8e4m3<16, c_tile::cols> accum_fp8;  // Changed to match tall format
     };
 };
 template<int _SUPER_M=12>

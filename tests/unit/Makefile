@@ -2,13 +2,13 @@
 # If you want to run lots of tests without parallel compilation, be prepared
 # to spend a *long* time compiling. (like, HOURS single-threaded.)
 
-# GPU Selection: Set to either 4090 or H100
+# GPU Selection: Set to either 4090, H100, B200
 GPU_TARGET=H100
 COMP_LEVEL=fast
 
 # Compiler
 NVCC?=nvcc
-NVCCFLAGS=-std=c++20 --expt-relaxed-constexpr -Itesting_commons -I../../include
+NVCCFLAGS=-std=c++20 --expt-relaxed-constexpr -Itesting_commons -I../../include --extended-lambda
 
 # At what level to run tests?
 # Level 1 takes 15 seconds to compile 1,000 tests.
@@ -20,7 +20,8 @@ NVCCFLAGS+= -DTEST_INTENSITY=2
 # -DTEST_ALL means run all tests.
 # You can also specify subsections, e.g. -DTEST_WARP_MEMORY
 # Or individual tests, like -DTEST_WARP_MEMORY_VEC_DSMEM. Useful for debugging!
-NVCCFLAGS+= -DTEST_ALL
+NVCCFLAGS+= -DTEST_ALL -DTEST_ALL_MULTI_GPU
+# NVCCFLAGS+= -DTEST_ALL_WARP_MEMORY
 
 ifeq ($(COMP_LEVEL),fast)
 NVCCFLAGS+= -O0 --threads=0 -diag-suppress 20054
@@ -37,6 +38,8 @@ else ifeq ($(GPU_TARGET),A100)
 NVCCFLAGS+= -arch=sm_80 -DKITTENS_A100
 else ifeq ($(GPU_TARGET),H100)
 NVCCFLAGS+= -arch=sm_90a -DKITTENS_HOPPER -lcuda -lcudart
+else ifeq ($(GPU_TARGET),B200)
+NVCCFLAGS+= -arch=sm_100a -DKITTENS_HOPPER -DKITTENS_BLACKWELL -lcuda -lcudart
 endif
 
 # Target binary name

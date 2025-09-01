@@ -3,8 +3,8 @@
  * @brief Functions for a group to collaboratively perform operations between pgls and register tiles 
  */
 
-template<int axis, ReduceOp OP, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
-__device__ inline static void ld_reduce_op(RT &dst, const PGL &src, int dev_idx, const COORD &idx) {
+template<int axis, ReduceOp OP, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void ld_reduce_op(RT &dst, const PGL &src, const COORD &idx, const int dev_idx) {
     using T2 = RT::dtype;
     using U = typename PGL::dtype;
     using U2 = base_types::packing<U>::packed_type;
@@ -12,7 +12,7 @@ __device__ inline static void ld_reduce_op(RT &dst, const PGL &src, int dev_idx,
     static_assert(std::is_same_v<U, kittens::bf16> || std::is_same_v<U, half> || std::is_same_v<U, float>, 
         "Unsupported type for ld_reduce_op");
 
-    U *dst_mc_ptr = src.mc_ptr_at(idx.template unit_coord<axis, 3>(), dev_idx);
+    U *src_mc_ptr = src.mc_ptr_at(idx.template unit_coord<axis, 3>(), dev_idx);
     const int row_stride = src.template stride<axis>();
     int warp_laneid = threadIdx.x % WARP_THREADS;
     const int row_offset = dst.rows*warpid();
@@ -24,9 +24,9 @@ __device__ inline static void ld_reduce_op(RT &dst, const PGL &src, int dev_idx,
             int col = j*dst.tile_size_col + 2*(warp_laneid % 4);
             U2 dst_buf[2];
             multimem_ld_reduce_op<U2, OP>::apply(
-                &dst_buf[0], (U2*)&dst_mc_ptr[(row+0)*row_stride + (col+0)]);
+                &dst_buf[0], (U2*)&src_mc_ptr[(row+0)*row_stride + (col+0)]);
             multimem_ld_reduce_op<U2, OP>::apply(
-                &dst_buf[1], (U2*)&dst_mc_ptr[(row+0)*row_stride + (col+8)]);
+                &dst_buf[1], (U2*)&src_mc_ptr[(row+0)*row_stride + (col+8)]);
             dst.tiles[i][j].data[0] = base_types::convertor<T2, U2>::convert(dst_buf[0]);
             dst.tiles[i][j].data[2] = base_types::convertor<T2, U2>::convert(dst_buf[1]);
         }
@@ -35,9 +35,9 @@ __device__ inline static void ld_reduce_op(RT &dst, const PGL &src, int dev_idx,
             int col = j*dst.tile_size_col + 2*(warp_laneid % 4);
             U2 dst_buf[2];
             multimem_ld_reduce_op<U2, OP>::apply(
-                &dst_buf[0], (U2*)&dst_mc_ptr[(row+8)*row_stride + (col+0)]);
+                &dst_buf[0], (U2*)&src_mc_ptr[(row+8)*row_stride + (col+0)]);
             multimem_ld_reduce_op<U2, OP>::apply(
-                &dst_buf[1], (U2*)&dst_mc_ptr[(row+8)*row_stride + (col+8)]);
+                &dst_buf[1], (U2*)&src_mc_ptr[(row+8)*row_stride + (col+8)]);
             dst.tiles[i][j].data[1] = base_types::convertor<T2, U2>::convert(dst_buf[0]);
             dst.tiles[i][j].data[3] = base_types::convertor<T2, U2>::convert(dst_buf[1]);
         }
@@ -53,14 +53,14 @@ __device__ inline static void ld_reduce_op(RT &dst, const PGL &src, int dev_idx,
  * @param dst The destination register tile to store the result.
  * @param src The source PGL to load data across devices from
  */
-template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
-__device__ inline static void all_reduce_add(RT &dst, const PGL &src, int dev_idx, const COORD &idx) {
-    ld_reduce_op<axis, ReduceOp::ADD>(dst, src, dev_idx, idx);
+template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void all_reduce_add(RT &dst, const PGL &src, const COORD &idx, const int dev_idx) {
+    ld_reduce_op<axis, ReduceOp::ADD>(dst, src, idx, dev_idx);
 }
 
-template<ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
-__device__ inline static void all_reduce_add(RT &dst, const PGL &src, int dev_idx, const COORD &idx) {
-    ld_reduce_op<2, ReduceOp::ADD>(dst, src, dev_idx, idx);
+template<ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void all_reduce_add(RT &dst, const PGL &src, const COORD &idx, const int dev_idx) {
+    ld_reduce_op<2, ReduceOp::ADD>(dst, src, idx, dev_idx);
 }
 
 /**
@@ -72,14 +72,14 @@ __device__ inline static void all_reduce_add(RT &dst, const PGL &src, int dev_id
  * @param dst The destination register tile to store the result.
  * @param src The source PGL to load data across devices from
  */
-template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
-__device__ inline static void all_reduce_min(RT &dst, const PGL &src, int dev_idx, const COORD &idx) {
-    ld_reduce_op<axis, ReduceOp::MIN>(dst, src, dev_idx, idx);
+template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void all_reduce_min(RT &dst, const PGL &src, const COORD &idx, const int dev_idx) {
+    ld_reduce_op<axis, ReduceOp::MIN>(dst, src, idx, dev_idx);
 }
 
-template<ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
-__device__ inline static void all_reduce_min(RT &dst, const PGL &src, int dev_idx, const COORD &idx) {
-    ld_reduce_op<2, ReduceOp::MIN>(dst, src, dev_idx, idx);
+template<ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void all_reduce_min(RT &dst, const PGL &src, const COORD &idx, const int dev_idx) {
+    ld_reduce_op<2, ReduceOp::MIN>(dst, src, idx, dev_idx);
 }
 
 /**
@@ -91,18 +91,18 @@ __device__ inline static void all_reduce_min(RT &dst, const PGL &src, int dev_id
  * @param dst The destination register tile to store the result.
  * @param src The source PGL to load data across devices from
  */
-template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
-__device__ inline static void all_reduce_max(RT &dst, const PGL &src, int dev_idx, const COORD &idx) {
-    ld_reduce_op<axis, ReduceOp::MAX>(dst, src, dev_idx, idx);
+template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void all_reduce_max(RT &dst, const PGL &src, const COORD &idx, const int dev_idx) {
+    ld_reduce_op<axis, ReduceOp::MAX>(dst, src, idx, dev_idx);
 }
 
-template<ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
-__device__ inline static void all_reduce_max(RT &dst, const PGL &src, int dev_idx, const COORD &idx) {
-    ld_reduce_op<2, ReduceOp::MAX>(dst, src, dev_idx, idx);
+template<ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void all_reduce_max(RT &dst, const PGL &src, const COORD &idx, const int dev_idx) {
+    ld_reduce_op<2, ReduceOp::MAX>(dst, src, idx, dev_idx);
 }
 
-template<int axis, ReduceOp OP, ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
-__device__ inline static void reduce_op(const PGL &dst, const RT &src, int dev_idx, const COORD &idx) {
+template<int axis, ReduceOp OP, ducks::pgl::all PGL, ducks::rt::row_layout RT, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void reduce_op(const PGL &dst, const RT &src, const COORD &idx, const int dev_idx) {
     using T2 = RT::dtype;
     using U = typename PGL::dtype;
     using U2 = base_types::packing<U>::packed_type;
@@ -151,14 +151,14 @@ __device__ inline static void reduce_op(const PGL &dst, const RT &src, int dev_i
  * @param dst The destination PGL to store the result.
  * @param src The source RT to load data from
  */
-template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
-__device__ inline static void atomic_add(const PGL &dst, const RT &src, int dev_idx, const COORD &idx) {
-    reduce_op<axis, ReduceOp::ADD>(dst, src, dev_idx, idx);
+template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void atomic_add(const PGL &dst, const RT &src, const COORD &idx, const int dev_idx) {
+    reduce_op<axis, ReduceOp::ADD>(dst, src, idx, dev_idx);
 }
 
-template<ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
-__device__ inline static void atomic_add(const PGL &dst, const RT &src, int dev_idx, const COORD &idx) {
-    reduce_op<2, ReduceOp::ADD>(dst, src, dev_idx, idx);
+template<ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void atomic_add(const PGL &dst, const RT &src, const COORD &idx, const int dev_idx) {
+    reduce_op<2, ReduceOp::ADD>(dst, src, idx, dev_idx);
 }
 
 /**
@@ -170,8 +170,8 @@ __device__ inline static void atomic_add(const PGL &dst, const RT &src, int dev_
  * @param dst The destination PGL to store the result.
  * @param src The source RT to load data from
  */
-template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
-__device__ inline static void broadcast(const PGL &dst, const RT &src, int dev_idx, const COORD &idx) {
+template<int axis, ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void broadcast(const PGL &dst, const RT &src, const COORD &idx, const int dev_idx) {
     using T2 = RT::dtype;
     using U = typename PGL::dtype;
     using U2 = base_types::packing<U>::packed_type;
@@ -202,7 +202,7 @@ __device__ inline static void broadcast(const PGL &dst, const RT &src, int dev_i
     }
 }
 
-template<ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, N_WARPS*RT::rows, RT::cols, typename RT::layout>>>
-__device__ inline static void broadcast(const PGL &dst, const RT &src, int dev_idx, const COORD &idx) {
-    broadcast<2>(dst, src, dev_idx, idx);
+template<ducks::rt::row_layout RT, ducks::pgl::all PGL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
+__device__ inline static void broadcast(const PGL &dst, const RT &src, const COORD &idx, const int dev_idx) {
+    broadcast<2>(dst, src, idx, dev_idx);
 }

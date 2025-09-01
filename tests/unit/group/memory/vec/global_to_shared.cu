@@ -44,31 +44,38 @@ struct vec_async_load_store {
 };
 
 void group::memory::vec::global_to_shared::tests(test_data &results) {
-    std::cout << "\n ----- Starting ops/group/memory/vec/global_to_shared tests! -----\n" << std::endl;
+    std::cout << " ----- Starting ops/group/memory/vec/global_to_shared tests! -----\n" << std::endl;
     constexpr int SIZE = INTENSITY_1 ? 2  :
                          INTENSITY_2 ? 4  : 
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
                          
+    sweep_size_1d<vec_load_store<float>, SIZE, 1>::run(results);
     sweep_size_1d<vec_load_store<float>, SIZE, 2>::run(results);
     sweep_size_1d<vec_load_store<float>, SIZE, 4>::run(results);
     sweep_size_1d<vec_load_store<float>, SIZE, 12>::run(results);
+    sweep_size_1d<vec_load_store<kittens::bf16>, SIZE, 1>::run(results);
     sweep_size_1d<vec_load_store<kittens::bf16>, SIZE, 2>::run(results);
     sweep_size_1d<vec_load_store<kittens::bf16>, SIZE, 4>::run(results);
     sweep_size_1d<vec_load_store<kittens::bf16>, SIZE, 12>::run(results);
+    sweep_size_1d<vec_load_store<kittens::half>, SIZE, 1>::run(results);
     sweep_size_1d<vec_load_store<kittens::half>, SIZE, 2>::run(results);
     sweep_size_1d<vec_load_store<kittens::half>, SIZE, 4>::run(results);
     sweep_size_1d<vec_load_store<kittens::half>, SIZE, 12>::run(results);
                          
+    sweep_size_1d<vec_async_load_store<float>, SIZE, 1>::run(results);
     sweep_size_1d<vec_async_load_store<float>, SIZE, 2>::run(results);
     sweep_size_1d<vec_async_load_store<float>, SIZE, 4>::run(results);
     sweep_size_1d<vec_async_load_store<float>, SIZE, 12>::run(results);
+    sweep_size_1d<vec_async_load_store<kittens::bf16>, SIZE, 1>::run(results);
     sweep_size_1d<vec_async_load_store<kittens::bf16>, SIZE, 2>::run(results);
     sweep_size_1d<vec_async_load_store<kittens::bf16>, SIZE, 4>::run(results);
     sweep_size_1d<vec_async_load_store<kittens::bf16>, SIZE, 12>::run(results);
+    sweep_size_1d<vec_async_load_store<kittens::half>, SIZE, 1>::run(results);
     sweep_size_1d<vec_async_load_store<kittens::half>, SIZE, 2>::run(results);
     sweep_size_1d<vec_async_load_store<kittens::half>, SIZE, 4>::run(results);
     sweep_size_1d<vec_async_load_store<kittens::half>, SIZE, 12>::run(results);
+    std::cout << std::endl;
 }
 
 #endif

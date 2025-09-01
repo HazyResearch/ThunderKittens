@@ -27,6 +27,16 @@ namespace st {
  * This is particularly useful for subtiles.
  */
 struct identifier {};
+/**
+* @brief Concept for all shared tiles.
+* @tparam T The type to check against the concept requirements.
+*
+* Requires:
+* - T has a nested type identifier that is the same as st::identifier.
+*/
+template<typename T> concept all = requires {
+    typename T::identifier; // Checks if T::identifier exists
+} && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::st::identifier
 }
 } // namespace ducks
 
@@ -123,12 +133,12 @@ struct KITTENS_DEFAULT_ALIGN st {
         return data[idx];
     }
 
+    template<int subtile_rows, int subtile_cols>
+    __device__ inline st_subtile<st<_T, _rows, _cols>, subtile_rows, subtile_cols> subtile(int2 rowcol);
+
     // vector types
     using col_vec = sv<dtype, rows>; ///< Column vector type for this tile
     using row_vec = sv<dtype, cols>; ///< Row vector type for this tile
-    template<int subtile_rows, int subtile_cols> using subtile = st_subtile<
-        st<T, rows, cols>, subtile_rows, subtile_cols
-    >; ///< A templated subtile type wrapper for this tile.
 };
 
 
@@ -228,25 +238,47 @@ struct st_subtile {
     }
 };
 
-/* ----------  CONCEPTS  ---------- */
+template <typename _T, int _rows, int _cols> // Class template parameters
+template <int subtile_rows, int subtile_cols> // Function template parameters
+__device__ inline st_subtile<st<_T, _rows, _cols>, subtile_rows, subtile_cols> // Return type
+st<_T, _rows, _cols>::subtile(int2 rowcol) // Qualified function name and parameters
+{
+    // Type aliases for convenience within the function body
+    using ST_t = st<_T, _rows, _cols>; // Alias for the parent tile type
+    using dtype = typename ST_t::dtype;  // Alias for the data type
 
-namespace ducks {
-namespace st {
+    // Static assertions (as provided in the initial request)
+    static_assert(subtile_rows > 0 && subtile_cols > 0, "Subtile dimensions must be positive.");
+    static_assert(subtile_rows % kittens::TILE_ROW_DIM<dtype> == 0,
+        "Subtile rows must be divisible by the base tile row dimension.");
+    static_assert(subtile_cols % kittens::TILE_COL_DIM<dtype> == 0,
+        "Subtile cols must be divisible by the base tile col dimension.");
 
-/**
-* @brief Concept for all shared tiles.
-* @tparam T The type to check against the concept requirements.
-*
-* Requires:
-* - T has a nested type identifier that is the same as st::identifier.
-*/
-template<typename T> concept all = requires {
-    typename T::identifier; // Checks if T::identifier exists
-} && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::st::identifier
+    // Calculate height/width in terms of base tiles for further checks
+    constexpr int subtile_height = subtile_rows / kittens::TILE_ROW_DIM<dtype>;
+    constexpr int subtile_width = subtile_cols / kittens::TILE_COL_DIM<dtype>;
+    static_assert(subtile_height > 0 && subtile_width > 0, "Subtile height/width in base tiles must be positive.");
 
-} // namespace st
-} // namespace ducks
+    // Check divisibility of parent height/width by subtile height/width
+    static_assert(ST_t::height % subtile_height == 0,
+        "Parent tile height (in base tiles) must be divisible by subtile height (in base tiles).");
+    static_assert(ST_t::width % subtile_width == 0,
+        "Parent tile width (in base tiles) must be divisible by subtile width (in base tiles).");
 
+    // Ensure the parent st object is not itself a subtile view by comparing its
+    // dimensions to its underlying dimensions.
+    static_assert(ST_t::height == ST_t::underlying_height && ST_t::width == ST_t::underlying_width,
+        "Cannot create a subtile from an object that appears to be a subtile view (height/width mismatch underlying).");
+    // Also check rows/cols directly for robustness, though height/width check might suffice.
+    static_assert(ST_t::rows == ST_t::underlying_rows && ST_t::cols == ST_t::underlying_cols,
+        "Cannot create a subtile from an object that appears to be a subtile view (rows/cols mismatch underlying).");
+
+
+    // Construct and return the st_subtile object using its constructor:
+    // st_subtile(ST &src, int2 rowcol)
+    // Here, 'src' is the current 'st' object (*this)
+    return st_subtile<ST_t, subtile_rows, subtile_cols>(*this, rowcol);
+}
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
@@ -254,8 +286,8 @@ template<int _height, int _width> using st_bf = st<bf16,  _height, _width>;
 template<int _height, int _width> using st_hf = st<half,  _height, _width>;
 template<int _height, int _width> using st_fl = st<float, _height, _width>;
 #ifdef KITTENS_HOPPER
-template<int _height, int _width> using st_fl8_e4m3 = st<fp8e4m3, _height, _width>;
-template<int _height, int _width> using st_fl8_e5m2 = st<fp8e5m2, _height, _width>;
+template<int _height, int _width> using st_fp8e4m3 = st<fp8e4m3, _height, _width>;
+template<int _height, int _width> using st_fp8e5m2 = st<fp8e5m2, _height, _width>;
 #endif
 
 /* ----------  PRINTOUTS  ---------- */
@@ -270,42 +302,39 @@ template<int _height, int _width> using st_fl8_e5m2 = st<fp8e5m2, _height, _widt
  */
 template<ducks::st::all ST>
 __device__ inline void print(const ST& tile) {
-    if (laneid() == 0) { // Only first thread in warp prints
-        printf("Shared Tile %dx%d:\n", ST::rows, ST::cols);
-        
-        // Print column headers
-        printf("     "); // Padding for row indices
+    printf("Shared Tile %dx%d:\n", ST::rows, ST::cols);
+    
+    // Print column headers
+    printf("     "); // Padding for row indices
+    for (int c = 0; c < ST::cols; c++) {
+        printf("%8d ", c);
+    }
+    printf("\n");
+    
+    // Print separator line
+    printf("     ");
+    for (int c = 0; c < ST::cols; c++) {
+        printf("--------+");
+    }
+    printf("\n");
+    
+    // Print data rows
+    for (int r = 0; r < ST::rows; r++) {
+        printf("%3d |", r); // Row index
         for (int c = 0; c < ST::cols; c++) {
-            printf("%8d ", c);
-        }
-        printf("\n");
-        
-        // Print separator line
-        printf("     ");
-        for (int c = 0; c < ST::cols; c++) {
-            printf("--------+");
-        }
-        printf("\n");
-        
-        // Print data rows
-        for (int r = 0; r < ST::rows; r++) {
-            printf("%3d |", r); // Row index
-            for (int c = 0; c < ST::cols; c++) {
-                if constexpr (std::is_same_v<typename ST::dtype, float>) {
-                    printf("%8.3f ", tile[{r,c}]);
-                } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
-                    printf("%8.3f ", __bfloat162float(tile[{r,c}]));
-                } else if constexpr (std::is_integral_v<typename ST::dtype>) {
-                    printf("%8d ", (int)tile[{r,c}]);
-                } else {
-                    printf("%8.3f ", (float)tile[{r,c}]);
-                }
+            if constexpr (std::is_same_v<typename ST::dtype, float>) {
+                printf("%8.3f ", tile[{r,c}]);
+            } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
+                printf("%8.3f ", __bfloat162float(tile[{r,c}]));
+            } else if constexpr (std::is_integral_v<typename ST::dtype>) {
+                printf("%8d ", (int)tile[{r,c}]);
+            } else {
+                printf("%8.3f ", (float)tile[{r,c}]);
             }
-            printf("\n");
         }
         printf("\n");
     }
-    __syncwarp(); // Ensure warp stays in sync
+    printf("\n");
 }
 
 }

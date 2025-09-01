@@ -5,23 +5,12 @@
 
 /* ----------  COPIES  ---------- */
 
-/**
- * @brief Copies data from one shared memory tile to another, potentially with different data types and layouts.
- *
- * @tparam T The data type of the destination tile.
- * @tparam U The data type of the source tile.
- * @tparam _height The height of the tile.
- * @tparam _width The width of the tile.
- * @tparam L1 The layout of the destination tile.
- * @tparam L2 The layout of the source tile.
- * @param[out] dst The destination tile.
- * @param[in] src The source tile.
- */
-template<typename T, typename U, int _height, int _width>
-__device__ static inline void copy(st<T, _height, _width> &dst, const st<U, _height, _width> &src) {
+template<ducks::st::all ST1, ducks::st::all ST2>
+__device__ static inline void copy(ST1 &dst, const ST2 &src) {
+    static_assert(ST1::height == ST2::height && ST1::width == ST2::width, "Tiles must have the same height and width");
     #pragma unroll
     for(int i = laneid(); i < dst.num_elements; i+=GROUP_THREADS) {
         int row = i/dst.cols, col = i%dst.cols;
-        dst[{row, col}] = base_types::convertor<T, U>::convert(src[{row, col}]);
+        dst[{row, col}] = base_types::convertor<typename ST1::dtype, typename ST2::dtype>::convert(src[{row, col}]);
     }
 }

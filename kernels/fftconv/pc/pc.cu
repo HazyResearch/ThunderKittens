@@ -53,7 +53,7 @@ struct fft_1024_template {
             if(warpgroup::warpid() == args.iter%4) {
                 for(int b = batch; b < batch+(NUM_CONSUMER_WARPGROUPS*4) && b < args.globals.x.batch(); b++) {
                     int diff = b-batch;
-                    auto st = subtile_inplace<32,32>(args.input.x[diff/4], {(diff%4)/2, diff%2});
+                    auto st = args.input.x[diff/4].template subtile<32,32>({(diff%4)/2, diff%2});
                     load_async(st, args.globals.x, { b, head, 0, 0 });
                 }
                 load_async_wait();

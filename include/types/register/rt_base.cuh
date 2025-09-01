@@ -106,7 +106,7 @@ template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fl = rt_ba
 template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_bf = rt_base<bf16, L>;
 template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_hf = rt_base<half, L>;
 #ifdef KITTENS_HOPPER
-template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fl8_e4m3 = rt_base<fp8e4m3, L>;
-template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fl8_e5m2 = rt_base<fp8e5m2, L>;
+template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fp8e4m3 = rt_base<fp8e4m3, L>;
+template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fp8e5m2 = rt_base<fp8e5m2, L>;
 #endif
 }

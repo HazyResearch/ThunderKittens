@@ -1,3 +1,5 @@
+local/
+*.so
 *.i
 *.ii
 *.gpu
@@ -9,3 +11,4 @@
 *.ncu-rep
 __pycache__/
 */printouts/*
+.vscode/

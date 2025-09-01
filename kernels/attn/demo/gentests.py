@@ -8,7 +8,7 @@ import math
 # only generate a single batch/head of data, which makes file loading much faster.
 # it does mean we'll have to check batch/head behavior separately later, but that should be much easier to debug.
 B = 1
-H = 1
+H = 16
 N = 2048 if len(sys.argv) <= 2 else int(sys.argv[2])
 D = 128 if len(sys.argv) <= 3 else int(sys.argv[3])
 

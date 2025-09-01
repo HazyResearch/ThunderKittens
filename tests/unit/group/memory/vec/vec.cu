@@ -12,16 +12,20 @@ void group::memory::vec::tests(test_data &results) {
 #endif
 #ifdef TEST_GROUP_MEMORY_VEC_GLOBAL_TO_REGISTER
     group::memory::vec::global_to_register::tests(results);
+#else
+    std::cout << "INFO: Skipping ops/group/memory/vec/global_to_register tests!\n" << std::endl;
 #endif
 #ifdef TEST_GROUP_MEMORY_VEC_GLOBAL_TO_SHARED
     group::memory::vec::global_to_shared::tests(results);
+#else
+    std::cout << "INFO: Skipping ops/group/memory/vec/global_to_shared tests!\n" << std::endl;
 #endif
 #ifdef TEST_GROUP_MEMORY_VEC_SHARED_TO_REGISTER
     group::memory::vec::shared_to_register::tests(results);
+#else
+    std::cout << "INFO: Skipping ops/group/memory/vec/shared_to_register tests!\n" << std::endl;
 #endif
-#ifdef TEST_GROUP_MEMORY_VEC_TMA
-    group::memory::vec::tma::tests(results);
-#endif
+    std::cout << std::endl;
 }
 
 #endif

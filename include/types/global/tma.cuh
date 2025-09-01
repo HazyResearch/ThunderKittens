@@ -9,8 +9,8 @@
 #include "../shared/shared.cuh"
 
 namespace kittens {
-namespace tma {
 namespace detail {
+namespace tma {
 
 /* ----------   Create tile tensor map descriptor (HOST)  ---------- */
 
@@ -293,6 +293,6 @@ __host__ static inline CUtensorMap* allocate_and_create_tensor_map(const typenam
     return tma_map_d;
 }
 
-} // namespace detail
 } // namespace tma
+} // namespace detail
 } // namespace kittens

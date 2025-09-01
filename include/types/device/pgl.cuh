@@ -330,12 +330,10 @@ __host__ inline void pglCudaMalloc(int num_devices, int* device_ids, int device_
     CUCHECK(cuMemMap((CUdeviceptr)*ptr, size, 0, mem_handle, 0));
 
     // Set access
-    CUmemAccessDesc* desc_list = new CUmemAccessDesc[num_devices]; 
-    memset(desc_list, 0, num_devices * sizeof(CUmemAccessDesc)); 
+    CUmemAccessDesc desc_list[num_devices] = {};
     for (int i = 0; i < num_devices; i++)
         detail::init_mem_desc(&desc_list[i], device_ids[i]);
     CUCHECK(cuMemSetAccess((CUdeviceptr)*ptr, size, desc_list, num_devices));
-    delete[] desc_list;
 }
 
 template <typename T>
