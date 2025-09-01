@@ -75,7 +75,7 @@ struct matmul_template {
     struct consumer {
         __device__ static void setup(consumer_setup_args<layout> args) {
             warpgroup::increase_registers<232>(); // increase registers for consumers
-            zero(args.state.accum);
+            kittens::warp::zero(args.state.accum);
         }
         __device__ static void compute(consumer_compute_args<layout> args) {
             warpgroup::mma_ABt(
@@ -84,10 +84,10 @@ struct matmul_template {
                 args.input.b
             );
             warpgroup::mma_async_wait();
-            if(laneid() == 0) arrive(args.inputs_finished);
+            if(laneid() == 0) arrive(args.inputs_finished); // TODO REVIEW
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
-            copy(args.state.accum_fp8, args.state.accum);
+            kittens::warp::copy(args.state.accum_fp8, args.state.accum);
             warpgroup::store(args.finish.c[warpgroup::groupid()], args.state.accum_fp8);
             warpgroup::sync(warpgroup::groupid()+4);
             if(warpgroup::warpid() == 0) {
@@ -95,8 +95,8 @@ struct matmul_template {
                                  {args.common.coord.x, args.common.coord.y});
                 tma::store_async_read_wait();
             }
-            zero(args.state.accum);
-            if(laneid() == 0) arrive(args.finish_finished);
+            kittens::warp::zero(args.state.accum);
+            if(laneid() == 0) arrive(args.finish_finished); // TODO REVIEW
         }
     };
 };

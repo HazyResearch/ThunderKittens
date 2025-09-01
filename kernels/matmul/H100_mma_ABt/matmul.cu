@@ -65,7 +65,7 @@ struct matmul_template {
         __device__ static void setup(consumer_setup_args<layout> args) {
             warpgroup::increase_registers<232>(); // increase registers for consumers
             for (int n = 0; n < N_BLOCK; n++) 
-                zero(args.state.accum[n]);
+                kittens::warp::zero(args.state.accum[n]);
         }
         __device__ static void compute(consumer_compute_args<layout> args) {
             using wide_rt = rt_fl<16, 64*N_BLOCK>;
@@ -77,7 +77,7 @@ struct matmul_template {
                 reinterpret_cast<tall_st&>(args.input.b)
             );
             warpgroup::mma_async_wait();
-            if(laneid() == 0) arrive(args.inputs_finished);
+            if(laneid() == 0) arrive(args.inputs_finished); // TODO REVIEW
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
             for(int n = 0; n < N_BLOCK; n++) {
@@ -95,9 +95,9 @@ struct matmul_template {
 
             // Zero the accumulators
             for(int n = 0; n < N_BLOCK; n++) {
-                zero(args.state.accum[n]);
+                kittens::warp::zero(args.state.accum[n]);
             }
-            if(laneid() == 0) arrive(args.finish_finished);
+            if(laneid() == 0) arrive(args.finish_finished); // TODO REVIEW
         }
     };
 };

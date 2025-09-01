@@ -106,13 +106,13 @@ void matmul(const __grid_constant__ matmul_globals g) {
                         tma::cluster::wait(inputs_finished[input_ring], prototype::get_phasebit<1>(bitfield, input_ring));
                         input_ring=prototype::ring_advance<PIPE_DEPTH>(input_ring);
                     }
-                    if(laneid() == 0) arrive(outputs_arrived);
+                    if(laneid() == 0) arrive(outputs_arrived); // TODO REVIEW
                     break;
                 }
                 for (int idx = 0; idx < iters_per_task; idx++) {
                     tma::cluster::wait(inputs_finished[input_ring], prototype::get_phasebit<1>(bitfield, input_ring));
                     prototype::update_phasebit<1>(bitfield, input_ring);
-                    if(task_iter>0 && idx==PIPE_DEPTH-1 && laneid() == 0) arrive(outputs_arrived); 
+                    if(task_iter>0 && idx==PIPE_DEPTH-1 && laneid() == 0) arrive(outputs_arrived); // TODO REVIEW 
                     warp::tma::cluster::expect(inputs_arrived[input_ring], 0, a_smem[0][0], a_smem[0][1], b_smem[0]);
                     warp::tma::cluster::load_async(a_smem[input_ring][0], g.a, {(rowcol.x+0), idx}, inputs_arrived[input_ring], (uint16_t)(1<<ctarank), 0);
                     warp::tma::cluster::load_async(a_smem[input_ring][1], g.a, {(rowcol.x+1), idx}, inputs_arrived[input_ring], (uint16_t)(1<<ctarank), 0);
@@ -156,7 +156,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
             }
             tensor_load_wait();
             warpgroup::sync(warpgroupid);
-            if(warpgroup::laneid() == 0) tma::cluster::arrive(outputs_finished[warpgroupid], 0); // Tensor memory for warpgroup 0 is now free.
+            if(warpgroup::laneid() == 0) kittens::warp::tma::cluster::arrive(outputs_finished[warpgroupid], 0); // Tensor memory for warpgroup 0 is now free.
             if(warpgroupid == 0) group<8>::sync(15);
             if(warpgroupid == 1) group<8>::sync(14);
             warpgroup::store(d_smem, d_reg[0]);

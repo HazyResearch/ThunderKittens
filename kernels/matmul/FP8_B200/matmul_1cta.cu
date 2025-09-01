@@ -105,16 +105,16 @@ void matmul(const __grid_constant__ matmul_globals g) {
                 int2 rowcol = get_task_idx(g, task_iter, false);
                 if(rowcol.x == -1) {
                     for(int idx = 0; idx < (PIPE_DEPTH); idx++) {
-                        wait(inputs_finished[input_ring], prototype::get_phasebit<1>(bitfield, input_ring));
+                        kittens::warp::wait(inputs_finished[input_ring], prototype::get_phasebit<1>(bitfield, input_ring));
                         input_ring=prototype::ring_advance<PIPE_DEPTH>(input_ring);
                     }
-                    if(laneid() == 0) arrive(outputs_arrived);
+                    if(laneid() == 0) arrive(outputs_arrived); // TODO REVIEW
                     break;
                 }
                 for (int idx = 0; idx < iters_per_task; idx++) {
-                    wait(inputs_finished[input_ring], prototype::get_phasebit<1>(bitfield, input_ring));
+                    kittens::warp::wait(inputs_finished[input_ring], prototype::get_phasebit<1>(bitfield, input_ring));
                     prototype::update_phasebit<1>(bitfield, input_ring);
-                    if(task_iter>0 && idx==PIPE_DEPTH-1 && laneid() == 0) arrive(outputs_arrived); 
+                    if(task_iter>0 && idx==PIPE_DEPTH-1 && laneid() == 0) arrive(outputs_arrived); // TODO REVIEW 
                     warp::tma::expect(inputs_arrived[input_ring], a_smem[0][0], a_smem[0][1], b_smem[0]);
                     warp::tma::load_async(a_smem[input_ring][0], g.a, {(rowcol.x+0), idx}, inputs_arrived[input_ring]);
                     warp::tma::load_async(a_smem[input_ring][1], g.a, {(rowcol.x+1), idx}, inputs_arrived[input_ring]);
@@ -129,13 +129,13 @@ void matmul(const __grid_constant__ matmul_globals g) {
             for(int task_iter = 0; true; task_iter++) {
                 int2 rowcol = get_task_idx(g, task_iter, false);
                 if(rowcol.x == -1) break;
-                wait(outputs_finished[warpgroup::warpid()], (task_iter+1)%2); // make sure tensor memory is ready to be written to.
-                wait(inputs_arrived[input_ring], prototype::get_phasebit<0>(bitfield, input_ring));
+                kittens::warp::wait(outputs_finished[warpgroup::warpid()], (task_iter+1)%2); // make sure tensor memory is ready to be written to.
+                kittens::warp::wait(inputs_arrived[input_ring], prototype::get_phasebit<0>(bitfield, input_ring));
                 prototype::update_phasebit<0>(bitfield, input_ring);
                 warp::mm_ABt(d_tt, a_smem[input_ring][warpgroup::warpid()], b_smem[input_ring], inputs_finished[input_ring]);
                 input_ring=prototype::ring_advance<PIPE_DEPTH>(input_ring);
                 for(int idx = 1; idx < iters_per_task; idx++) {
-                    wait(inputs_arrived[input_ring], prototype::get_phasebit<0>(bitfield, input_ring));
+                    kittens::warp::wait(inputs_arrived[input_ring], prototype::get_phasebit<0>(bitfield, input_ring));
                     prototype::update_phasebit<0>(bitfield, input_ring);
                     warp::mma_ABt(d_tt, a_smem[input_ring][warpgroup::warpid()], b_smem[input_ring], inputs_finished[input_ring]);
                     input_ring=prototype::ring_advance<PIPE_DEPTH>(input_ring);
@@ -158,7 +158,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
             }
             tensor_load_wait();
             warpgroup::sync(warpgroupid);
-            if(warpgroup::laneid() == 0) arrive(outputs_finished[warpgroupid]); // Tensor memory for warpgroup 0 is now free.
+            if(warpgroup::laneid() == 0) arrive(outputs_finished[warpgroupid]); // TODO REVIEW // Tensor memory for warpgroup 0 is now free.
             if(warpgroupid == 0) group<8>::sync(15);
             if(warpgroupid == 1) group<8>::sync(14);
             warpgroup::store(d_smem, d_reg[0]);

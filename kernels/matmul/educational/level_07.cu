@@ -54,7 +54,7 @@ __global__ void kernel(const __grid_constant__ matmul_globals g) {
     }
     __syncthreads();
 
-    zero(C_accum);
+    kittens::warp::zero(C_accum);
     int num_tiles = (g.N + BLOCK_SIZE - 1) / BLOCK_SIZE;
     for (int tile = 0; tile < num_tiles; ++tile, tic^=1, toc^=1) {
 
@@ -86,7 +86,7 @@ __global__ void kernel(const __grid_constant__ matmul_globals g) {
 }
 
 // launch kernel
-void matmul(bf16* A, bf16* B, bf16* C, int N) { 
+void matmul(bf16* A, bf16* B, bf16* C, size_t N) { 
 
     // global pointers
     using a_gl = matmul_globals::tile_gl;
@@ -95,7 +95,7 @@ void matmul(bf16* A, bf16* B, bf16* C, int N) {
     a_gl  a_arg{A, nullptr, nullptr, N, N};
     b_gl  b_arg{B, nullptr, nullptr, N, N};
     c_gl  c_arg{C, nullptr, nullptr, N, N};
-    matmul_globals g{a_arg, b_arg, c_arg, N}; 
+    matmul_globals g{a_arg, b_arg, c_arg, (int)N}; 
 
     // launch
     dim3 blocks((N + BLOCK_SIZE - 1) / BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE);

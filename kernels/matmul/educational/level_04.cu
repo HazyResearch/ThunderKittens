@@ -38,24 +38,24 @@ __global__ void kernel(const __grid_constant__ matmul_globals g) {
     int col = blockIdx.x; 
     int row = blockIdx.y; 
 
-    zero(C_accum);
+    kittens::warp::zero(C_accum);
     int num_tiles = (g.N + BLOCK_SIZE - 1) / BLOCK_SIZE;
     for (int tile = 0; tile < num_tiles; ++tile) {
-        load(As, g.A, {0, 0, row, tile});
-        load(Bs, g.B, {0, 0, tile, col});
+        kittens::warp::load(As, g.A, {0, 0, row, tile});
+        kittens::warp::load(Bs, g.B, {0, 0, tile, col});
         __syncthreads();
-        load(A_reg, As);
-        load(B_reg, Bs);
-        swap_layout(B_reg_col, B_reg);
+        kittens::warp::load(A_reg, As);
+        kittens::warp::load(B_reg, Bs);
+        kittens::warp::swap_layout(B_reg_col, B_reg);
         __syncthreads();
-        mma_AB(C_accum, A_reg, B_reg_col, C_accum);
+        kittens::warp::mma_AB(C_accum, A_reg, B_reg_col, C_accum);
         __syncthreads(); 
     }
-    store(g.C, C_accum, {0, 0, row, col});
+    kittens::warp::store(g.C, C_accum, {0, 0, row, col});
 }
 
 // launch kernel
-void matmul(bf16* A, bf16* B, bf16* C, int N) { 
+void matmul(bf16* A, bf16* B, bf16* C, size_t N) { 
 
     // global pointers
     using a_gl = matmul_globals::tile_gl;
@@ -64,7 +64,7 @@ void matmul(bf16* A, bf16* B, bf16* C, int N) {
     a_gl  a_arg{A, nullptr, nullptr, N, N};
     b_gl  b_arg{B, nullptr, nullptr, N, N};
     c_gl  c_arg{C, nullptr, nullptr, N, N};
-    matmul_globals g{a_arg, b_arg, c_arg, N}; 
+    matmul_globals g{a_arg, b_arg, c_arg, (int)N}; 
 
     // launch
     dim3 blocks((N + BLOCK_SIZE - 1) / BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE);  // Watch out for requesting too many!
