@@ -108,7 +108,11 @@ template<ducks::sv::all SV>
 __device__ inline void print(const SV& sv) {
     printf("Shared Vector %d:\n", SV::length);
     for(int i = 0; i < SV::length; i++) {
-        if constexpr (std::is_same_v<typename SV::dtype, bf16>) {
+        if constexpr (std::is_same_v<typename SV::dtype, fp8e4m3>) {
+            printf("%f ", static_cast<float>(sv[i]));
+        } else if constexpr (std::is_same_v<typename SV::dtype, fp8e8m0>) {
+            printf("%f ", static_cast<float>(sv[i]));
+        } else if constexpr (std::is_same_v<typename SV::dtype, bf16>) {
             printf("%f ", __bfloat162float(sv[i]));
         } else if constexpr (std::is_same_v<typename SV::dtype, half>) {
             printf("%f ", __half2float(sv[i]));

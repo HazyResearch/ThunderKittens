@@ -44,16 +44,19 @@ using half_2 = __half2;
  */
 using fp8e4m3 = __nv_fp8_e4m3;
 using fp8e5m2 = __nv_fp8_e5m2;
+using fp8e8m0 = __nv_fp8_e8m0;
 /**
  * @brief 2-packed float8 floating-point type.
  */
 using fp8e4m3_2 = __nv_fp8x2_e4m3;
 using fp8e5m2_2 = __nv_fp8x2_e5m2;
+using fp8e8m0_2 = __nv_fp8x2_e8m0;
 /**
  * @brief 4-packed float8 floating-point type.
  */
 using fp8e4m3_4 = __nv_fp8x4_e4m3;
 using fp8e5m2_4 = __nv_fp8x4_e5m2;
+using fp8e8m0_4 = __nv_fp8x4_e8m0;
 #endif
 
 namespace ducks {
@@ -66,9 +69,9 @@ namespace base_types {
 
 #ifdef KITTENS_HOPPER
 template<typename T>
-concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2> || std::is_same_v<T, half_2> || std::is_same_v<T, fp8e4m3_4> || std::is_same_v<T, fp8e5m2_4>; // could add half_2 later if implemented.
+concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2> || std::is_same_v<T, half_2> || std::is_same_v<T, fp8e4m3_4> || std::is_same_v<T, fp8e5m2_4> || std::is_same_v<T, fp8e8m0_4>; // could add half_2 later if implemented.
 template<typename T>
-concept T1 = std::is_same_v<T, float>  || std::is_same_v<T, bf16  > || std::is_same_v<T, half> || std::is_same_v<T, fp8e4m3> || std::is_same_v<T, fp8e5m2>; // could add half_2 later if implemented.
+concept T1 = std::is_same_v<T, float>  || std::is_same_v<T, bf16  > || std::is_same_v<T, half> || std::is_same_v<T, fp8e4m3> || std::is_same_v<T, fp8e5m2> || std::is_same_v<T, fp8e8m0>; // could add half_2 later if implemented.
 #else
 template<typename T>
 concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2> || std::is_same_v<T, half_2>;
@@ -310,6 +313,16 @@ template<> struct packing<fp8e5m2_4> {
     static __device__ inline constexpr int num() { return 4; }
     using unpacked_type = fp8e5m2;
     using packed_type = fp8e5m2_4;
+};
+template<> struct packing<fp8e8m0> {
+    static __device__ inline constexpr int num() { return 1; }
+    using unpacked_type = fp8e8m0;
+    using packed_type = fp8e8m0_4;
+};
+template<> struct packing<fp8e8m0_4> {
+    static __device__ inline constexpr int num() { return 4; }
+    using unpacked_type = fp8e8m0;
+    using packed_type = fp8e8m0_4;
 };
 #endif
 
