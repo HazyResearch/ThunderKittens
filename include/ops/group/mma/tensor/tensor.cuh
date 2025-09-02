@@ -2,7 +2,7 @@
  * @file Group-level tcgen05 MMA operations.
 */
 
-template<int trans_a, int n_trans_b, ducks::tt::all D, ducks::st_descriptor::input A, ducks::st_descriptor::input B, int acc=1, int ncta=1>
+template<int trans_a, int n_trans_b, ducks::tt::all D, typename A, ducks::st_descriptor::input B, int acc=1, int ncta=1>
 __device__ static inline void mma(D &d, const A &a, const B &b, semaphore &sem) {
     if(laneid() == 0) ::kittens::mma<trans_a, n_trans_b, D, A, B, acc, ncta>(d, a, b, sem);
 }
@@ -88,7 +88,7 @@ __device__ static inline void mm2_AtBt(D &d, const A &a, const B &b, semaphore &
 // no sem versions
 
 
-template<int trans_a, int n_trans_b, ducks::tt::all D, ducks::st_descriptor::input A, ducks::st_descriptor::input B, int acc=1, int ncta=1>
+template<int trans_a, int n_trans_b, ducks::tt::all D, typename A, ducks::st_descriptor::input B, int acc=1, int ncta=1>
 __device__ static inline void mma(D &d, const A &a, const B &b) {
     if(laneid() == 0) ::kittens::mma<trans_a, n_trans_b, D, A, B, acc, ncta>(d, a, b);
 }
