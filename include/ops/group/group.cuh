@@ -51,12 +51,10 @@ __device__ static inline void arrive(int id) {
 #include "mma/mma.cuh"
 
 template<int n_reg> __device__ static inline void increase_registers() {
-    static_assert(GROUP_WARPS % 4 == 0, "GROUP_WARPS must be a multiple of 4");
     static_assert(n_reg % 8 == 0, "n_reg must be a multiple of 8");
     asm volatile("setmaxnreg.inc.sync.aligned.u32 %0;\n" :: "n"(n_reg));
 }
 template<int n_reg> __device__ static inline void decrease_registers() {
-    static_assert(GROUP_WARPS % 4 == 0, "GROUP_WARPS must be a multiple of 4");
     static_assert(n_reg % 8 == 0, "n_reg must be a multiple of 8");
     asm volatile("setmaxnreg.dec.sync.aligned.u32 %0;\n" :: "n"(n_reg));
 }
