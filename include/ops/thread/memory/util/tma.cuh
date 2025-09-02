@@ -106,6 +106,31 @@ __device__ static inline void wait(semaphore& bar, int kPhaseBit) {
     );
 }
 
+__device__ static inline void careful_wait(semaphore& bar, int kPhaseBit) {
+    void const* const ptr = &bar;
+    uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
+
+    asm volatile (
+        "{\n"
+        ".reg .b64                 start_clock, current_clock;\n"
+        "mov.b64                   start_clock, %clock64;\n"
+        ".reg .pred                P_CLOCK;\n"
+        ".reg .pred                P1;\n"
+        "LAB_WAIT:\n"
+        "mbarrier.try_wait.parity.acquire.cluster.shared::cta.b64 P1, [%0], %1;\n"
+        "@P1                       bra.uni DONE;\n"
+        "mov.b64                   current_clock, %clock64;\n"
+        "sub.u64                   current_clock, current_clock, start_clock;\n"
+        "setp.ge.u64               P_CLOCK, current_clock, 1000000;\n"
+        "@P_CLOCK                  trap;\n"
+        "bra.uni                   LAB_WAIT;\n"
+        "DONE:\n"
+        "}\n"
+        :: "r"(mbar_ptr),
+        "r"(kPhaseBit)
+    );
+}
+
 /**
 * @brief Sets the number of bytes expected at the semaphore, assuming a multicast instruction.
 *

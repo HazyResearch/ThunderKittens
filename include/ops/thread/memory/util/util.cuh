@@ -334,6 +334,47 @@ __device__ static inline void wait(semaphore& sem, int kPhaseBit) {
 #endif
 }
 
+__device__ static inline void careful_wait(semaphore& sem, int kPhaseBit) {
+    void const* const ptr = &sem;
+    uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr));
+
+#ifdef KITTENS_HOPPER
+    asm volatile (
+        "{\n"
+        ".reg .b64                 start_clock, current_clock;\n"
+        "mov.b64                   start_clock, %clock64;\n"
+        ".reg .pred                P_CLOCK;\n"
+        ".reg .pred                P1;\n"
+        "LAB_WAIT:\n"
+        "mbarrier.try_wait.parity.shared::cta.b64 P1, [%0], %1;\n"
+        "@P1                       bra.uni DONE;\n"
+        "mov.b64                   current_clock, %clock64;\n"
+        "sub.u64                   current_clock, current_clock, start_clock;\n"
+        "setp.ge.u64               P_CLOCK, current_clock, 1000000;\n"
+        "@P_CLOCK                  trap;\n"
+        "bra.uni                   LAB_WAIT;\n"
+        "DONE:\n"
+        "}\n"
+        :: "r"(mbar_ptr),
+        "r"(kPhaseBit)
+    );
+#else
+    asm volatile (
+        "{\n"
+        ".reg .pred                P1;\n"
+        "LAB_WAIT:\n"
+        "mbarrier.test_wait.parity.shared::cta.b64 P1, [%0], %1;\n"
+        "@P1                       bra.uni DONE;\n"
+        "nanosleep.u32 5;\n" // wait a few nanoseconds on pre-Hopper architectures to save instruction issue slots
+        "bra.uni                   LAB_WAIT;\n"
+        "DONE:\n"
+        "}\n"
+        :: "r"(mbar_ptr),
+        "r"(kPhaseBit)
+    );
+#endif
+}
+
 /**
 * @brief Checks if the requested semaphore phase is ready.
 *
