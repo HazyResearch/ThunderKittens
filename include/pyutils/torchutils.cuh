@@ -4,8 +4,10 @@
 #include <ATen/core/Tensor.h>
 
 #include "kittens.cuh"
+#include "pyutils/broker.cuh"
 
 namespace kittens {
+namespace py {
 
 template <typename Config, typename Globals, auto Kernel>
 __global__ __launch_bounds__(Config::NUM_THREADS, 1)
@@ -19,44 +21,74 @@ void global_kernel_clustered(const __grid_constant__ Globals G) {
     Kernel(G);
 }
 
-template <kittens::ducks::gl::all GL>
-static inline GL tensor_to_gl(const at::Tensor &t) {
+template <typename Layout>
+static inline void tensor_check(const at::Tensor &t) {
     TORCH_CHECK(t.is_cuda(), "Tensor must be on CUDA device")
     TORCH_CHECK(t.is_contiguous(), "Tensor must be contiguous")
     TORCH_CHECK(t.dim() <= 4, "Expected Tensor.dim() <= 4");
 
-    if constexpr (std::is_same_v<typename GL::dtype, char>) {
+    if constexpr (std::is_same_v<typename Layout::dtype, char>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Char, "Tensor has invalid dtype (expected int8)");
-    } else if constexpr (std::is_same_v<typename GL::dtype, short>) {
+    } else if constexpr (std::is_same_v<typename Layout::dtype, short>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Short, "Tensor has invalid dtype (expected int16)");
-    } else if constexpr (std::is_same_v<typename GL::dtype, int>) {
+    } else if constexpr (std::is_same_v<typename Layout::dtype, int>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Int, "Tensor has invalid dtype (expected int32)");
-    } else if constexpr (std::is_same_v<typename GL::dtype, long>) {
+    } else if constexpr (std::is_same_v<typename Layout::dtype, long>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Long, "Tensor has invalid dtype (expected int64)");
-    } else if constexpr (std::is_same_v<typename GL::dtype, ::kittens::fp8e4m3>) {
+    } else if constexpr (std::is_same_v<typename Layout::dtype, ::kittens::fp8e4m3>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Float8_e4m3fn, "Tensor has invalid dtype (expected fp8e4m3)");
-    } else if constexpr (std::is_same_v<typename GL::dtype, ::kittens::fp8e5m2>) {
+    } else if constexpr (std::is_same_v<typename Layout::dtype, ::kittens::fp8e5m2>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Float8_e5m2, "Tensor has invalid dtype (expected fp8e5m2)");
-    } else if constexpr (std::is_same_v<typename GL::dtype, ::kittens::fp8e8m0>) {
+    } else if constexpr (std::is_same_v<typename Layout::dtype, ::kittens::fp8e8m0>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Byte, "Tensor has invalid dtype (expected fp8e8m0 represented as uint8)");
-    } else if constexpr (std::is_same_v<typename GL::dtype, ::kittens::bf16>) {
+    } else if constexpr (std::is_same_v<typename Layout::dtype, ::kittens::bf16>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::BFloat16, "Tensor has invalid dtype (expected bfloat16)");
-    } else if constexpr (std::is_same_v<typename GL::dtype, ::kittens::half>) {
+    } else if constexpr (std::is_same_v<typename Layout::dtype, ::kittens::half>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Half, "Tensor has invalid dtype (expected float16)");
-    } else if constexpr (std::is_same_v<typename GL::dtype, float>) {
+    } else if constexpr (std::is_same_v<typename Layout::dtype, float>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Float, "Tensor has invalid dtype (expected float32)");
-    } else if constexpr (std::is_same_v<typename GL::dtype, double>) {
+    } else if constexpr (std::is_same_v<typename Layout::dtype, double>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Double, "Tensor has invalid dtype (expected float64)");
     } else {
         TORCH_CHECK(false, "Unsupported dtype");
     }
+}
+
+template <kittens::ducks::gl::all GL>
+static inline GL tensor_to_gl(const at::Tensor &t) {
+    tensor_check<GL>(t);
 
     std::array<int, 4> shape = {1, 1, 1, 1};
     for (int i = 0; i < static_cast<int>(t.dim()); ++i)
         shape[4 - t.dim() + i] = static_cast<int>(t.size(i));
+
     uint64_t data_ptr = reinterpret_cast<uint64_t>(t.data_ptr());
 
     return ::kittens::make_gl<GL>(data_ptr, shape[0], shape[1], shape[2], shape[3]);
+}
+
+template <kittens::ducks::pgl::all PGL>
+static inline PGL tensor_to_pgl(const at::Tensor &t, KittensBroker &broker, KittensBond (&bonds)[PGL::num_devices]) {
+    TORCH_CHECK(broker.local_world_size_ == PGL::num_devices, "Number of devices mismatch between broker and PGL");
+    TORCH_CHECK(!PGL::_INIT_MC, "PGL must be initialized with INIT_MC=false for multiprocess use");
+
+    tensor_check<PGL>(t);
+
+    std::array<int, 4> shape = {1, 1, 1, 1};
+    for (int i = 0; i < static_cast<int>(t.dim()); ++i)
+        shape[4 - t.dim() + i] = static_cast<int>(t.size(i));
+
+    // `bonds` must be passed in as an argument, as its lifetime matters
+    broker.all_gather_bonds(bonds, reinterpret_cast<void *>(t.data_ptr()));
+
+    int device_ids[PGL::num_devices];
+    uint64_t data_ptrs[PGL::num_devices];
+    for (int i = 0; i < PGL::num_devices; i++) {
+        device_ids[i] = i;
+        data_ptrs[i] = reinterpret_cast<uint64_t>(bonds[i].raw_ptr);
+    }
+
+    return ::kittens::make_pgl<PGL>(device_ids, data_ptrs, shape[0], shape[1], shape[2], shape[3]);
 }
 
 template <kittens::ducks::gl::all GL>
@@ -113,4 +145,5 @@ static inline void launch_kernel(const Globals &G) {
     }
 }
 
+} // namespace py
 } // namespace kittens
