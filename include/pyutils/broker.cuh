@@ -8,24 +8,30 @@
     Note that the code relies on POSIX shared memory/semaphores for inter-process
     communication and synchronization.
 
-    > Trade your KittensBond (a tensor pointer) through the KittensVault (shared memory)
-    > with help from the KittensBroker (the main abstraction)!
-
-    Example usage:
-
-        KittensBroker broker(local_rank, local_world_size);
-        KittensBond bonds[local_world_size];
-        broker.all_gather_bonds(bonds, ptr);
-
-        // Access the actual pointer
-        void *other_ptr = bonds[0].raw_ptr;
-
-    Export to Python:
+    Export to Python (pybind11):
 
         PYBIND11_MODULE(_C, m){
             pybind11::class_<KittensBroker>(m, "KittensBroker")
-                .def(pybind11::init<int, int>());
+                .def(pybind11::init<int,int>())
+                .def("gather_ipc_ptrs",
+                    pybind11::overload_cast<const at::Tensor&>(&KittensBroker::gather_ipc_ptrs),
+                    pybind11::call_guard<pybind11::gil_scoped_release>(),
+                    pybind11::return_value_policy::move);
+            pybind11::class_<KittensIPCPointerSet>(m, "KittensIPCPointerSet")
+                .def(pybind11::init<>());
         }
+
+    Example PyTorch usage:
+
+        import torch
+        from _C import KittensBroker
+
+        ... (initialize torch distributed)
+
+        broker = KittensBroker(local_rank, local_world_size)
+        ipc_ptrs = broker.gather_ipc_ptrs(tensor)
+
+        ... (now pass `broker` and `ipc_ptrs` to your kernels!)
  */
 
 #pragma once
@@ -40,40 +46,65 @@
 #include <unistd.h>
 #include <vector>
 
+#include <ATen/core/Tensor.h>
 #include <cuda_runtime.h>
 
 namespace kittens {
 
-struct KittensBond {
-    bool is_imported;
-    void *raw_ptr; // if imported, MUST be freed with cudaIpcCloseMemHandle (not cudaFree), which is why we have a custom struct
+struct KittensIPCPointerSet {
+    std::vector<bool> is_imported_ {};
+    std::vector<void *> raw_ptrs_ {}; // if imported, MUST be freed with cudaIpcCloseMemHandle (not cudaFree), which is why we have a custom struct
 
-    __host__ inline void free_imported_ptr() {
-        // Close the import pointer (MUST be done first before cudaFree on the source)
-        if (is_imported && raw_ptr)
-            CUDACHECK(cudaIpcCloseMemHandle(raw_ptr));
+    __host__ inline void append_ptr(void *raw_ptr, bool is_imported = false) {
+        is_imported_.push_back(is_imported);
+        raw_ptrs_.push_back(raw_ptr);
     }
 
-    __host__ inline void import_from_handle(cudaIpcMemHandle_t import_handle) {
-        if (is_imported && raw_ptr) {
-            std::cerr << "WARNING: Importing a new pointer when already imported one. Freeing the old one." << std::endl;
-            free_imported_ptr();
-        }
-
+    __host__ inline void append_from_handle(const cudaIpcMemHandle_t &import_handle) {
+        void *raw_ptr;
         // Import the IPC handle. This implicitly & lazily does cudaDeviceEnablePeerAccess
         CUDACHECK(cudaIpcOpenMemHandle(&raw_ptr, import_handle, cudaIpcMemLazyEnablePeerAccess)); // this is the only flag supported
-        is_imported = true;
+        append_ptr(raw_ptr, true);
     }
 
-    __host__ inline KittensBond() : is_imported(false), raw_ptr(nullptr) {}
-    __host__ inline KittensBond(void *raw_ptr) : is_imported(false), raw_ptr(raw_ptr) {}
-    __host__ inline KittensBond(cudaIpcMemHandle_t import_handle) : is_imported(true) {
-        import_from_handle(import_handle);
+    __host__ inline void free_imported_ptrs(bool warn = false) {
+        if (is_imported_.size() != raw_ptrs_.size())
+            throw std::runtime_error("KittensIPCPointerSet: Size mismatch");
+
+        // Close the imported pointers (this MUST be done first before cudaFree on the source)
+        for (size_t i = 0; i < raw_ptrs_.size(); i++) {
+            if (is_imported_[i]) {
+                if (warn) std::cerr << "WARNING: Freeing an imported pointer." << std::endl;
+                CUDACHECK(cudaIpcCloseMemHandle(raw_ptrs_[i]));
+            }
+        }
     }
 
-    __host__ inline ~KittensBond() {
-        free_imported_ptr();
+    __host__ inline KittensIPCPointerSet() : is_imported_(), raw_ptrs_() {}
+
+    KittensIPCPointerSet(const KittensIPCPointerSet&) = delete;
+    KittensIPCPointerSet& operator=(const KittensIPCPointerSet&) = delete;
+
+    __host__ inline KittensIPCPointerSet(KittensIPCPointerSet&& other) noexcept 
+        : is_imported_(std::move(other.is_imported_)),
+          raw_ptrs_(std::move(other.raw_ptrs_)) {
+        other.is_imported_.clear();
+        other.raw_ptrs_.clear();
+    }
+    __host__ inline KittensIPCPointerSet& operator=(KittensIPCPointerSet&& other) noexcept {
+        if (this != &other) {
+            free_imported_ptrs(true);
+            is_imported_ = std::move(other.is_imported_);
+            raw_ptrs_ = std::move(other.raw_ptrs_);
+            other.is_imported_.clear();
+            other.raw_ptrs_.clear();
+        }
+        return *this;
+    }
+
+    __host__ inline ~KittensIPCPointerSet() {
         // It is recommended to call KittensBroker::sync() after this
+        free_imported_ptrs();
     }
 };
 
@@ -159,6 +190,47 @@ struct KittensBroker {
         sync();
     }
 
+    KittensBroker(const KittensBroker&) = delete;
+    KittensBroker& operator=(const KittensBroker&) = delete;
+
+    __host__ inline KittensBroker(KittensBroker&& other) noexcept
+        : local_rank_(other.local_rank_),
+          local_world_size_(other.local_world_size_),
+          sem_counter_(other.sem_counter_),
+          sem_enter_(other.sem_enter_),
+          sem_exit_(other.sem_exit_),
+          sem_ready_(other.sem_ready_),
+          shm_(other.shm_) {
+        other.sem_counter_ = nullptr;
+        other.sem_enter_ = nullptr;
+        other.sem_exit_ = nullptr;
+        other.sem_ready_ = nullptr;
+        other.shm_ = nullptr;
+    }
+
+    __host__ inline KittensBroker& operator=(KittensBroker&& other) noexcept {
+        if (this != &other) {
+            if (sem_counter_) sem_close(sem_counter_);
+            if (sem_enter_) sem_close(sem_enter_);
+            if (sem_exit_) sem_close(sem_exit_);
+            if (sem_ready_) sem_close(sem_ready_);
+            if (shm_) munmap(shm_, SHM_SIZE_);
+            local_rank_ = other.local_rank_;
+            local_world_size_ = other.local_world_size_;
+            sem_counter_ = other.sem_counter_;
+            sem_enter_ = other.sem_enter_;
+            sem_exit_ = other.sem_exit_;
+            sem_ready_ = other.sem_ready_;
+            shm_ = other.shm_;
+            other.sem_counter_ = nullptr;
+            other.sem_enter_ = nullptr;
+            other.sem_exit_ = nullptr;
+            other.sem_ready_ = nullptr;
+            other.shm_ = nullptr;
+        }
+        return *this;
+    }
+
     __host__ inline ~KittensBroker() {
         if (sem_counter_) sem_close(sem_counter_);
         if (sem_enter_) sem_close(sem_enter_);
@@ -191,28 +263,35 @@ struct KittensBroker {
         xsem_wait(sem_exit_);
     }
 
-    __host__ inline void all_gather_bonds(KittensBond *bonds, void *src_ptr) {
-        if (!src_ptr || !bonds)
-            throw std::runtime_error("Source and destination entries must be non-null");
-    
+    __host__ inline KittensIPCPointerSet gather_ipc_ptrs(void *src_ptr) {
         // Export IPC handle
         cudaIpcMemHandle_t export_handle;
         CUDACHECK(cudaIpcGetMemHandle(&export_handle, src_ptr));
-    
+
         // Share IPC handle
         sync(); // ensure all processes are ready
         shm_->handle[local_rank_] = export_handle;
         sync();
     
         // Import IPC handle
+        KittensIPCPointerSet ptrs;
         for (int i = 0; i < local_world_size_; i++) {
             if (i == local_rank_) {
-                bonds[i].is_imported = false;
-                bonds[i].raw_ptr = src_ptr;
+                ptrs.append_ptr(src_ptr, false);
             } else {
-                bonds[i].import_from_handle(shm_->handle[i]);
+                ptrs.append_from_handle(shm_->handle[i]);
             }
         }
+
+        return ptrs;
+    }
+
+    __host__ inline KittensIPCPointerSet gather_ipc_ptrs(uint64_t src_ptr) {
+        return gather_ipc_ptrs(reinterpret_cast<void *>(src_ptr));
+    }
+
+    __host__ inline KittensIPCPointerSet gather_ipc_ptrs(const at::Tensor &t) {
+        return gather_ipc_ptrs(reinterpret_cast<void *>(t.data_ptr()));
     }
 
     __host__ static inline void xsem_wait(sem_t* s) {

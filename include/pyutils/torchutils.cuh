@@ -68,9 +68,10 @@ static inline GL tensor_to_gl(const at::Tensor &t) {
 }
 
 template <kittens::ducks::pgl::all PGL>
-static inline PGL tensor_to_pgl(const at::Tensor &t, KittensBroker &broker, KittensBond (&bonds)[PGL::num_devices]) {
-    TORCH_CHECK(broker.local_world_size_ == PGL::num_devices, "Number of devices mismatch between broker and PGL");
+static inline PGL tensor_to_pgl(const at::Tensor &t, const KittensBroker &broker) {
+    TORCH_CHECK(PGL::num_devices == broker.local_world_size_, "Number of devices mismatch between PGL and KittensBroker");
     TORCH_CHECK(!PGL::_INIT_MC, "PGL must be initialized with INIT_MC=false for multiprocess use");
+    TORCH_CHECK(broker.local_rank_ == t.device().index(), "Current tensor device index mismatch with KittensBroker");
 
     tensor_check<PGL>(t);
 
@@ -78,15 +79,44 @@ static inline PGL tensor_to_pgl(const at::Tensor &t, KittensBroker &broker, Kitt
     for (int i = 0; i < static_cast<int>(t.dim()); ++i)
         shape[4 - t.dim() + i] = static_cast<int>(t.size(i));
 
-    // `bonds` must be passed in as an argument, as its lifetime matters
-    broker.all_gather_bonds(bonds, reinterpret_cast<void *>(t.data_ptr()));
+    KittensIPCPointerSet ptrs = broker.gather_ipc_ptrs(t);
 
     int device_ids[PGL::num_devices];
     uint64_t data_ptrs[PGL::num_devices];
     for (int i = 0; i < PGL::num_devices; i++) {
         device_ids[i] = i;
-        data_ptrs[i] = reinterpret_cast<uint64_t>(bonds[i].raw_ptr);
+        data_ptrs[i] = reinterpret_cast<uint64_t>(ptrs.raw_ptrs_[i]);
     }
+
+    TORCH_CHECK(data_ptrs[broker.local_rank_] == reinterpret_cast<uint64_t>(t.data_ptr()), 
+                "Current tensor data pointer not found in KittensIPCPointerSet"); // sanity check
+
+    return ::kittens::make_pgl<PGL>(device_ids, data_ptrs, shape[0], shape[1], shape[2], shape[3]);
+}
+
+template <kittens::ducks::pgl::all PGL>
+static inline PGL tensor_to_pgl(const at::Tensor &t, const KittensIPCPointerSet &ptrs, const KittensBroker &broker) {
+    TORCH_CHECK(PGL::num_devices == broker.local_world_size_, "Number of devices mismatch between PGL and KittensBroker");
+    TORCH_CHECK(PGL::num_devices == ptrs.is_imported_.size(), "Number of devices mismatch between PGL and KittensIPCPointerSet");
+    TORCH_CHECK(PGL::num_devices == ptrs.raw_ptrs_.size(), "Number of devices mismatch between PGL and KittensIPCPointerSet");
+    TORCH_CHECK(!PGL::_INIT_MC, "PGL must be initialized with INIT_MC=false for multiprocess use");
+    TORCH_CHECK(broker.local_rank_ == t.device().index(), "Current tensor device index mismatch with KittensBroker");
+
+    tensor_check<PGL>(t);
+
+    std::array<int, 4> shape = {1, 1, 1, 1};
+    for (int i = 0; i < static_cast<int>(t.dim()); ++i)
+        shape[4 - t.dim() + i] = static_cast<int>(t.size(i));
+
+    int device_ids[PGL::num_devices];
+    uint64_t data_ptrs[PGL::num_devices];
+    for (int i = 0; i < PGL::num_devices; i++) {
+        device_ids[i] = i;
+        data_ptrs[i] = reinterpret_cast<uint64_t>(ptrs.raw_ptrs_[i]);
+    }
+
+    TORCH_CHECK(data_ptrs[broker.local_rank_] == reinterpret_cast<uint64_t>(t.data_ptr()), 
+                "Current tensor data pointer not found in KittensIPCPointerSet"); // sanity check
 
     return ::kittens::make_pgl<PGL>(device_ids, data_ptrs, shape[0], shape[1], shape[2], shape[3]);
 }
