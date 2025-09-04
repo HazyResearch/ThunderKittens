@@ -68,7 +68,7 @@ static inline GL tensor_to_gl(const at::Tensor &t) {
 }
 
 template <kittens::ducks::pgl::all PGL>
-static inline PGL tensor_to_pgl(const at::Tensor &t, const KittensBroker &broker) {
+static inline PGL tensor_to_pgl(const at::Tensor &t, KittensBroker &broker) {
     TORCH_CHECK(PGL::num_devices == broker.local_world_size_, "Number of devices mismatch between PGL and KittensBroker");
     TORCH_CHECK(!PGL::_INIT_MC, "PGL must be initialized with INIT_MC=false for multiprocess use");
     TORCH_CHECK(broker.local_rank_ == t.device().index(), "Current tensor device index mismatch with KittensBroker");
