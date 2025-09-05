@@ -33,9 +33,9 @@ endif
 
 # Compiler flags based on GPU target
 ifeq ($(GPU_TARGET),4090)
-NVCCFLAGS+= -arch=sm_89 -DKITTENS_4090
+NVCCFLAGS+= -arch=sm_89 -DKITTENS_4090 -lcuda -lcudart
 else ifeq ($(GPU_TARGET),A100)
-NVCCFLAGS+= -arch=sm_80 -DKITTENS_A100
+NVCCFLAGS+= -arch=sm_80 -DKITTENS_A100 -lcuda -lcudart
 else ifeq ($(GPU_TARGET),H100)
 NVCCFLAGS+= -arch=sm_90a -DKITTENS_HOPPER -lcuda -lcudart
 else ifeq ($(GPU_TARGET),B200)
