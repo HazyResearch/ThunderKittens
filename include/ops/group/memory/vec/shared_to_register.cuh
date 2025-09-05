@@ -18,7 +18,7 @@ __device__ inline static void load(RV &dst, const SV &src) {
     using U2 = base_types::packing<U>::packed_type;
     using T = base_types::packing<T2>::unpacked_type;
     if constexpr (GROUP_WARPS == 1) {
-        static_assert(src.length == dst.length);
+        static_assert(SV::length == RV::length);
         
         int laneid = ::kittens::laneid();
         uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&src.data[0]));
@@ -73,7 +73,7 @@ __device__ inline static void load(RV &dst, const SV &src) {
         else if constexpr (std::is_same_v<typename RV::layout, naive_l>) {
             #pragma unroll
             for(auto w = 0; w < dst.outer_dim; w++) {
-                if(w < dst.outer_dim-1 || dst.length%32 == 0 || laneid<16) {
+                if(w < dst.outer_dim-1 || RV::length%32 == 0 || laneid<16) {
                     U tmp;
                     move<U>::lds(tmp, src_ptr + sizeof(typename SV::dtype)*(w*32 + laneid));
                     dst[w][0] = base_types::convertor<T, U>::convert(tmp);
@@ -82,8 +82,8 @@ __device__ inline static void load(RV &dst, const SV &src) {
         }
     }
     else {
-        static_assert(src.length == dst.length*GROUP_WARPS);// confirm size correct
-        auto &_src = src.template subvec<dst.length>(warpid()); // pretend it's smaller and do warp-level load
+        static_assert(SV::length == RV::length*GROUP_WARPS);// confirm size correct
+        auto &_src = src.template subvec<RV::length>(warpid()); // pretend it's smaller and do warp-level load
 
         ::kittens::group<1>::load(dst, _src); // warp-level
     }
@@ -105,7 +105,7 @@ __device__ inline static void store(SV &dst, const RV &src) {
     using T = base_types::packing<T2>::unpacked_type;
 
     if constexpr (GROUP_WARPS == 1) {
-        static_assert(dst.length == src.length);
+        static_assert(SV::length == RV::length);
         
         int laneid = ::kittens::laneid();
         uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&dst.data[0]));
@@ -143,7 +143,7 @@ __device__ inline static void store(SV &dst, const RV &src) {
         else if constexpr (std::is_same_v<typename RV::layout, naive_l>) {
             #pragma unroll
             for(auto w = 0; w < src.outer_dim; w++) {
-                if(w < src.outer_dim-1 || src.length%32 == 0 || laneid<16) {
+                if(w < src.outer_dim-1 || RV::length%32 == 0 || laneid<16) {
                     U tmp = base_types::convertor<U, T>::convert(src[w][0]);
                     move<U>::sts(dst_ptr + sizeof(typename SV::dtype)*(w*32 + laneid), tmp);
                 }
@@ -151,8 +151,8 @@ __device__ inline static void store(SV &dst, const RV &src) {
         }
     }
     else {
-        static_assert(dst.length == src.length*GROUP_WARPS);// confirm size correct
-        auto &_dst = dst.template subvec<src.length>(warpid()); // pretend it's smaller and do warp-level load
+        static_assert(SV::length == RV::length*GROUP_WARPS);// confirm size correct
+        auto &_dst = dst.template subvec<RV::length>(warpid()); // pretend it's smaller and do warp-level load
 
         ::kittens::group<1>::store(_dst, src); // warp-level
     }
