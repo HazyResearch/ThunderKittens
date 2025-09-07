@@ -59,6 +59,7 @@ template<ducks::gl::all GL> struct from_object<GL> {
 };
 template<ducks::pgl::all PGL> struct from_object<PGL> {
     static PGL make(pybind11::object obj) {
+        static_assert(!PGL::MULTICAST, "Multicast not yet supported on pyutils. Please initialize the multicast pointer manually.");
         if (!pybind11::isinstance<pybind11::list>(obj))
             throw std::runtime_error("PGL from_object expected a Python list.");
         pybind11::list tensors = pybind11::cast<pybind11::list>(obj);
@@ -87,20 +88,7 @@ template<ducks::pgl::all PGL> struct from_object<PGL> {
             }
             data_ptrs[i] = tensor.attr("data_ptr")().cast<uint64_t>();
         }
-        int device_ids[PGL::num_devices];
-        for (int i = 0; i < PGL::num_devices; i++)
-            device_ids[i] = tensors[i].attr("device").attr("index").cast<int>();
-        size_t mem_granularity;
-        CUmemAllocationProp mem_prop = {};
-        CUCHECK(cuMemGetAllocationGranularity(&mem_granularity, &mem_prop, MEM_GRAN_TYPE));
-        if constexpr (PGL::_INIT_MC) {
-            size_t size = sizeof(typename PGL::dtype) * shape[0] * shape[1] * shape[2] * shape[3];
-            if (size < mem_granularity)
-                throw std::runtime_error("PGL tensor size must be at least " + std::to_string(mem_granularity) +
-                                         " bytes. Provided tensor had shape " + std::to_string(shape[0]) + " x " + std::to_string(shape[1]) + " x " + std::to_string(shape[2]) + " x " + std::to_string(shape[3]) +
-                                         ", dtype " + typeid(typename PGL::dtype).name() + " and size " + std::to_string(size));
-        }
-        return make_pgl<PGL>(device_ids, data_ptrs, shape[0], shape[1], shape[2], shape[3]);
+        return make_pgl<PGL>(data_ptrs, shape[0], shape[1], shape[2], shape[3]);
     }
     static PGL unwrap(pybind11::object obj, int dev_idx) {
         return *obj.cast<std::shared_ptr<PGL>>();

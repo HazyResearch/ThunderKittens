@@ -1,10 +1,10 @@
 #include "testing_flags.cuh"
 
-#ifdef TEST_WARP_MEMORY_VEC_TMA_PGL
+#ifdef TEST_THREAD_MEMORY_VEC_TMA_PGL
 
 #include "testing_commons.cuh"
 
-namespace warp {
+namespace thread {
 namespace memory {
 namespace vec {
 namespace tma_pgl {

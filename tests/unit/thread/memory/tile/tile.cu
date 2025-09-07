@@ -14,6 +14,11 @@ void thread::memory::tile::tests(test_data &results) {
 #else
     std::cout << "INFO: Skipping ops/thread/memory/tile/tma_multicast tests!\n" << std::endl;
 #endif
+#ifdef TEST_THREAD_MEMORY_TILE_TMA_PGL
+    thread::memory::tile::tma_pgl::tests(results);
+#else
+    std::cout << "INFO: Skipping ops/thread/memory/tile/tma_pgl tests!\n" << std::endl;
+#endif
 #ifdef TEST_THREAD_MEMORY_TILE_DSMEM
     thread::memory::tile::dsmem::tests(results);
 #else

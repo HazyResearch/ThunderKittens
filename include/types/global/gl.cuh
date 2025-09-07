@@ -222,36 +222,4 @@ template<ducks::gl::all GL, bool safe=true> __host__ inline GL make_gl(uint64_t 
     );
 }
 
-namespace ducks {
-namespace gl_array {
-struct identifier {};
-template<typename T> concept all = requires {
-    typename T::identifier;
-} && std::is_same_v<typename T::identifier, identifier>;
-}
-}
-
-/*
-    Basically a lightweight PGL; useful for cross-device access without multimem instructions
-    (only because C++ doesn't allow returning C-style arrays as R-values)
-*/
-template<ducks::gl::all _GL, size_t _N>
-struct gl_array {
-    using identifier = ducks::gl_array::identifier;
-    using GL = _GL;
-    static constexpr int N = _N;
-
-    GL gls[N];
-
-    __host__ inline gl_array(uint64_t _data_ptr[N], int _batch, int _depth, int _rows, int _cols) : 
-        gl_array(std::make_index_sequence<N>{}, _data_ptr, _batch, _depth, _rows, _cols) { }
-
-    template<size_t... I> __host__ inline gl_array(std::index_sequence<I...>,
-            uint64_t _data_ptr[N], int _batch, int _depth, int _rows, int _cols) : 
-        gls{make_gl<GL>(_data_ptr[I], _batch, _depth, _rows, _cols)...} { }
-
-    __host__ __device__ GL& operator[](size_t i) { return gls[i]; }
-    __host__ __device__ const GL& operator[](size_t i) const { return gls[i]; }
-};
-
 } // namespace kittens
