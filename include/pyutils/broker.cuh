@@ -1,113 +1,29 @@
-/**
-    @file
-    @brief KittensBroker utilities for multiprocess tensor exchange.
-
-    This file specifically targets workloads run with `torchrun`, but should work
-    for any single-node, multi-gpu, multi-process runs.
-
-    Note that the code relies on POSIX shared memory/semaphores for inter-process
-    communication and synchronization.
-
-    Export to Python (pybind11):
-
-        PYBIND11_MODULE(_C, m){
-            pybind11::class_<KittensBroker>(m, "KittensBroker")
-                .def(pybind11::init<int,int>())
-                .def("gather_ipc_ptrs",
-                    pybind11::overload_cast<const at::Tensor&>(&KittensBroker::gather_ipc_ptrs),
-                    pybind11::call_guard<pybind11::gil_scoped_release>(),
-                    pybind11::return_value_policy::move);
-            pybind11::class_<KittensIPCPointerSet>(m, "KittensIPCPointerSet")
-                .def(pybind11::init<>());
-        }
-
-    Example PyTorch usage:
-
-        import torch
-        from _C import KittensBroker
-
-        ... (initialize torch distributed)
-
-        broker = KittensBroker(local_rank, local_world_size)
-        ipc_ptrs = broker.gather_ipc_ptrs(tensor)
-
-        ... (now pass `broker` and `ipc_ptrs` to your kernels!)
- */
-
 #pragma once
 
 #include <cerrno>
+#include <cstdint>
+#include <cstring>
 #include <fcntl.h>
-#include <iostream>
 #include <semaphore.h>
 #include <stdexcept>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <vector>
-
-#include <ATen/core/Tensor.h>
-#include <cuda_runtime.h>
 
 namespace kittens {
 
-struct KittensIPCPointerSet {
-    std::vector<bool> is_imported_ {};
-    std::vector<void *> raw_ptrs_ {}; // if imported, MUST be freed with cudaIpcCloseMemHandle (not cudaFree), which is why we have a custom struct
+/**
+    @brief KittensBroker utility for multiprocess data exchange.
 
-    __host__ inline void append_ptr(void *raw_ptr, bool is_imported = false) {
-        is_imported_.push_back(is_imported);
-        raw_ptrs_.push_back(raw_ptr);
-    }
+    Note that the code relies on POSIX shared memory/semaphores for inter-process
+    communication and synchronization.
 
-    __host__ inline void append_from_handle(const cudaIpcMemHandle_t &import_handle) {
-        void *raw_ptr;
-        // Import the IPC handle. This implicitly & lazily does cudaDeviceEnablePeerAccess
-        CUDACHECK(cudaIpcOpenMemHandle(&raw_ptr, import_handle, cudaIpcMemLazyEnablePeerAccess)); // this is the only flag supported
-        append_ptr(raw_ptr, true);
-    }
+    The only functions meant to be used by the user are `exchange` and `sync`:
 
-    __host__ inline void free_imported_ptrs(bool warn = false) {
-        if (is_imported_.size() != raw_ptrs_.size())
-            throw std::runtime_error("KittensIPCPointerSet: Size mismatch");
-
-        // Close the imported pointers (this MUST be done first before cudaFree on the source)
-        for (size_t i = 0; i < raw_ptrs_.size(); i++) {
-            if (is_imported_[i]) {
-                if (warn) std::cerr << "WARNING: Freeing an imported pointer." << std::endl;
-                CUDACHECK(cudaIpcCloseMemHandle(raw_ptrs_[i]));
-            }
-        }
-    }
-
-    __host__ inline KittensIPCPointerSet() : is_imported_(), raw_ptrs_() {}
-
-    KittensIPCPointerSet(const KittensIPCPointerSet&) = delete;
-    KittensIPCPointerSet& operator=(const KittensIPCPointerSet&) = delete;
-
-    __host__ inline KittensIPCPointerSet(KittensIPCPointerSet&& other) noexcept 
-        : is_imported_(std::move(other.is_imported_)),
-          raw_ptrs_(std::move(other.raw_ptrs_)) {
-        other.is_imported_.clear();
-        other.raw_ptrs_.clear();
-    }
-    __host__ inline KittensIPCPointerSet& operator=(KittensIPCPointerSet&& other) noexcept {
-        if (this != &other) {
-            free_imported_ptrs(true);
-            is_imported_ = std::move(other.is_imported_);
-            raw_ptrs_ = std::move(other.raw_ptrs_);
-            other.is_imported_.clear();
-            other.raw_ptrs_.clear();
-        }
-        return *this;
-    }
-
-    __host__ inline ~KittensIPCPointerSet() {
-        // It is recommended to call KittensBroker::sync() after this
-        free_imported_ptrs();
-    }
-};
-
+        KittensBroker broker(local_rank, local_world_size);
+        broker.exchange(dst, src, size); // exchange data between all processes
+        broker.sync(); // wait until all processes reach here
+ */
 struct KittensBroker {
     __host__ inline KittensBroker(int local_rank, int local_world_size)
         : local_rank_(local_rank), 
@@ -116,10 +32,6 @@ struct KittensBroker {
             throw std::runtime_error("Local rank is greater than local world size");
         if (local_world_size_ > MAX_LOCAL_WORLD_SIZE_)
             throw std::runtime_error("Local world size is greater than MAX_LOCAL_WORLD_SIZE");
-        if (!is_device_id_valid())
-            throw std::runtime_error("Invalid device ID. Must be equal to local rank.");
-        if (!is_cuda_ipc_supported())
-            throw std::runtime_error("CUDA IPC is not supported on this device");
 
         // Create or open an existing shared memory
         int shm_id = shm_open(SHM_KEY_, O_CREAT | O_RDWR, 0600);
@@ -263,35 +175,21 @@ struct KittensBroker {
         xsem_wait(sem_exit_);
     }
 
-    __host__ inline KittensIPCPointerSet gather_ipc_ptrs(void *src_ptr) {
-        // Export IPC handle
-        cudaIpcMemHandle_t export_handle;
-        CUDACHECK(cudaIpcGetMemHandle(&export_handle, src_ptr));
+    __host__ inline void exchange(void *dst_, const void *src_, size_t size) {
+        if (size > VAULT_SIZE_PER_RANK_)
+            throw std::runtime_error("Size is greater than VAULT_SIZE_PER_RANK_");
 
-        // Share IPC handle
+        uint8_t *dst = reinterpret_cast<uint8_t *>(dst_);
+        const uint8_t *src = reinterpret_cast<const uint8_t *>(src_);
+
+        // Exchange data
         sync(); // ensure all processes are ready
-        shm_->handle[local_rank_] = export_handle;
+        memcpy(shm_->data + local_rank_ * VAULT_SIZE_PER_RANK_, src, size);
         sync();
     
-        // Import IPC handle
-        KittensIPCPointerSet ptrs;
-        for (int i = 0; i < local_world_size_; i++) {
-            if (i == local_rank_) {
-                ptrs.append_ptr(src_ptr, false);
-            } else {
-                ptrs.append_from_handle(shm_->handle[i]);
-            }
-        }
-
-        return ptrs;
-    }
-
-    __host__ inline KittensIPCPointerSet gather_ipc_ptrs(uint64_t src_ptr) {
-        return gather_ipc_ptrs(reinterpret_cast<void *>(src_ptr));
-    }
-
-    __host__ inline KittensIPCPointerSet gather_ipc_ptrs(const at::Tensor &t) {
-        return gather_ipc_ptrs(reinterpret_cast<void *>(t.data_ptr()));
+        // Pack and copy back to destination
+        for (int i = 0; i < local_world_size_; i++)
+            memcpy(dst + i * size, shm_->data + i * VAULT_SIZE_PER_RANK_, size);
     }
 
     __host__ static inline void xsem_wait(sem_t* s) {
@@ -307,20 +205,8 @@ struct KittensBroker {
             throw std::runtime_error("Failed to post on semaphore");
     }
 
-    __host__ inline bool is_device_id_valid() const {
-        int device_id;
-        CUDACHECK(cudaGetDevice(&device_id));
-        return device_id >= 0 && device_id < local_world_size_ && device_id == local_rank_;
-    }
-
-    __host__ inline bool is_cuda_ipc_supported() const {
-        // Check if IPC is supported
-        int ipc_supported;
-        CUDACHECK(cudaDeviceGetAttribute(&ipc_supported, cudaDevAttrIpcEventSupport, local_rank_));
-        return ipc_supported;
-    }
-
     static inline constexpr int MAX_LOCAL_WORLD_SIZE_ = 72;
+    static inline constexpr int VAULT_SIZE_PER_RANK_ = 64; // sizeof(cudaIpcMemHandle_t)
     static inline constexpr int PAGE_SIZE_ = 4096;
 
     // TODO: make these unique per process group
@@ -332,8 +218,7 @@ struct KittensBroker {
 
     struct KittensVault {
         int counter;
-        cudaIpcMemHandle_t handle[MAX_LOCAL_WORLD_SIZE_];
-        __host__ inline KittensVault() : counter(0) {}
+        uint8_t data[MAX_LOCAL_WORLD_SIZE_ * VAULT_SIZE_PER_RANK_];
     };
     static inline constexpr int SHM_SIZE_ = (sizeof(KittensVault) + PAGE_SIZE_ - 1) / PAGE_SIZE_ * PAGE_SIZE_;
 
