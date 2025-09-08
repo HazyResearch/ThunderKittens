@@ -32,24 +32,20 @@ struct tma_pgl_vec_test_wrapper_1d {
             // initialize
             dtype *d_i_arr[NUM_DEVICES];
             dtype *d_o_arr[NUM_DEVICES];
-            dtype *d_i_mc_arr[NUM_DEVICES];
-            dtype *d_o_mc_arr[NUM_DEVICES];
+            dtype *d_i_mc;
+            dtype *d_o_mc;
             size_t d_i_alloc_size, d_o_alloc_size, d_i_mc_alloc_size, d_o_mc_alloc_size;
             std::vector<std::vector<float>> i_ref(NUM_DEVICES, std::vector<float>(SIZE));
             std::vector<std::vector<float>> o_ref(NUM_DEVICES, std::vector<float>(SIZE));
             initialize<NUM_DEVICES>(
-                d_i_arr, d_o_arr, d_i_mc_arr, d_o_mc_arr,
+                d_i_arr, d_o_arr, &d_i_mc, &d_o_mc,
                 &d_i_alloc_size, &d_o_alloc_size, &d_i_mc_alloc_size, &d_o_mc_alloc_size,
                 i_ref, o_ref
             );
 
             // Prepare PGLs
-            std::vector<PGL> inputs;
-            std::vector<PGL> outputs;
-            for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-                inputs.emplace_back(d_i_mc_arr[dev_idx], d_i_arr, B, D, R, 16*S*C);
-                outputs.emplace_back(d_o_mc_arr[dev_idx], d_o_arr, B, D, R, 16*S*C);
-            }
+            PGL input {d_i_mc, d_i_arr, B, D, R, 16*S*C};
+            PGL output {d_o_mc, d_o_arr, B, D, R, 16*S*C};
 
             // run kernel
             for (int dev_idx = 0; dev_idx < (test::single_run ? 1 : NUM_DEVICES); ++dev_idx) {
@@ -59,14 +55,14 @@ struct tma_pgl_vec_test_wrapper_1d {
                     cudaFuncAttributeMaxDynamicSharedMemorySize,
                     kittens::MAX_SHARED_MEMORY
                 );
-                tma_pgl_vec_global_wrapper_1d<test, S, NUM_WORKERS, PGL, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(inputs[dev_idx], outputs[dev_idx], dev_idx);
+                tma_pgl_vec_global_wrapper_1d<test, S, NUM_WORKERS, PGL, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(input, output, dev_idx);
             }
 
             // fill in correct results on cpu
             test::template host_func(i_ref, o_ref);
             // check and cleanup
             this_result.result = validate<NUM_DEVICES, PGL, dtype>(
-                inputs, outputs,
+                input, output,
                 d_i_alloc_size, d_o_alloc_size, d_i_mc_alloc_size, d_o_mc_alloc_size,
                 i_ref, o_ref, this_result.label, S * 16
             );

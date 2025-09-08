@@ -79,8 +79,8 @@ int main() {
 
     // Initialize multicast
     // When binding to PyTorch, this can be done easily with TKParallelTensor
-    float **d_in_mc = new float*[NUM_DEVICES];
-    float **d_out_mc = new float*[NUM_DEVICES];
+    float *d_in_mc;
+    float *d_out_mc;
     detail::vmm::handle d_in_mc_handle;
     detail::vmm::handle d_out_mc_handle;
     size_t mc_allocated_size;
@@ -96,19 +96,19 @@ int main() {
         // Must be done after all devices are bound
         detail::vmm::multicast_bind_address(d_in_mc_handle, d_in[dev_idx], allocated_size);
         detail::vmm::multicast_bind_address(d_out_mc_handle, d_out[dev_idx], allocated_size);
-        detail::vmm::vm_map((void **)&d_in_mc[dev_idx], d_in_mc_handle, mc_allocated_size);
-        detail::vmm::vm_map((void **)&d_out_mc[dev_idx], d_out_mc_handle, mc_allocated_size);
-        detail::vmm::vm_set_access((void *)d_in_mc[dev_idx], mc_allocated_size, NUM_DEVICES);
-        detail::vmm::vm_set_access((void *)d_out_mc[dev_idx], mc_allocated_size, NUM_DEVICES);
     }
+    detail::vmm::vm_map((void **)&d_in_mc, d_in_mc_handle, mc_allocated_size);
+    detail::vmm::vm_map((void **)&d_out_mc, d_out_mc_handle, mc_allocated_size);
+    detail::vmm::vm_set_access((void *)d_in_mc, mc_allocated_size, NUM_DEVICES);
+    detail::vmm::vm_set_access((void *)d_out_mc, mc_allocated_size, NUM_DEVICES);
+
+    // Handles can be released immediately after address mapping
+    detail::vmm::vm_free(d_in_mc_handle);
+    detail::vmm::vm_free(d_out_mc_handle);
 
     // Initialize PGLs
-    std::vector<PGL> d_in_pgl;
-    std::vector<PGL> d_out_pgl;
-    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-        d_in_pgl.emplace_back(d_in_mc[dev_idx], d_in, nullptr, nullptr, nullptr, nullptr);
-        d_out_pgl.emplace_back(d_out_mc[dev_idx], d_out, nullptr, nullptr, nullptr, nullptr);
-    }
+    PGL d_in_pgl {d_in_mc, d_in, nullptr, nullptr, nullptr, nullptr};
+    PGL d_out_pgl {d_out_mc, d_out, nullptr, nullptr, nullptr, nullptr};
 
     // Initialize KittensClub, a host-side threadpool
     // A better way is to use TKParallelTensor with multiprocessing, but this is good
@@ -125,7 +125,7 @@ int main() {
     dim3 block(32); // single warp per block; each will handle 32x32 subtile
     printf("Launching kernel...\n");
     club.execute([&](int dev_idx, cudaStream_t stream) {
-        all_reduce_kernel<<<grid, block, 0, stream>>>(d_in_pgl[dev_idx], d_out_pgl[dev_idx], dev_idx);
+        all_reduce_kernel<<<grid, block, 0, stream>>>(d_in_pgl, d_out_pgl, dev_idx);
         CHECK_CUDA_ERROR(cudaDeviceSynchronize());
     });
 
@@ -149,18 +149,17 @@ int main() {
     // Clean up multicast
     // When using TKParallelTensor, these are automatically handled in the destructor
     for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-        detail::vmm::vm_unmap(d_in_mc[dev_idx], mc_allocated_size);
-        detail::vmm::vm_unmap(d_out_mc[dev_idx], mc_allocated_size);
         detail::vmm::multicast_unbind_device(d_in_mc_handle, mc_allocated_size, dev_idx);
         detail::vmm::multicast_unbind_device(d_out_mc_handle, mc_allocated_size, dev_idx);
     }
-    detail::vmm::vm_free(d_in_mc_handle);
-    detail::vmm::vm_free(d_out_mc_handle);
+    // Must be unmapped after unbinding device, since multicast object will be freed immediately
+    detail::vmm::vm_unmap(d_in_mc, mc_allocated_size);
+    detail::vmm::vm_unmap(d_out_mc, mc_allocated_size);
 
     // Clean up device-side memory
     for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-        detail::vmm::vm_unmap_free(d_in[dev_idx], allocated_size);
-        detail::vmm::vm_unmap_free(d_out[dev_idx], allocated_size);
+        detail::vmm::vm_unmap(d_in[dev_idx], allocated_size);
+        detail::vmm::vm_unmap(d_out[dev_idx], allocated_size);
     }
 
     // Clean up host-side memory
@@ -173,8 +172,6 @@ int main() {
     delete[] expected;
     delete[] d_in;
     delete[] d_out;
-    delete[] d_in_mc;
-    delete[] d_out_mc;
 
     std::cout << "Done!" << std::endl;
     return 0;

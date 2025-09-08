@@ -190,8 +190,8 @@ template<int NUM_DEVICES, typename T, initializers initializer=initializers::RAN
 static void initialize(
     T **d_i_arr,
     T **d_o_arr,
-    T **d_i_mc_arr,
-    T **d_o_mc_arr,
+    T **d_i_mc,
+    T **d_o_mc,
     size_t *d_i_alloc_size,
     size_t *d_o_alloc_size,
     size_t *d_i_mc_alloc_size,
@@ -261,11 +261,13 @@ static void initialize(
     for (int dev_idx = 0; dev_idx < NUM_DEVICES; dev_idx++) {
         kittens::detail::vmm::multicast_bind_address(d_i_mc_handle, d_i_arr[dev_idx], *d_i_alloc_size);
         kittens::detail::vmm::multicast_bind_address(d_o_mc_handle, d_o_arr[dev_idx], *d_o_alloc_size);
-        kittens::detail::vmm::vm_map((void **)&d_i_mc_arr[dev_idx], d_i_mc_handle, *d_i_mc_alloc_size);
-        kittens::detail::vmm::vm_map((void **)&d_o_mc_arr[dev_idx], d_o_mc_handle, *d_o_mc_alloc_size);
-        kittens::detail::vmm::vm_set_access((void *)d_i_mc_arr[dev_idx], *d_i_mc_alloc_size, NUM_DEVICES);
-        kittens::detail::vmm::vm_set_access((void *)d_o_mc_arr[dev_idx], *d_o_mc_alloc_size, NUM_DEVICES);
     }
+    kittens::detail::vmm::vm_map((void **)d_i_mc, d_i_mc_handle, *d_i_mc_alloc_size);
+    kittens::detail::vmm::vm_map((void **)d_o_mc, d_o_mc_handle, *d_o_mc_alloc_size);
+    kittens::detail::vmm::vm_set_access((void *)*d_i_mc, *d_i_mc_alloc_size, NUM_DEVICES);
+    kittens::detail::vmm::vm_set_access((void *)*d_o_mc, *d_o_mc_alloc_size, NUM_DEVICES);
+    kittens::detail::vmm::vm_free(d_i_mc_handle);
+    kittens::detail::vmm::vm_free(d_o_mc_handle);
 }
 
 extern int should_write_outputs;
@@ -350,8 +352,8 @@ test_result validate(T *d_i, T *d_o, const std::vector<float> &i_ref, std::vecto
 // Validation for multi-gpu tests
 template<int NUM_DEVICES, kittens::ducks::pgl::all PGL, typename T>
 test_result validate(
-    std::vector<PGL> &inputs,
-    std::vector<PGL> &outputs,
+    PGL &input,
+    PGL &output,
     size_t d_i_alloc_size,
     size_t d_o_alloc_size,
     size_t d_i_mc_alloc_size,
@@ -380,7 +382,7 @@ test_result validate(
     }
 
     for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-        cudaMemcpy(&o_t[dev_idx * output_size], outputs[dev_idx][dev_idx].raw_ptr, output_size * sizeof(T), cudaMemcpyDeviceToHost);
+        cudaMemcpy(&o_t[dev_idx * output_size], output[dev_idx].raw_ptr, output_size * sizeof(T), cudaMemcpyDeviceToHost);
         CudaCheckError();
 
         for(int idx = 0; idx < output_size; idx++) {
@@ -454,25 +456,23 @@ test_result validate(
         outfile.close();
     }
 
-    for (int dev_idx = NUM_DEVICES - 1; dev_idx >= 0; --dev_idx) { // device 0 comes last
-        cudaSetDevice(dev_idx);
-        kittens::detail::vmm::handle d_in_mc_handle;
-        kittens::detail::vmm::handle d_out_mc_handle;
-        kittens::detail::vmm::vm_retrieve_handle(&d_in_mc_handle, inputs[dev_idx].mc_ptr);
-        kittens::detail::vmm::vm_retrieve_handle(&d_out_mc_handle, outputs[dev_idx].mc_ptr);        
-        kittens::detail::vmm::vm_unmap(inputs[dev_idx].mc_ptr, d_i_mc_alloc_size);
-        kittens::detail::vmm::vm_unmap(outputs[dev_idx].mc_ptr, d_o_mc_alloc_size);
+    // Destroy multicast object
+    kittens::detail::vmm::handle d_in_mc_handle;
+    kittens::detail::vmm::handle d_out_mc_handle;
+    kittens::detail::vmm::vm_retrieve_handle(&d_in_mc_handle, input.mc_ptr);
+    kittens::detail::vmm::vm_retrieve_handle(&d_out_mc_handle, output.mc_ptr);        
+    kittens::detail::vmm::vm_unmap(input.mc_ptr, d_i_mc_alloc_size);
+    kittens::detail::vmm::vm_unmap(output.mc_ptr, d_o_mc_alloc_size);
+    for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
         kittens::detail::vmm::multicast_unbind_device(d_in_mc_handle, d_i_mc_alloc_size, dev_idx);
         kittens::detail::vmm::multicast_unbind_device(d_out_mc_handle, d_o_mc_alloc_size, dev_idx);
-        if (dev_idx == 0) {
-            kittens::detail::vmm::vm_free(d_in_mc_handle);
-            kittens::detail::vmm::vm_free(d_out_mc_handle);
-        }
     }
+    kittens::detail::vmm::vm_free(d_in_mc_handle);
+    kittens::detail::vmm::vm_free(d_out_mc_handle);
 
     for (int dev_idx = 0; dev_idx < NUM_DEVICES; ++dev_idx) {
-        kittens::detail::vmm::vm_unmap_free(inputs[dev_idx][dev_idx].raw_ptr, d_i_alloc_size);
-        kittens::detail::vmm::vm_unmap_free(outputs[dev_idx][dev_idx].raw_ptr, d_o_alloc_size);
+        kittens::detail::vmm::vm_unmap(input[dev_idx].raw_ptr, d_i_alloc_size);
+        kittens::detail::vmm::vm_unmap(output[dev_idx].raw_ptr, d_o_alloc_size);
     }
 
     delete[] o_t, o;

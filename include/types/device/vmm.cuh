@@ -60,23 +60,11 @@ __host__ inline static void vm_set_access(
     CUCHECK(cuMemSetAccess(reinterpret_cast<CUdeviceptr>(ptr), size, descs.data(), num_devices));
 }
 
-__host__ inline static void vm_alloc_map_set_access(
-    void **ptr,
-    size_t *allocated_size,
-    const size_t size,
-    const int device_id,
-    const int num_devices
-) {
-    CUmemGenericAllocationHandle handle;
-    vm_alloc(&handle, allocated_size, size, device_id);
-    vm_map(ptr, handle, *allocated_size);
-    vm_set_access(*ptr, *allocated_size, num_devices);
-}
-
 __host__ inline static void vm_retrieve_handle(
     CUmemGenericAllocationHandle *handle,
     void *ptr
 ) {
+    // Every call to this requires a corresponding call to cuMemRelease
     CUCHECK(cuMemRetainAllocationHandle(handle, ptr));
 }
 
@@ -89,17 +77,23 @@ __host__ inline static void vm_unmap(
 }
 
 __host__ inline static void vm_free(CUmemGenericAllocationHandle &handle) {
+    // It is recommended to free the handle ASAP; the backing memory will
+    // only be freed when all handles AND address mappings are released
     CUCHECK(cuMemRelease(handle));
 }
 
-__host__ inline static void vm_unmap_free(
-    void *ptr,
-    const size_t size
+__host__ inline static void vm_alloc_map_set_access(
+    void **ptr,
+    size_t *allocated_size,
+    const size_t size,
+    const int device_id,
+    const int num_devices
 ) {
     CUmemGenericAllocationHandle handle;
-    vm_retrieve_handle(&handle, ptr);
-    vm_unmap(ptr, size);
-    vm_free(handle);
+    vm_alloc(&handle, allocated_size, size, device_id);
+    vm_map(ptr, handle, *allocated_size);
+    vm_set_access(*ptr, *allocated_size, num_devices);
+    vm_free(handle); // release the handle ASAP
 }
 
 __host__ inline static void multicast_check(const int device_id) {
@@ -165,8 +159,9 @@ __host__ inline static void multicast_bind_address(
 ) {
     // All processes should finish adding device before calling this function
     CUmemGenericAllocationHandle memory_handle;
-    detail::vmm::vm_retrieve_handle(&memory_handle, ptr);
-    detail::vmm::multicast_bind_memory(multicast_handle, memory_handle, size);
+    vm_retrieve_handle(&memory_handle, ptr);
+    multicast_bind_memory(multicast_handle, memory_handle, size);
+    vm_free(memory_handle);
 }
 
 __host__ inline static void multicast_unbind_device(

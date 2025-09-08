@@ -74,6 +74,7 @@ __host__ inline static void export_handle(
         CUmemGenericAllocationHandle memory_handle;
         detail::vmm::vm_retrieve_handle(&memory_handle, ptr);
         CUCHECK(cuMemExportToShareableHandle(&ipc_handle->handle_, memory_handle, detail::vmm::HANDLE_TYPE, 0));
+        detail::vmm::vm_free(memory_handle);
     } else {
         throw std::runtime_error("Invalid IPC handle type");
     }
@@ -91,6 +92,7 @@ __host__ inline static void import_handle (
         CUmemGenericAllocationHandle memory_handle;
         CUCHECK(cuMemImportFromShareableHandle(&memory_handle, reinterpret_cast<void *>(&ipc_handle.handle_), detail::vmm::HANDLE_TYPE));
         detail::vmm::vm_map(ptr, memory_handle, size);
+        detail::vmm::vm_free(memory_handle);
     } else {
         throw std::runtime_error("Invalid IPC handle type");
     }
@@ -104,10 +106,7 @@ __host__ inline static void free_handle(
     if constexpr (_flavor == flavor::LEGACY) {
         CUDACHECK(cudaIpcCloseMemHandle(ptr));
     } else if constexpr (_flavor == flavor::VMM) {
-        detail::vmm::handle memory_handle;
-        detail::vmm::vm_retrieve_handle(&memory_handle, ptr);
         detail::vmm::vm_unmap(ptr, size);
-        detail::vmm::vm_free(memory_handle);
     } else {
         throw std::runtime_error("Invalid IPC handle type");
     }
