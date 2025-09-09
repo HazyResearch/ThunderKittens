@@ -107,41 +107,9 @@ struct TKParallelTensor {
         c10::cuda::CUDAGuard device_guard(local_rank_);
         create_shareable_cuda_tensor();
         exchange_ipc_handles<detail::ipc::flavor::VMM>();
-        
-        if (multicast_) {
-            detail::vmm::multicast_check(local_rank_);
-            detail::vmm::handle multicast_handle;
 
-            // Only a single rank should create MC handle
-            if (local_rank_ == 0) {
-                detail::vmm::multicast_create_handle(
-                    &multicast_handle,
-                    &multicast_allocated_size_,
-                    allocated_size_,
-                    local_world_size_
-                );
-            }
-
-            // Broadcast the MC handle
-            std::vector<detail::vmm::handle> all_mc_handles(local_world_size_);
-            brokers_.at({local_rank_, local_world_size_}).exchange(
-                (void *)all_mc_handles.data(),
-                (void *)&multicast_handle,
-                sizeof(detail::vmm::handle)
-            );
-            multicast_handle = all_mc_handles[0];
-
-            // Add all devices to the MC handle. Must sync
-            detail::vmm::multicast_bind_device(multicast_handle, local_rank_);
-            brokers_.at({local_rank_, local_world_size_}).sync();
-
-            // Bind all memory to the MC handle and map to a virtual address
-            detail::vmm::handle memory_handle;
-            detail::vmm::vm_retrieve_handle(&memory_handle, raw_ptrs_[local_rank_]);
-            detail::vmm::multicast_bind_memory(multicast_handle, memory_handle, allocated_size_);
-            detail::vmm::vm_map(&multicast_ptr_, multicast_handle, multicast_allocated_size_);
-            detail::vmm::vm_set_access(multicast_ptr_, multicast_allocated_size_, local_world_size_);
-        }
+        if (multicast_)
+            initialize_multicast();
     }
 
     TKParallelTensor(const TKParallelTensor&) = delete;
@@ -182,7 +150,7 @@ struct TKParallelTensor {
 
     __host__ inline void create_shareable_cuda_tensor() {
         c10::cuda::CUDAGuard device_guard(local_rank_);
-    
+
         TORCH_CHECK(!shape_.empty(), "Shape must be non-empty");
         TORCH_CHECK(shape_.size() <= 4, "Shape must have at most 4 dimensions for TKParallelTensor");
         size_t size = c10::elementSize(dtype_);
@@ -191,24 +159,20 @@ struct TKParallelTensor {
             size *= static_cast<size_t>(dim);
         }
 
-        detail::vmm::handle handle;
-        detail::vmm::vm_alloc(&handle, &allocated_size_, size, local_rank_);
-
         void *raw_ptr;
-        detail::vmm::vm_map(&raw_ptr, handle, allocated_size_);
-        detail::vmm::vm_set_access(raw_ptr, allocated_size_, local_world_size_);
+        detail::vmm::vm_alloc_map_set_access(
+            &raw_ptr, &allocated_size_, size, local_rank_, local_world_size_);
 
         // Create local copies for capture
         int local_rank = local_rank_;
         size_t allocated_size = allocated_size_;
 
-        auto deleter = [local_rank, handle, raw_ptr, allocated_size](void* p) mutable {
+        auto deleter = [local_rank, raw_ptr, allocated_size](void* p) mutable {
             if (!p) return;
             c10::cuda::CUDAGuard device_guard(local_rank);
             auto stream = c10::cuda::getCurrentCUDAStream().stream();
             CUDACHECK(cudaStreamSynchronize(stream));
             detail::vmm::vm_unmap(raw_ptr, allocated_size);
-            detail::vmm::vm_free(handle);
         };
 
         at::TensorOptions options = at::TensorOptions()
@@ -230,19 +194,81 @@ struct TKParallelTensor {
 
         // Exchange IPC handles
         std::vector<handle_t> all_ipc_handles(local_world_size_);
-        brokers_.at({local_rank_, local_world_size_}).exchange(
-            (void *)all_ipc_handles.data(), 
-            (void *)&ipc_handle,
-            sizeof(handle_t)
-        );
+        if constexpr (IPC_FLAVOR == detail::ipc::flavor::LEGACY) {
+            brokers_.at({local_rank_, local_world_size_}).exchange_data(
+                reinterpret_cast<void *>(all_ipc_handles.data()),
+                reinterpret_cast<void *>(&ipc_handle),
+                sizeof(handle_t)
+            );
+        } else if constexpr (IPC_FLAVOR == detail::ipc::flavor::VMM) {
+            brokers_.at({local_rank_, local_world_size_}).exchange_fds(
+                reinterpret_cast<int *>(all_ipc_handles.data()),
+                ipc_handle.handle_
+            );
+        } else {
+            throw std::runtime_error("Invalid IPC flavor");
+        }
 
         // Import IPC handles
         for (int i = 0; i < local_world_size_; i++) {
             if (i == local_rank_)
                 raw_ptrs_[i] = raw_ptr;
             else
-                detail::ipc::import_handle(&raw_ptrs_[i], all_ipc_handles[i], allocated_size_);
+                detail::ipc::import_handle(&raw_ptrs_[i], all_ipc_handles[i], allocated_size_, local_world_size_);
         }
+    }
+
+    __host__ inline void initialize_multicast() {
+        using handle_t = detail::ipc::handle<detail::ipc::flavor::VMM>;
+
+        detail::vmm::multicast_check(local_rank_);
+        detail::ipc::check_support(local_rank_);
+        detail::vmm::handle multicast_handle;
+
+        if (local_rank_ == 0) {
+            // Create multicast handle; only a single rank should create MC handle
+            detail::vmm::multicast_create_handle(
+                &multicast_handle,
+                &multicast_allocated_size_,
+                allocated_size_,
+                local_world_size_
+            );
+
+            // Currently, non-rank-0 path assumes allocated_size_ == multicast_allocated_size_
+            if (allocated_size_ != multicast_allocated_size_)
+                throw std::runtime_error("Multicast allocated size does not match memory allocated size");
+
+            // Get IPC handle
+            handle_t ipc_handle;
+            detail::ipc::export_handle(&ipc_handle, multicast_handle);
+
+            // Broadcast the IPC multicast handle
+            brokers_.at({local_rank_, local_world_size_}).broadcast_fd(nullptr, ipc_handle.handle_, 0);
+        } else {
+            // Receive the IPC multicast handle from rank 0
+            handle_t ipc_handle;
+            brokers_.at({local_rank_, local_world_size_}).broadcast_fd(&ipc_handle.handle_, -1, 0);
+            multicast_allocated_size_ = allocated_size_;
+            detail::ipc::import_handle(&multicast_handle, ipc_handle, multicast_allocated_size_, local_world_size_);
+        }
+
+        // Add all devices to the MC handle. Must sync
+        detail::vmm::multicast_bind_device(multicast_handle, local_rank_);
+        brokers_.at({local_rank_, local_world_size_}).sync(); // must ensure all devices are added
+
+        // Bind all memory to the MC handle and map to a virtual address; must be done after adding all devices
+        detail::vmm::handle memory_handle;
+        detail::vmm::vm_retrieve_handle(&memory_handle, raw_ptrs_[local_rank_]);
+        detail::vmm::multicast_bind_memory(multicast_handle, memory_handle, allocated_size_);
+        brokers_.at({local_rank_, local_world_size_}).sync();
+
+        // Map virtual address to multicast handle and set access; must be done after adding all devices
+        detail::vmm::vm_map(&multicast_ptr_, multicast_handle, multicast_allocated_size_);
+        detail::vmm::vm_set_access(multicast_ptr_, multicast_allocated_size_, local_world_size_);
+
+        // Free the handles immediately
+        detail::vmm::vm_free(multicast_handle);
+        detail::vmm::vm_free(memory_handle);
     }
 
     __host__ inline void destroy() {
@@ -254,8 +280,7 @@ struct TKParallelTensor {
             detail::vmm::vm_unmap(multicast_ptr_, multicast_allocated_size_);
             detail::vmm::multicast_unbind_device(multicast_handle, multicast_allocated_size_, local_rank_);
             brokers_.at({local_rank_, local_world_size_}).sync();
-            if (local_rank_ == 0)
-                detail::vmm::vm_free(multicast_handle);
+            detail::vmm::vm_free(multicast_handle);
         }
 
         // 2. Imported handle cleanup
@@ -305,4 +330,7 @@ struct TKParallelTensor {
              pybind11::arg("local_rank"), \
              pybind11::arg("local_world_size"), \
              pybind11::arg("multicast") = false) \
-        .def("data", &kittens::py::TKParallelTensor::data);
+        .def("data", &kittens::py::TKParallelTensor::data) \
+        .def_readonly("data_", &kittens::py::TKParallelTensor::data_) \
+        .def_readonly("local_rank_", &kittens::py::TKParallelTensor::local_rank_) \
+        .def_readonly("local_world_size_", &kittens::py::TKParallelTensor::local_world_size_)
