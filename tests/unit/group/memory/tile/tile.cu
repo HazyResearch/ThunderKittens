@@ -14,11 +14,6 @@ void group::memory::tile::tests(test_data &results) {
 #else
     std::cout << "INFO: Skipping ops/group/memory/tile/global_to_shared tests!\n" << std::endl;
 #endif
-#ifdef TEST_GROUP_MEMORY_TILE_PGL_TO_REGISTER
-    group::memory::tile::pgl_to_register::tests(results);
-#else
-    std::cout << "INFO: Skipping ops/group/memory/tile/pgl_to_register tests!\n" << std::endl;
-#endif
 #ifdef TEST_GROUP_MEMORY_TILE_SHARED_TO_REGISTER
     group::memory::tile::shared_to_register::tests(results);
 #else

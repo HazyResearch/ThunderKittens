@@ -6,7 +6,6 @@
 #include "shared_to_register.cuh"
 #include "global_to_register.cuh"
 #include "global_to_shared.cuh"
-#include "pgl_to_register.cuh"
 #ifdef KITTENS_BLACKWELL
 #include "tensor_to_register.cuh"
 #endif

@@ -4,7 +4,6 @@
 
 #include "testing_commons.cuh"
 
-#include "pgl_to_register.cuh"
 #include "global_to_register.cuh"
 #include "global_to_shared.cuh"
 #include "shared_to_register.cuh"

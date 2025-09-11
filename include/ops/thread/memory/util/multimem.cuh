@@ -1,300 +1,404 @@
 /**
  * @file
- * @brief Implementations for multimem.red and multimem.ld_reduce operations
+ * @brief Wrappers for multimem operations
  */
 
 #pragma once
 
 namespace kittens {
 
-enum class ReduceOp {
-    ADD,
-    MIN,
-    MAX
+enum class reduce_op {
+    ADD = 0,
+    MIN = 1,
+    MAX = 2
 };
 
-
-template<typename T, ReduceOp Op> 
-struct multimem_reduce_op {
-    __device__ static inline void apply(T *dst, T *src);
-    __device__ static inline void apply_vec(T *dst, T *src);
+enum class memory_model {
+    WEAK = 0,
+    STRONG = 1
 };
 
-// For floating point types, only ADD is supported for .red 
-template<>
-struct multimem_reduce_op<bf16, ReduceOp::ADD> {
-    __device__ static inline void apply_vec(bf16* dst, bf16* src) {
-        unsigned int packed1 = (__bfloat16_as_ushort(src[1]) << 16) | 
-                                __bfloat16_as_ushort(src[0]);
-        unsigned int packed2 = (__bfloat16_as_ushort(src[3]) << 16) | 
-                                __bfloat16_as_ushort(src[2]);
-        unsigned int packed3 = (__bfloat16_as_ushort(src[5]) << 16) |
-                                __bfloat16_as_ushort(src[4]);
-        unsigned int packed4 = (__bfloat16_as_ushort(src[7]) << 16) |
-                                __bfloat16_as_ushort(src[6]);
-        asm volatile(
-            "multimem.red.relaxed.sys.global.add.v4.bf16x2 [%0], {%1, %2, %3, %4};"
-            :
-            : "l"(dst), "r"(packed1), "r"(packed2), "r"(packed3), "r"(packed4)
-            : "memory"
-        );
+template <typename T>
+struct multimem;
+
+template <>
+struct multimem<int> {
+    template <reduce_op Op, memory_model M = memory_model::WEAK>
+    __device__ static inline void ld_reduce(int &dst, const int *src) {
+        if constexpr (Op == reduce_op::ADD) {
+            if constexpr (M == memory_model::WEAK) {
+                asm volatile("multimem.ld_reduce.weak.global.add.s32 %0, [%1];"
+                    : "=r"(dst) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::STRONG) {
+                asm volatile("multimem.ld_reduce.acquire.sys.global.add.s32 %0, [%1];"
+                    : "=r"(dst) : "l"(src) : "memory");
+            }
+        } else if constexpr (Op == reduce_op::MIN) {
+            if constexpr (M == memory_model::WEAK) {
+                asm volatile("multimem.ld_reduce.weak.global.min.s32 %0, [%1];"
+                    : "=r"(dst) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::STRONG) {
+                asm volatile("multimem.ld_reduce.acquire.sys.global.min.s32 %0, [%1];"
+                    : "=r"(dst) : "l"(src) : "memory");
+            }
+        } else if constexpr (Op == reduce_op::MAX) {
+            if constexpr (M == memory_model::WEAK) {
+                asm volatile("multimem.ld_reduce.weak.global.max.s32 %0, [%1];"
+                    : "=r"(dst) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::STRONG) {
+                asm volatile("multimem.ld_reduce.acquire.sys.global.max.s32 %0, [%1];"
+                    : "=r"(dst) : "l"(src) : "memory");
+            }
+        }
+    }
+    template <memory_model M = memory_model::WEAK>
+    __device__ static inline void st(int *dst, const int &src) {
+        if constexpr (M == memory_model::WEAK) {
+            asm volatile("multimem.st.weak.global.s32 [%0], %1;"
+                :: "l"(dst), "r"(src) : "memory");
+        } else if constexpr (M == memory_model::STRONG) {
+            asm volatile("multimem.st.release.sys.global.s32 [%0], %1;"
+                :: "l"(dst), "r"(src) : "memory");
+        }
+    }
+    template <reduce_op Op>
+    __device__ static inline void red(int *dst, const int &src) {
+        if constexpr (Op == reduce_op::ADD) {
+            asm volatile("multimem.red.release.sys.global.add.s32 [%0], %1;"
+                : : "l"(dst), "r"(src) : "memory");
+        } else if constexpr (Op == reduce_op::MIN) {
+            asm volatile("multimem.red.release.sys.global.min.s32 [%0], %1;"
+                : : "l"(dst), "r"(src) : "memory");
+        } else if constexpr (Op == reduce_op::MAX) {
+            asm volatile("multimem.red.release.sys.global.max.s32 [%0], %1;"
+                : : "l"(dst), "r"(src) : "memory");
+        }
     }
 };
 
-template<>
-struct multimem_reduce_op<half, ReduceOp::ADD> {
-    __device__ static inline void apply_vec(half* dst, half* src) {
-        unsigned int packed1 = (__half_as_ushort(src[1]) << 16) |
-                                __half_as_ushort(src[0]);
-        unsigned int packed2 = (__half_as_ushort(src[3]) << 16) |
-                                __half_as_ushort(src[2]);
-        unsigned int packed3 = (__half_as_ushort(src[5]) << 16) |
-                                __half_as_ushort(src[4]);
-        unsigned int packed4 = (__half_as_ushort(src[7]) << 16) |
-                                __half_as_ushort(src[6]);
-        asm volatile(
-            "multimem.red.relaxed.sys.global.add.v4.f16x2 [%0], {%1, %2, %3, %4};"
-            :
-            : "l"(dst), "r"(packed1), "r"(packed2), "r"(packed3), "r"(packed4)
-            : "memory"
-        );
+template <>
+struct multimem<uint> {
+    template <reduce_op Op, memory_model M = memory_model::WEAK>
+    __device__ static inline void ld_reduce(uint &dst, const uint *src) {
+        if constexpr (Op == reduce_op::ADD) {
+            if constexpr (M == memory_model::WEAK) {
+                asm volatile("multimem.ld_reduce.weak.global.add.u32 %0, [%1];"
+                    : "=r"(dst) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::STRONG) {
+                asm volatile("multimem.ld_reduce.acquire.sys.global.add.u32 %0, [%1];"
+                    : "=r"(dst) : "l"(src) : "memory");
+            }
+        } else if constexpr (Op == reduce_op::MIN) {
+            if constexpr (M == memory_model::WEAK) {
+                asm volatile("multimem.ld_reduce.weak.global.min.u32 %0, [%1];"
+                    : "=r"(dst) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::STRONG) {
+                asm volatile("multimem.ld_reduce.acquire.sys.global.min.u32 %0, [%1];"
+                    : "=r"(dst) : "l"(src) : "memory");
+            }
+        } else if constexpr (Op == reduce_op::MAX) {
+            if constexpr (M == memory_model::WEAK) {
+                asm volatile("multimem.ld_reduce.weak.global.max.u32 %0, [%1];"
+                    : "=r"(dst) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::STRONG) {
+                asm volatile("multimem.ld_reduce.acquire.sys.global.max.u32 %0, [%1];"
+                    : "=r"(dst) : "l"(src) : "memory");
+            }
+        }
+    }
+    template <memory_model M = memory_model::WEAK>
+    __device__ static inline void st(uint *dst, const uint &src) {
+        if constexpr (M == memory_model::WEAK) {
+            asm volatile("multimem.st.weak.global.u32 [%0], %1;"
+                :: "l"(dst), "r"(src) : "memory");
+        } else if constexpr (M == memory_model::STRONG) {
+            asm volatile("multimem.st.release.sys.global.u32 [%0], %1;"
+                :: "l"(dst), "r"(src) : "memory");
+        }
+    }
+    template <reduce_op Op>
+    __device__ static inline void red(uint *dst, const uint &src) {
+        if constexpr (Op == reduce_op::ADD) {
+            asm volatile("multimem.red.release.sys.global.add.u32 [%0], %1;"
+                : : "l"(dst), "r"(src) : "memory");
+        } else if constexpr (Op == reduce_op::MIN) {
+            asm volatile("multimem.red.release.sys.global.min.u32 [%0], %1;"
+                : : "l"(dst), "r"(src) : "memory");
+        } else if constexpr (Op == reduce_op::MAX) {
+            asm volatile("multimem.red.release.sys.global.max.u32 [%0], %1;"
+                : : "l"(dst), "r"(src) : "memory");
+        }
     }
 };
 
-template<>
-struct multimem_reduce_op<float, ReduceOp::ADD> {
-    __device__ static inline void apply(float *dst, float *src) {
-        asm volatile(
-            "multimem.red.relaxed.sys.global.add.f32 [%0], %1;"
-            :
-            : "l"(dst), "f"(src[0])
-            : "memory"
-        );
+template <>
+struct multimem<float> {
+    template <reduce_op Op, memory_model M = memory_model::WEAK>
+    __device__ static inline void ld_reduce(float &dst, const float *src) {
+        static_assert(Op == reduce_op::ADD, "MIN/MAX are not supported for f32 ld_reduce operations");
+        if constexpr (Op == reduce_op::ADD) {
+            if constexpr (M == memory_model::WEAK) {
+                asm volatile("multimem.ld_reduce.weak.global.add.f32 %0, [%1];"
+                    : "=f"(dst) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::STRONG) {
+                asm volatile("multimem.ld_reduce.acquire.sys.global.add.f32 %0, [%1];"
+                    : "=f"(dst) : "l"(src) : "memory");
+            }
+        }
     }
-    __device__ static inline void apply_vec(float* dst, float* src) {
-        asm volatile(
-            "multimem.red.relaxed.sys.global.add.v4.f32 [%0], {%1, %2, %3, %4};"
-            :
-            : "l"(dst), "f"(src[0]), "f"(src[1]), "f"(src[2]), "f"(src[3])
-            : "memory"
-        );
+    template <memory_model M = memory_model::WEAK>
+    __device__ static inline void st(float *dst, const float &src) {
+        if constexpr (M == memory_model::WEAK) {
+            asm volatile("multimem.st.weak.global.f32 [%0], %1;"
+                :: "l"(dst), "f"(src) : "memory");
+        } else if constexpr (M == memory_model::STRONG) {
+            asm volatile("multimem.st.release.sys.global.f32 [%0], %1;"
+                :: "l"(dst), "f"(src) : "memory");
+        }
     }
-};
-
-template<> 
-struct multimem_reduce_op<bf16_2, ReduceOp::ADD> {
-    __device__ static inline void apply(bf16_2 *dst, bf16_2 *src) {
-        unsigned int packed_value = *reinterpret_cast<const unsigned int*>(src);
-        asm volatile(
-            "multimem.red.relaxed.sys.global.add.bf16x2 [%0], %1;"
-            :
-            : "l"(dst), "r"(packed_value)
-            : "memory"
-        );
-    }
-};
-
-template<> 
-struct multimem_reduce_op<half_2, ReduceOp::ADD> {
-    __device__ static inline void apply(half_2 *dst, half_2 *src) {
-        unsigned int packed_value = *reinterpret_cast<const unsigned int*>(src);
-        asm volatile(
-            "multimem.red.relaxed.sys.global.add.f16x2 [%0], %1;"
-            :
-            : "l"(dst), "r"(packed_value)
-            : "memory"
-        );
-    }
-};
-
-template<> 
-struct multimem_reduce_op<float2, ReduceOp::ADD> {
-    __device__ static inline void apply(float2 *dst, float2 *src) {
-        asm volatile(
-            "multimem.red.relaxed.sys.global.add.v2.f32 [%0], {%1, %2};"
-            :
-            : "l"(dst), "f"(src->x), "f"(src->y)
-            : "memory"
-        );
+    template <reduce_op Op>
+    __device__ static inline void red(float *dst, const float &src) {
+        static_assert(Op == reduce_op::ADD, "MIN/MAX are not supported for f32 red operations");
+        if constexpr (Op == reduce_op::ADD) {
+            asm volatile("multimem.red.release.sys.global.add.f32 [%0], %1;"
+                : : "l"(dst), "f"(src) : "memory");
+        }
     }
 };
 
 
-template<typename T, ReduceOp Op> 
-struct multimem_ld_reduce_op {
-    __device__ static inline void apply(T *dst, T *src);
-    __device__ static inline void apply_vec(T *dst, T *src);
-};
-
-template<>
-struct multimem_ld_reduce_op<bf16, ReduceOp::ADD> {
-    __device__ static inline void apply_vec(float4 *dst, bf16 *src) {
-        asm volatile(
-            "multimem.ld_reduce.relaxed.sys.global.add.v4.bf16x2 {%0, %1, %2, %3}, [%4];"
-            : "=f"(dst->x), "=f"(dst->y), "=f"(dst->z), "=f"(dst->w)
-            : "l"(src)
-            : "memory"
-        );
+template <>
+struct multimem<float2> {
+    template <reduce_op Op, memory_model M = memory_model::WEAK>
+    __device__ static inline void ld_reduce(float2 &dst, const float2 *src) {
+        static_assert(Op == reduce_op::ADD, "MIN/MAX are not supported for f32 ld_reduce operations");
+        if constexpr (Op == reduce_op::ADD) {
+            if constexpr (M == memory_model::WEAK) {
+                asm volatile("multimem.ld_reduce.weak.global.add.v2.f32 {%0, %1}, [%2];"
+                    : "=f"(dst.x), "=f"(dst.y) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::STRONG) {
+                asm volatile("multimem.ld_reduce.acquire.sys.global.add.v2.f32 {%0, %1}, [%2];"
+                    : "=f"(dst.x), "=f"(dst.y) : "l"(src) : "memory");
+            }
+        }
+    }
+    template <memory_model M = memory_model::WEAK>
+    __device__ static inline void st(float2 *dst, const float2 &src) {
+        if constexpr (M == memory_model::WEAK) {
+            asm volatile("multimem.st.weak.global.v2.f32 [%0], {%1, %2};"
+                :: "l"(dst), "f"(src.x), "f"(src.y) : "memory");
+        } else if constexpr (M == memory_model::STRONG) {
+            asm volatile("multimem.st.release.sys.global.v2.f32 [%0], {%1, %2};"
+                :: "l"(dst), "f"(src.x), "f"(src.y) : "memory");
+        }
+    }
+    template <reduce_op Op>
+    __device__ static inline void red(float2 *dst, const float2 &src) {
+        static_assert(Op == reduce_op::ADD, "MIN/MAX are not supported for f32 red operations");
+        if constexpr (Op == reduce_op::ADD) {
+            asm volatile("multimem.red.release.sys.global.add.v2.f32 [%0], {%1, %2};"
+                : : "l"(dst), "f"(src.x), "f"(src.y) : "memory");
+        }
     }
 };
 
-template<>
-struct multimem_ld_reduce_op<bf16, ReduceOp::MIN> {
-    __device__ static inline void apply_vec(float4 *dst, bf16 *src) {
-        asm volatile(
-            "multimem.ld_reduce.relaxed.sys.global.min.v4.bf16x2 {%0, %1, %2, %3}, [%4];"
-            : "=f"(dst->x), "=f"(dst->y), "=f"(dst->z), "=f"(dst->w)
-            : "l"(src)
-            : "memory"
-        );
+template <>
+struct multimem<bf16> {
+    template <reduce_op Op, memory_model M = memory_model::WEAK>
+    __device__ static inline void ld_reduce(bf16 &dst, const bf16 *src) {
+        if constexpr (Op == reduce_op::ADD) {
+            if constexpr (M == memory_model::WEAK) {
+                asm volatile("multimem.ld_reduce.weak.global.add.acc::f32.bf16 %0, [%1];"
+                    : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::STRONG) {
+                asm volatile("multimem.ld_reduce.acquire.sys.global.add.acc::f32.bf16 %0, [%1];"
+                    : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
+            }
+        } else if constexpr (Op == reduce_op::MIN) {
+            if constexpr (M == memory_model::WEAK) {
+                asm volatile("multimem.ld_reduce.weak.global.min.bf16 %0, [%1];"
+                    : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::STRONG) {
+                asm volatile("multimem.ld_reduce.acquire.sys.global.min.bf16 %0, [%1];"
+                    : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
+            }
+        } else if constexpr (Op == reduce_op::MAX) {
+            if constexpr (M == memory_model::WEAK) {
+                asm volatile("multimem.ld_reduce.weak.global.max.bf16 %0, [%1];"
+                    : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::STRONG) {
+                asm volatile("multimem.ld_reduce.acquire.sys.global.max.bf16 %0, [%1];"
+                    : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
+            }
+        }
+    }
+    template <memory_model M = memory_model::WEAK>
+    __device__ static inline void st(bf16 *dst, const bf16 &src) {
+        if constexpr (M == memory_model::WEAK) {
+            asm volatile("multimem.st.weak.global.bf16 [%0], %1;"
+                :: "l"(dst), "h"(*reinterpret_cast<const uint16_t *>(&src)) : "memory");
+        } else if constexpr (M == memory_model::STRONG) {
+            asm volatile("multimem.st.release.sys.global.bf16 [%0], %1;"
+                :: "l"(dst), "h"(*reinterpret_cast<const uint16_t *>(&src)) : "memory");
+        }
+    }
+    template <reduce_op Op>
+    __device__ static inline void red(bf16 *dst, const bf16 &src) {
+        static_assert(Op == reduce_op::ADD, "MIN/MAX are not supported for bf16 red operations");
+        if constexpr (Op == reduce_op::ADD) {
+            asm volatile("multimem.red.release.sys.global.add.bf16 [%0], %1;"
+                : : "l"(dst), "h"(*reinterpret_cast<const uint16_t *>(&src)) : "memory");
+        }
     }
 };
 
-template<>
-struct multimem_ld_reduce_op<bf16, ReduceOp::MAX> {
-    __device__ static inline void apply_vec(float4 *dst, bf16 *src) {
-        asm volatile(
-            "multimem.ld_reduce.relaxed.sys.global.max.v4.bf16x2 {%0, %1, %2, %3}, [%4];"
-            : "=f"(dst->x), "=f"(dst->y), "=f"(dst->z), "=f"(dst->w)
-            : "l"(src)
-            : "memory"
-        );
+template <>
+struct multimem<bf16_2> {
+    template <reduce_op Op, memory_model M = memory_model::WEAK>
+    __device__ static inline void ld_reduce(bf16_2 &dst, const bf16_2 *src) {
+        if constexpr (Op == reduce_op::ADD) {
+            if constexpr (M == memory_model::WEAK) {
+                asm volatile("multimem.ld_reduce.weak.global.add.acc::f32.bf16x2 %0, [%1];"
+                    : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::STRONG) {
+                asm volatile("multimem.ld_reduce.acquire.sys.global.add.acc::f32.bf16x2 %0, [%1];"
+                    : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
+            }
+        } else if constexpr (Op == reduce_op::MIN) {
+            if constexpr (M == memory_model::WEAK) {
+                asm volatile("multimem.ld_reduce.weak.global.min.bf16x2 %0, [%1];"
+                    : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::STRONG) {
+                asm volatile("multimem.ld_reduce.acquire.sys.global.min.bf16x2 %0, [%1];"
+                    : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
+            }
+        } else if constexpr (Op == reduce_op::MAX) {
+            if constexpr (M == memory_model::WEAK) {
+                asm volatile("multimem.ld_reduce.weak.global.max.bf16x2 %0, [%1];"
+                    : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::STRONG) {
+                asm volatile("multimem.ld_reduce.acquire.sys.global.max.bf16x2 %0, [%1];"
+                    : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
+            }
+        }
+    }
+    template <memory_model M = memory_model::WEAK>
+    __device__ static inline void st(bf16_2 *dst, const bf16_2 &src) {
+        if constexpr (M == memory_model::WEAK) {
+            asm volatile("multimem.st.weak.global.bf16x2 [%0], %1;"
+                :: "l"(dst), "r"(*reinterpret_cast<const uint32_t *>(&src)) : "memory");
+        } else if constexpr (M == memory_model::STRONG) {
+            asm volatile("multimem.st.release.sys.global.bf16x2 [%0], %1;"
+                :: "l"(dst), "r"(*reinterpret_cast<const uint32_t *>(&src)) : "memory");
+        }
+    }
+    template <reduce_op Op>
+    __device__ static inline void red(bf16_2 *dst, const bf16_2 &src) {
+        static_assert(Op == reduce_op::ADD, "MIN/MAX are not supported for bf16_2 red operations");
+        if constexpr (Op == reduce_op::ADD) {
+            asm volatile("multimem.red.release.sys.global.add.bf16x2 [%0], %1;"
+                : : "l"(dst), "r"(*reinterpret_cast<const uint32_t *>(&src)) : "memory");
+        }
     }
 };
 
-template<>
-struct multimem_ld_reduce_op<half, ReduceOp::ADD> {
-    __device__ static inline void apply_vec(float4 *dst, half *src) {
-        int4 *_dst = reinterpret_cast<int4*>(dst); // keep float4 as input for consistency
-        asm volatile(
-            "multimem.ld_reduce.relaxed.sys.global.add.v4.f16x2 {%0, %1, %2, %3}, [%4];"
-            : "=r"(_dst->x), "=r"(_dst->y), "=r"(_dst->z), "=r"(_dst->w)
-            : "l"(src)
-            : "memory"
-        );
+template <>
+struct multimem<half> {
+    template <reduce_op Op, memory_model M = memory_model::WEAK>
+    __device__ static inline void ld_reduce(half &dst, const half *src) {
+        if constexpr (Op == reduce_op::ADD) {
+            if constexpr (M == memory_model::WEAK) {
+                asm volatile("multimem.ld_reduce.weak.global.add.acc::f32.f16 %0, [%1];"
+                    : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::STRONG) {
+                asm volatile("multimem.ld_reduce.acquire.sys.global.add.acc::f32.f16 %0, [%1];"
+                    : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
+            }
+        } else if constexpr (Op == reduce_op::MIN) {
+            if constexpr (M == memory_model::WEAK) {
+                asm volatile("multimem.ld_reduce.weak.global.min.f16 %0, [%1];"
+                    : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::STRONG) {
+                asm volatile("multimem.ld_reduce.acquire.sys.global.min.f16 %0, [%1];"
+                    : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
+            }
+        } else if constexpr (Op == reduce_op::MAX) {
+            if constexpr (M == memory_model::WEAK) {
+                asm volatile("multimem.ld_reduce.weak.global.max.f16 %0, [%1];"
+                    : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::STRONG) {
+                asm volatile("multimem.ld_reduce.acquire.sys.global.max.f16 %0, [%1];"
+                    : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
+            }
+        }
+    }
+    template <memory_model M = memory_model::WEAK>
+    __device__ static inline void st(half *dst, const half &src) {
+        if constexpr (M == memory_model::WEAK) {
+            asm volatile("multimem.st.weak.global.f16 [%0], %1;"
+                :: "l"(dst), "h"(*reinterpret_cast<const uint16_t *>(&src)) : "memory");
+        } else if constexpr (M == memory_model::STRONG) {
+            asm volatile("multimem.st.release.sys.global.f16 [%0], %1;"
+                :: "l"(dst), "h"(*reinterpret_cast<const uint16_t *>(&src)) : "memory");
+        }
+    }
+    template <reduce_op Op>
+    __device__ static inline void red(half *dst, const half &src) {
+        static_assert(Op == reduce_op::ADD, "MIN/MAX are not supported for f16 red operations");
+        if constexpr (Op == reduce_op::ADD) {
+            asm volatile("multimem.red.release.sys.global.add.f16 [%0], %1;"
+                : : "l"(dst), "h"(*reinterpret_cast<const uint16_t *>(&src)) : "memory");
+        }
     }
 };
 
-template<>
-struct multimem_ld_reduce_op<half, ReduceOp::MIN> {
-    __device__ static inline void apply_vec(float4 *dst, half *src) {
-        int4 *_dst = reinterpret_cast<int4*>(dst); // keep float4 as input for consistency
-        asm volatile(
-            "multimem.ld_reduce.relaxed.sys.global.min.v4.f16x2 {%0, %1, %2, %3}, [%4];"
-            : "=r"(_dst->x), "=r"(_dst->y), "=r"(_dst->z), "=r"(_dst->w)
-            : "l"(src)
-            : "memory"
-        );
+template <>
+struct multimem<half_2> {
+    template <reduce_op Op, memory_model M = memory_model::WEAK>
+    __device__ static inline void ld_reduce(half_2 &dst, const half_2 *src) {
+        if constexpr (Op == reduce_op::ADD) {
+            if constexpr (M == memory_model::WEAK) {
+                asm volatile("multimem.ld_reduce.weak.global.add.acc::f32.f16x2 %0, [%1];"
+                    : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::STRONG) {
+                asm volatile("multimem.ld_reduce.acquire.sys.global.add.acc::f32.f16x2 %0, [%1];"
+                    : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
+            }
+        } else if constexpr (Op == reduce_op::MIN) {
+            if constexpr (M == memory_model::WEAK) {
+                asm volatile("multimem.ld_reduce.weak.global.min.f16x2 %0, [%1];"
+                    : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::STRONG) {
+                asm volatile("multimem.ld_reduce.acquire.sys.global.min.f16x2 %0, [%1];"
+                    : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
+            }
+        } else if constexpr (Op == reduce_op::MAX) {
+            if constexpr (M == memory_model::WEAK) {
+                asm volatile("multimem.ld_reduce.weak.global.max.f16x2 %0, [%1];"
+                    : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::STRONG) {
+                asm volatile("multimem.ld_reduce.acquire.sys.global.max.f16x2 %0, [%1];"
+                    : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
+            }
+        }
     }
-};
-
-template<>
-struct multimem_ld_reduce_op<half, ReduceOp::MAX> {
-    __device__ static inline void apply_vec(float4 *dst, half *src) {
-        int4 *_dst = reinterpret_cast<int4*>(dst); // keep float4 as input for consistency
-        asm volatile(
-            "multimem.ld_reduce.relaxed.sys.global.max.v4.f16x2 {%0, %1, %2, %3}, [%4];"
-            : "=r"(_dst->x), "=r"(_dst->y), "=r"(_dst->z), "=r"(_dst->w)
-            : "l"(src)
-            : "memory"
-        );
+    template <memory_model M = memory_model::WEAK>
+    __device__ static inline void st(half_2 *dst, const half_2 &src) {
+        if constexpr (M == memory_model::WEAK) {
+            asm volatile("multimem.st.weak.global.f16x2 [%0], %1;"
+                :: "l"(dst), "r"(*reinterpret_cast<const uint32_t *>(&src)) : "memory");
+        } else if constexpr (M == memory_model::STRONG) {
+            asm volatile("multimem.st.release.sys.global.f16x2 [%0], %1;"
+                :: "l"(dst), "r"(*reinterpret_cast<const uint32_t *>(&src)) : "memory");
+        }
     }
-};
-
-template<>
-struct multimem_ld_reduce_op<float, ReduceOp::ADD> {
-    __device__ static inline void apply_vec(float4 *dst, float *src) {
-        asm volatile(
-            "multimem.ld_reduce.relaxed.sys.global.add.v4.f32 {%0, %1, %2, %3}, [%4];"
-            : "=f"(dst->x), "=f"(dst->y), "=f"(dst->z), "=f"(dst->w)
-            : "l"(src)
-            : "memory"
-        );
-    }
-};
-
-// MIN/MAX ops are NOT supported on float32
-
-template<>
-struct multimem_ld_reduce_op<bf16_2, ReduceOp::ADD> {
-    __device__ static inline void apply(bf16_2* dst, bf16_2 *src) {
-        asm volatile(
-            "multimem.ld_reduce.relaxed.sys.global.add.bf16x2 %0, [%1];"
-            : "=r"(*reinterpret_cast<unsigned int*>(dst))
-            : "l"(src)
-            : "memory"
-        );
-    }
-};
-template<>
-struct multimem_ld_reduce_op<bf16_2, ReduceOp::MIN> {
-    __device__ static inline void apply(bf16_2* dst, bf16_2 *src) {
-        asm volatile(
-            "multimem.ld_reduce.relaxed.sys.global.min.bf16x2 %0, [%1];"
-            : "=r"(*reinterpret_cast<unsigned int*>(dst))
-            : "l"(src)
-            : "memory"
-        );
-    }
-};
-
-template<>
-struct multimem_ld_reduce_op<bf16_2, ReduceOp::MAX> {
-    __device__ static inline void apply(bf16_2* dst, bf16_2 *src) {
-        asm volatile(
-            "multimem.ld_reduce.relaxed.sys.global.max.bf16x2 %0, [%1];"
-            : "=r"(*reinterpret_cast<unsigned int*>(dst))
-            : "l"(src)
-            : "memory"
-        );
-    }
-};
-
-template<>
-struct multimem_ld_reduce_op<half_2, ReduceOp::ADD> {
-    __device__ static inline void apply(half_2* dst, half_2 *src) {
-        asm volatile(
-            "multimem.ld_reduce.relaxed.sys.global.add.f16x2 %0, [%1];"
-            : "=r"(*reinterpret_cast<unsigned int*>(dst))
-            : "l"(src)
-            : "memory"
-        );
-    }
-};
-
-template<>
-struct multimem_ld_reduce_op<half_2, ReduceOp::MIN> {
-    __device__ static inline void apply(half_2* dst, half_2 *src) {
-        asm volatile(
-            "multimem.ld_reduce.relaxed.sys.global.min.f16x2 %0, [%1];"
-            : "=r"(*reinterpret_cast<unsigned int*>(dst))
-            : "l"(src)
-            : "memory"
-        );
-    }
-};
-
-template<>
-struct multimem_ld_reduce_op<half_2, ReduceOp::MAX> {
-    __device__ static inline void apply(half_2* dst, half_2 *src) {
-        asm volatile(
-            "multimem.ld_reduce.relaxed.sys.global.max.f16x2 %0, [%1];"
-            : "=r"(*reinterpret_cast<unsigned int*>(dst))
-            : "l"(src)
-            : "memory"
-        );
-    }
-};
-
-template<>
-struct multimem_ld_reduce_op<float2, ReduceOp::ADD> {
-    __device__ static inline void apply(float2* dst, float2 *src) {
-        asm volatile(
-            "multimem.ld_reduce.relaxed.sys.global.add.v2.f32 {%0, %1}, [%2];"
-            : "=f"(dst->x), "=f"(dst->y)
-            : "l"(src)
-            : "memory"
-        );
+    template <reduce_op Op>
+    __device__ static inline void red(half_2 *dst, const half_2 &src) {
+        static_assert(Op == reduce_op::ADD, "MIN/MAX are not supported for f16_2 red operations");
+        if constexpr (Op == reduce_op::ADD) {
+            asm volatile("multimem.red.release.sys.global.add.f16x2 [%0], %1;"
+                : : "l"(dst), "r"(*reinterpret_cast<const uint32_t *>(&src)) : "memory");
+        }
     }
 };
 
