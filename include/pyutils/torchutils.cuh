@@ -9,14 +9,28 @@
 namespace kittens {
 namespace py {
 
+template <typename Config>
+concept has_min_blocks_per_sm = requires { std::integral_constant<int, int(Config::MIN_BLOCKS_PER_SM)>{}; };
+
+template <typename Config>
+consteval int min_blocks_per_sm() {
+    if constexpr(has_min_blocks_per_sm<Config>)
+        return Config::MIN_BLOCKS_PER_SM;
+    else
+        return 1;
+}
+
 template <typename Config, typename Globals, auto Kernel>
-__global__ __launch_bounds__(Config::NUM_THREADS, 1)
+__global__
+__launch_bounds__(Config::NUM_THREADS, min_blocks_per_sm<Config>())
 void global_kernel_unclustered(const __grid_constant__ Globals G) {
     Kernel(G);
 }
 
 template <typename Config, typename Globals, auto Kernel>
-__global__ __launch_bounds__(Config::NUM_THREADS, 1) __cluster_dims__(Config::CLUSTER_SIZE)
+__global__
+__launch_bounds__(Config::NUM_THREADS, min_blocks_per_sm<Config>())
+__cluster_dims__(Config::CLUSTER_SIZE)
 void global_kernel_clustered(const __grid_constant__ Globals G) {
     Kernel(G);
 }
@@ -152,10 +166,10 @@ static inline void launch_kernel(const Globals &G) {
     cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
     if constexpr (Config::CLUSTER_SIZE <= 1) {
-        cudaFuncSetAttribute(global_kernel_unclustered<Config, Globals, Kernel>, cudaFuncAttributeMaxDynamicSharedMemorySize, dynamic_shared_memory);
+        CUDACHECK(cudaFuncSetAttribute(global_kernel_unclustered<Config, Globals, Kernel>, cudaFuncAttributeMaxDynamicSharedMemorySize, dynamic_shared_memory));
         global_kernel_unclustered<Config, Globals, Kernel><<<grid, block, dynamic_shared_memory, stream>>>(G);
     } else {
-        cudaFuncSetAttribute(global_kernel_clustered<Config, Globals, Kernel>, cudaFuncAttributeMaxDynamicSharedMemorySize, dynamic_shared_memory);
+        CUDACHECK(cudaFuncSetAttribute(global_kernel_clustered<Config, Globals, Kernel>, cudaFuncAttributeMaxDynamicSharedMemorySize, dynamic_shared_memory));
         global_kernel_clustered<Config, Globals, Kernel><<<grid, block, dynamic_shared_memory, stream>>>(G);
     }
 }
