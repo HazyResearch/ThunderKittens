@@ -78,13 +78,13 @@ void entrypoint(
         .dev_idx = tensor.local_rank_
     };
 
-    kittens::py::launch_kernel<all_reduce::config, all_reduce::globals, all_reduce::kernel>(all_reduce_G);
-
     all_reduce_barrier::globals barrier_G {
         .barrier = kittens::py::parallel_tensor_to_pgl<device<all_reduce_barrier::globals::NUM_DEVICES>::barrier_t>(barrier),
         .dev_idx = barrier.local_rank_
     };
-
+    
+    kittens::py::launch_kernel<all_reduce_barrier::config, all_reduce_barrier::globals, all_reduce_barrier::kernel>(barrier_G);
+    kittens::py::launch_kernel<all_reduce::config, all_reduce::globals, all_reduce::kernel>(all_reduce_G);
     kittens::py::launch_kernel<all_reduce_barrier::config, all_reduce_barrier::globals, all_reduce_barrier::kernel>(barrier_G);
 }
 
