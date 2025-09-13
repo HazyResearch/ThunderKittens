@@ -107,6 +107,9 @@ def run(
     )
     barrier_tk.data_.zero_()
 
+    # Must wait for all barriers to be initialized before running the kernel
+    torch.distributed.barrier()
+
     input_tensor_nccl = input_tensor_tk.data_.clone()
     output_tensor_nccl = output_tensor_tk.data_.clone()
 

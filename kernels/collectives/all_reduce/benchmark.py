@@ -42,6 +42,9 @@ def run(
     barrier_tk.data_.zero_()
     tensor_nccl = tensor_tk.data_.clone()
 
+    # Must wait for all barriers to be initialized before running the kernel
+    torch.distributed.barrier()
+
     nccl_func = lambda: torch.distributed.all_reduce(tensor_nccl, op=torch.distributed.ReduceOp.SUM)
     tk_func = lambda: tk_all_reduce(tensor_tk, barrier_tk)
 
