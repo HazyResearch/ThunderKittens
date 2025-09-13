@@ -16,15 +16,15 @@ struct globals {
     static constexpr int BLOCK_SIZE = 128;
 
     using shared_tile = st_bf<BLOCK_SIZE, BLOCK_SIZE>;
-    using output_layout = pgl<gl<bf16, 1, -1, -1, -1>, NUM_DEVICES, true, shared_tile>;
-    using input_layout = pgl<gl<bf16, 1, -1, -1, -1, shared_tile>, NUM_DEVICES, false>;
+    using output_layout = pgl<gl<bf16, 1, 1, -1, -1>, NUM_DEVICES, true, shared_tile>;
+    using input_layout = pgl<gl<bf16, 1, 1, -1, -1, shared_tile>, NUM_DEVICES, false>;
 
     output_layout output;
     input_layout input;
     const int dev_idx;
 
     __host__ inline dim3 grid() const {
-        return dim3((input.cols() / BLOCK_SIZE), (input.rows() / BLOCK_SIZE), input.depth());
+        return dim3((input.cols() / BLOCK_SIZE), (input.rows() / BLOCK_SIZE));
     }
 
     __host__ inline int dynamic_shared_memory() const {
