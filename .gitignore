@@ -12,3 +12,4 @@ local/
 __pycache__/
 */printouts/*
 .vscode/
+.clangd
