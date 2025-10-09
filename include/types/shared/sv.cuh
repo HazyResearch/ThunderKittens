@@ -110,8 +110,10 @@ __device__ inline void print(const SV& sv) {
     for(int i = 0; i < SV::length; i++) {
         if constexpr (std::is_same_v<typename SV::dtype, fp8e4m3>) {
             printf("%f ", static_cast<float>(sv[i]));
+#ifdef KITTENS_BLACKWELL
         } else if constexpr (std::is_same_v<typename SV::dtype, fp8e8m0>) {
             printf("%f ", static_cast<float>(sv[i]));
+#endif
         } else if constexpr (std::is_same_v<typename SV::dtype, bf16>) {
             printf("%f ", __bfloat162float(sv[i]));
         } else if constexpr (std::is_same_v<typename SV::dtype, half>) {

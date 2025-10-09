@@ -148,6 +148,8 @@ template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> usi
 #ifdef KITTENS_HOPPER
 template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fp8e4m3 = rt<fp8e4m3,  _r, _c, layout>;
 template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fp8e5m2 = rt<fp8e5m2,  _r, _c, layout>;
+#ifdef KITTENS_BLACKWELL
 template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fp8e8m0 = rt<fp8e8m0,  _r, _c, layout>;
+#endif
 #endif
 } // namespace kittens

@@ -288,7 +288,9 @@ template<int _height, int _width> using st_fl = st<float, _height, _width>;
 #ifdef KITTENS_HOPPER
 template<int _height, int _width> using st_fp8e4m3 = st<fp8e4m3, _height, _width>;
 template<int _height, int _width> using st_fp8e5m2 = st<fp8e5m2, _height, _width>;
+#ifdef KITTENS_BLACKWELL
 template<int _height, int _width> using st_fp8e8m0 = st<fp8e8m0, _height, _width>;
+#endif
 #endif
 
 /* ----------  PRINTOUTS  ---------- */
@@ -325,8 +327,10 @@ __device__ inline void print(const ST& tile) {
         for (int c = 0; c < ST::cols; c++) {
             if constexpr (std::is_same_v<typename ST::dtype, fp8e4m3>) {
                 printf("%8.3f ", static_cast<float>(tile[{r,c}]));
+#ifdef KITTENS_BLACKWELL
             } else if constexpr (std::is_same_v<typename ST::dtype, fp8e8m0>) {
                 printf("%8.3f ", static_cast<float>(tile[{r,c}]));
+#endif
             } else if constexpr (std::is_same_v<typename ST::dtype, float>) {
                 printf("%8.3f ", tile[{r,c}]);
             } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
