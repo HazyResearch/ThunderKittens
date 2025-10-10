@@ -22,7 +22,9 @@ template<typename lcft> concept kernel_template = requires {
 
 template<typename lcft> // load-compute-store-finish template
 __global__ __launch_bounds__(detail::NUM_THREADS_v<lcft>, detail::NUM_BLOCKS_v<lcft>)
+#ifdef KITTENS_BLACKWELL
 __cluster_dims__(detail::CLUSTER_BLOCKS_v<lcft>)
+#endif
 void kernel(const __grid_constant__ typename lcft::layout::globals globals) {
     static_assert(kernel_template<lcft>, "lcf kernel template parameter does not satisfy concept requirements");
     using L              = typename lcft::layout;
