@@ -98,7 +98,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
     if(warpgroupid == NUM_CONSUMERS) {
         warpgroup::decrease_registers<56>();
         int ctarank = cluster_ctarank(); 
-        if(warpgroup::warpid() == 3) {
+        if(warp::laneid() == 0 && warpgroup::warpid() == 3) {
             int input_ring = 0; // tracking which input block is being loaded
             for(int task_iter = 0; true; task_iter++) {
                 int2 rowcol = get_task_idx(g, task_iter, false);
@@ -122,7 +122,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
                 }
             }
         }
-        else if(ctarank == 0 && (warpgroup::warpid() == 0 || warpgroup::warpid() == 1)) { // launch the MMA's
+        else if(ctarank == 0 && warp::laneid() == 0 && (warpgroup::warpid() == 0 || warpgroup::warpid() == 1)) { // launch the MMA's
             d_tt_t d_tt = tm_alloc.allocate<d_tt_t>(warpgroup::warpid()*Nb);
             int input_ring = 0; // tracking which input block is being loaded
             for(int task_iter = 0; true; task_iter++) {
@@ -162,14 +162,14 @@ void matmul(const __grid_constant__ matmul_globals g) {
             if(warpgroupid == 1) group<8>::sync(14);
             warpgroup::store(d_smem, d_reg[0]);
             warpgroup::sync(warpgroupid);
-            if(warpgroup::warpid() == 0) tma::store_async(g.d, d_smem, {rowcol.x, 4*rowcol.y+0});
+            warpgroup::tma::store_async(g.d, d_smem, {rowcol.x, 4*rowcol.y+0});
             #pragma unroll
             for(int i = 1; i < Nb/d_tile::cols; i++) {
                 tma::store_async_read_wait();
                 warpgroup::sync(warpgroupid);
                 warpgroup::store(d_smem, d_reg[i]);
                 warpgroup::sync(warpgroupid);
-                if(warpgroup::warpid() == 0) tma::store_async(g.d, d_smem, {rowcol.x, 4*rowcol.y+i});
+                warpgroup::tma::store_async(g.d, d_smem, {rowcol.x, 4*rowcol.y+i});
             }
             tma::store_async_read_wait();
             if(warpgroupid == 0) group<8>::sync(14);
