@@ -59,7 +59,7 @@ struct pgl {
     __device__ inline T* mc_ptr_at(const coord<ducks::default_type> &idx) const {
         static_assert(MULTICAST, "Multicast is not enabled for this PGL.");
         const GL &gl = gls[0]; // all gls have the same shape
-        return &mc_ptr[((idx.b * gl.depth() + idx.d) * gl.rows() + idx.r) * gl.cols() + idx.c];
+        return &mc_ptr[((idx.b * static_cast<uint64_t>(gl.depth()) + idx.d) * gl.rows() + idx.r) * gl.cols() + idx.c];
     }
 
     __host__ inline pgl(T **_data,  // an array of NUM_DEVICES pointers to the data on each device
