@@ -1,6 +1,8 @@
 /**
  * @file
  * @brief An aggregate header of all device (multi-GPU) operations defined by ThunderKittens
+ *
+ * WARNING: This API is in an experimental stage.
  */
 
 #pragma once
