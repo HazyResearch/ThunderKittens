@@ -4,12 +4,29 @@ GPU_TARGET=H100
 # Compiler
 NVCC?=nvcc
 
-NVCCFLAGS=-DNDEBUG -Xcompiler=-fPIE -Xcompiler -fopenmp --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -arch=sm_90a -lcuda -lcudadevrt -lcudart_static -lcublas -lgomp -I${THUNDERKITTENS_ROOT}/include -I${THUNDERKITTENS_ROOT}/prototype # H100
-TARGET=matmul
+THUNDERKITTENS_ROOT?=../../../
+
+NVCCFLAGS := -DNDEBUG -lineinfo
+NVCCFLAGS += --expt-extended-lambda --expt-relaxed-constexpr 
+NVCCFLAGS += -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing 
+NVCCFLAGS += -forward-unknown-to-host-compiler -ftemplate-backtrace-limit=0
+NVCCFLAGS += -std=c++20 -lrt -lpthread -ldl -lcuda -lcudadevrt -lcudart_static
+NVCCFLAGS += -O3 --use_fast_math
+NVCCFLAGS += -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills 
+NVCCFLAGS += -I${THUNDERKITTENS_ROOT}/include -I${THUNDERKITTENS_ROOT}/prototype
+NVCCFLAGS += -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__
+NVCCFLAGS += -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__
+NVCCFLAGS += -fopenmp -lgomp # for CPU GEMM
+NVCCFLAGS += -DKITTENS_HOPPER -gencode arch=compute_90a,code=sm_90a # Hopper
+
+TARGET=matmul.out
 SRC=matmul.cu
 
 # Default target
 all: $(TARGET)
+
+run: $(TARGET)
+	./$(TARGET)
 
 $(TARGET): $(SRC)
 	$(NVCC) $(SRC) $(NVCCFLAGS) -o $(TARGET)

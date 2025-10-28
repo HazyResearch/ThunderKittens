@@ -151,7 +151,7 @@ struct gl {
     }
 #endif
     __device__ inline T& operator[](const coord<ducks::default_type> &idx) const { // yes I am abusing the const qualifier here a bit.
-        return raw_ptr[((idx.b*depth() + idx.d)*rows() + idx.r)*cols() + idx.c];
+        return raw_ptr[(((size_t)idx.b*depth() + idx.d)*rows() + idx.r)*cols() + idx.c];
     }
     template<int axis> __device__ inline size_t shape() const {
         static_assert(axis==0 || axis==1 || axis==2 || axis==3, "Axis must be 0, 1, 2, or 3.");
@@ -162,9 +162,9 @@ struct gl {
     }
     template<int axis> __device__ inline size_t stride() const { 
         static_assert(axis==0 || axis==1 || axis==2 || axis==3, "Axis must be 0, 1, 2, or 3.");
-        if      constexpr (axis==0) { return depth()*rows()*cols(); }
-        else if constexpr (axis==1) { return rows()*cols(); }
-        else if constexpr (axis==2) { return cols(); }
+        if      constexpr (axis==0) { return (size_t)depth()*rows()*cols(); }
+        else if constexpr (axis==1) { return (size_t)rows()*cols(); }
+        else if constexpr (axis==2) { return (size_t)cols(); }
         else if constexpr (axis==3) { return 1; }
     }
 };
