@@ -75,7 +75,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     int seq_idx     = blockIdx.x * CONSUMER_WARPGROUPS; 
 
     __shared__ kittens::semaphore qsmem_semaphore, k_smem_arrived[K::stages], v_smem_arrived[K::stages], compute_done[K::stages];
-    if (threadIdx.x == 0 && laneid() == 0) { 
+    if (threadIdx.x == 0) { 
         init_semaphore(qsmem_semaphore, 0, 1); 
         for(int j = 0; j < K::stages; j++) {
             init_semaphore(k_smem_arrived[j], 0, 1); 
@@ -83,7 +83,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             init_semaphore(compute_done[j], CONSUMER_WARPGROUPS, 0); 
         }
 
-        tma::expect_bytes(qsmem_semaphore, sizeof(q_smem));
+        warp::tma::expect_bytes(qsmem_semaphore, sizeof(q_smem));
 
         for (int wg = 0; wg < CONSUMER_WARPGROUPS; wg++) {
             coord<q_tile> q_tile_idx = {blockIdx.z, blockIdx.y, (seq_idx) + wg, 0};
@@ -112,13 +112,13 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         }
         else { kv_iters = kv_blocks-2; }
 
-        if(warpid == NUM_WORKERS-4 && laneid() == 0) {
+        if(warpid == NUM_WORKERS-4) {
             for (auto kv_idx = pipe_idx - 1; kv_idx <= kv_iters; kv_idx++) {
                 coord<k_tile> kv_tile_idx = {blockIdx.z, kv_head_idx, kv_idx + 1, 0};
-                tma::expect_bytes(k_smem_arrived[(kv_idx+1)%K::stages], sizeof(k_tile));
-                tma::load_async(k_smem[(kv_idx+1)%K::stages], g.k, kv_tile_idx, k_smem_arrived[(kv_idx+1)%K::stages]);
-                tma::expect_bytes(v_smem_arrived[(kv_idx+1)%K::stages], sizeof(v_tile));
-                tma::load_async(v_smem[(kv_idx+1)%K::stages], g.v, kv_tile_idx, v_smem_arrived[(kv_idx+1)%K::stages]);
+                warp::tma::expect_bytes(k_smem_arrived[(kv_idx+1)%K::stages], sizeof(k_tile));
+                warp::tma::load_async(k_smem[(kv_idx+1)%K::stages], g.k, kv_tile_idx, k_smem_arrived[(kv_idx+1)%K::stages]);
+                warp::tma::expect_bytes(v_smem_arrived[(kv_idx+1)%K::stages], sizeof(v_tile));
+                warp::tma::load_async(v_smem[(kv_idx+1)%K::stages], g.v, kv_tile_idx, v_smem_arrived[(kv_idx+1)%K::stages]);
                 
                 wait(compute_done[(kv_idx)%K::stages], (kv_idx/K::stages)%2);
             }
@@ -271,9 +271,9 @@ void bwd_attend_prep_ker(const __grid_constant__ bwd_prep_globals<D> g) {
 
     __shared__ kittens::semaphore smem_semaphore;
 
-    if (threadIdx.x == 0 && laneid() == 0) {
+    if (threadIdx.x == 0) {
         init_semaphore(smem_semaphore, 0, 1);
-        tma::expect_bytes(smem_semaphore, sizeof(og_smem[0]) * 4 * 2);
+        warp::tma::expect_bytes(smem_semaphore, sizeof(og_smem[0]) * 4 * 2);
 
         for (int w = 0; w < 4; w++) {
             coord<o_tile> tile_idx = {blockIdx.z, blockIdx.y, (blockIdx.x * 4) + w, 0};
@@ -460,20 +460,20 @@ kv_store(auto &kg_smem, auto &kg_reg,
     warpgroup::store(kg_smem[kittens::warpid()/kittens::WARPGROUP_WARPS], kg_reg);
 
     group<4>::sync(warpgroup::groupid()+4);
-    if (kittens::warpid() % 4 == 0 && laneid() == 0) {
+    if (kittens::warpid() % 4 == 0) {
         coord<kg_tile> tile_idx = {blockIdx.z, kv_head_idx, (blockIdx.x * BWD_CONSUMER_WARPGROUPS) + (kittens::warpid()/kittens::WARPGROUP_WARPS), 0};
-        tma::store_add_async(dst.kg, kg_smem[kittens::warpid()/kittens::WARPGROUP_WARPS], tile_idx);
-        tma::store_commit_group();
+        warp::tma::store_add_async(dst.kg, kg_smem[kittens::warpid()/kittens::WARPGROUP_WARPS], tile_idx);
+        warp::tma::store_commit_group();
     }
 
     wait(bar, toc);
     warpgroup::store(vg_smem[kittens::warpid()/kittens::WARPGROUP_WARPS], vg_reg);
     group<4>::sync(warpgroup::groupid()+4);
 
-    if (kittens::warpid() % 4 == 0 && laneid() == 0) {
+    if (kittens::warpid() % 4 == 0) {
         coord<vg_tile> tile_idx = {blockIdx.z, kv_head_idx, (blockIdx.x * BWD_CONSUMER_WARPGROUPS) + (kittens::warpid()/kittens::WARPGROUP_WARPS), 0};
-        tma::store_add_async(dst.vg, vg_smem[kittens::warpid()/kittens::WARPGROUP_WARPS], tile_idx);
-        tma::store_commit_group();
+        warp::tma::store_add_async(dst.vg, vg_smem[kittens::warpid()/kittens::WARPGROUP_WARPS], tile_idx);
+        warp::tma::store_commit_group();
     }
     tma::store_async_wait(); 
 }
@@ -556,31 +556,31 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
     if (warpgroupid == BWD_NUM_WARPGROUPS - 1) {
         warpgroup::decrease_registers<24>();
 
-        if (warpid % kittens::WARPGROUP_WARPS == 0 && laneid() == 0) {
+        if (warpid % kittens::WARPGROUP_WARPS == 0) {
             for (auto qo_idx = q_start; qo_idx < qo_blocks; qo_idx++, tic ^= 1, toc ^= 1) {
                 if (qo_idx + 1 < qo_blocks) {
                     coord<q_tile> tile_idx = {blockIdx.z, blockIdx.y, qo_idx + 1, 0};
-                    tma::expect_bytes(q_b[toc],   sizeof(q_smem[0])); 
-                    tma::load_async(q_smem[toc], g.q,  tile_idx, q_b[toc]);
-                    tma::expect_bytes(o_b[toc],   sizeof(og_smem[0]));
-                    tma::load_async(og_smem[toc], g.og, tile_idx, o_b[toc]);
+                    warp::tma::expect_bytes(q_b[toc],   sizeof(q_smem[0])); 
+                    warp::tma::load_async(q_smem[toc], g.q,  tile_idx, q_b[toc]);
+                    warp::tma::expect_bytes(o_b[toc],   sizeof(og_smem[0]));
+                    warp::tma::load_async(og_smem[toc], g.og, tile_idx, o_b[toc]);
 
                     coord<l_tile> vec_idx = {blockIdx.z, blockIdx.y, 0, qo_idx + 1};
-                    tma::expect_bytes(vec_b[toc], sizeof(l_smem[0]) + sizeof(d_smem[0]));
-                    tma::load_async(l_smem[toc], g.l, vec_idx, vec_b[toc]);
-                    tma::load_async(d_smem[toc], g.d, vec_idx, vec_b[toc]);
+                    warp::tma::expect_bytes(vec_b[toc], sizeof(l_smem[0]) + sizeof(d_smem[0]));
+                    warp::tma::load_async(l_smem[toc], g.l, vec_idx, vec_b[toc]);
+                    warp::tma::load_async(d_smem[toc], g.d, vec_idx, vec_b[toc]);
                 }
                 
                 wait(compute_done[tic], ((qo_idx - q_start)/(2))%2);
             }
         }
-        else if(warpid % WARPGROUP_WARPS == 1 && laneid() == 0) {
+        else if(warpid % WARPGROUP_WARPS == 1) {
             for (auto qo_idx = q_start; qo_idx < qo_blocks; qo_idx++, tic ^= 1, toc ^= 1) {
                 wait(compute_done[tic], ((qo_idx - q_start)/(2))%2);
                 
                 coord<qg_tile> tile_idx = {blockIdx.z, blockIdx.y, qo_idx, 0};
-                tma::store_add_async(g.qg, qg_smem, tile_idx);
-                tma::store_async_wait();
+                warp::tma::store_add_async(g.qg, qg_smem, tile_idx);
+                warp::tma::store_async_wait();
                 
                 if(laneid() == 0) arrive(qg_ready); 
             }
