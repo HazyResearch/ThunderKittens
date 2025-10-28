@@ -74,7 +74,7 @@ struct matmul_template {
                 reinterpret_cast<wide_tile&>(args.input.b) // B matrix
             );
             warpgroup::mma_async_wait();
-            if(laneid() == 0) arrive(args.inputs_finished); // TODO REVIEW
+            if (warp::laneid() == 0) arrive(args.inputs_finished);
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
             warpgroup::store(reinterpret_cast<wide_tile&>(args.finish.c[warpgroup::groupid()]), args.state.accum);
@@ -90,12 +90,15 @@ struct matmul_template {
     };
 };
 
-
-constexpr bool NCU = false;
 #include <iostream>
 #include <random>
 #include <cuda_bf16.h>
 #include <omp.h>
+
+// Parameters
+constexpr bool NCU = false;
+constexpr bool check_correctness = true;
+constexpr bool verbose = true;
 
 void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
     #pragma omp parallel for collapse(2) // otherwise the CPU version takes for everrrrrr
@@ -131,10 +134,9 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     // Allocate host memory
     float *h_A = new float[M * K];
     float *h_B = new float[K * N];
-    float *h_C = new float[M * N];
     float *h_C_ref = new float[M * N];
 
-    std::cout << "Allocated host memory" << std::endl;
+    if (verbose) std::cout << "Allocated host memory" << std::endl;
 
     // Initialize random number generator
     std::random_device rd;
@@ -145,12 +147,13 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     for (int i = 0; i < M * K; ++i) h_A[i] = dis(gen);
     for (int i = 0; i < K * N; ++i) h_B[i] = dis(gen);
 
-    std::cout << "Initialized matrices" << std::endl;
+    if (verbose) std::cout << "Initialized matrices" << std::endl;
 
     // Perform CPU matrix multiplication for reference
-    if(true) cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
-
-    std::cout << "Performed CPU matrix multiplication" << std::endl;
+    if (check_correctness) {
+        cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
+        if (verbose) std::cout << "Performed CPU matrix multiplication" << std::endl;
+    }
 
     // Allocate device memory
     __nv_bfloat16 *d_A, *d_B, *d_C;
@@ -166,7 +169,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
         return -1;
     }
 
-    std::cout << "Allocated device memory" << std::endl;
+    if (verbose) std::cout << "Allocated device memory" << std::endl;
 
     // Convert to __nv_bfloat16 and copy to device
     __nv_bfloat16 *h_A_bf16 = new __nv_bfloat16[M * K];
@@ -177,7 +180,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     cudaMemcpy(d_A, h_A_bf16, M*K*2, cudaMemcpyHostToDevice);
     cudaMemcpy(d_B, h_B_bf16, K*N*2, cudaMemcpyHostToDevice);
 
-    std::cout << "Copied matrices to device" << std::endl;
+    if (verbose) std::cout << "Copied matrices to device" << std::endl;
 
     unsigned long mem_size = MAX_SHARED_MEMORY - 1024;
     cudaFuncSetAttribute(prototype::lcf::kernel<mmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
@@ -185,14 +188,14 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     // Launch kernel
     dim3 grid(mmt::grid(M, N, K));
     dim3 block(kittens::prototype::detail::NUM_THREADS_v<mmt>);
-    std::cout << "Launching warmup kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
+    if (verbose) std::cout << "Launching warmup kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
     for(int i = 0; i < (NCU ? 0 : 2); i++) { // warmup
         inner_run<mmt>(d_A, d_B, d_C, M, N, K, grid, block);
     }
 
     // Start timing
     cudaDeviceSynchronize();
-    std::cout << "Launching kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
+    if (verbose) std::cout << "Launching kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
     auto start = std::chrono::high_resolution_clock::now();
 
     constexpr int ITERS = (NCU ? 1 : 10);
@@ -223,41 +226,45 @@ int run_benchmark(size_t M, size_t N, size_t K) {
         return -1;
     }
 
-    // Copy result back to host
-    __nv_bfloat16 *h_C_bf16 = new __nv_bfloat16[M * N];
-    cudaMemcpy(h_C_bf16, d_C, M*N*2, cudaMemcpyDeviceToHost);
+    if (check_correctness) {
+        // Copy result back to host
+        float *h_C = new float[M * N];
+        __nv_bfloat16 *h_C_bf16 = new __nv_bfloat16[M * N];
+        cudaMemcpy(h_C_bf16, d_C, M*N*2, cudaMemcpyDeviceToHost);
 
-    std::cout << "Copied result back to host" << std::endl;
+        if (verbose) std::cout << "Copied result back to host" << std::endl;
 
-    // Convert result back to float for comparison
-    for (int i = 0; i < M * N; ++i) h_C[i] = __bfloat162float(h_C_bf16[i]);
+        // Convert result back to float for comparison
+        for (int i = 0; i < M * N; ++i) h_C[i] = __bfloat162float(h_C_bf16[i]);
 
-    std::cout << "Converted result back to float" << std::endl;
+        if (verbose) std::cout << "Converted result back to float" << std::endl;
 
-    // Check result
-    float max_error = 0.0f;
-    int error_count = 0;
-    for (int i = 0; i < M * N; ++i) {
-        float error = std::abs(h_C[i] - h_C_ref[i]);
-        if(error > 1.0) { // large because of bf16 vs fp32 numerics
-            if(error_count < 20) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
-            else if(error_count == 21) std::cout << "Too many errors to show them all.\n";
-            error_count++;
+        // Check result
+        float max_error = 0.0f;
+        int error_count = 0;
+        for (int i = 0; i < M * N; ++i) {
+            float error = std::abs(h_C[i] - h_C_ref[i]);
+            if(error > 1.0) { // large because of bf16 vs fp32 numerics
+                if(error_count < 20) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
+                else if(error_count == 21) std::cout << "Too many errors to show them all.\n";
+                error_count++;
+            }
+            max_error = std::max(max_error, error);
         }
-        max_error = std::max(max_error, error);
-    }
 
-    std::cout << "Max error: " << max_error << std::endl;
-    std::cout << "Error count: " << error_count << std::endl;
+        std::cout << "Max error: " << max_error << std::endl;
+        std::cout << "Error count: " << error_count << std::endl;
+
+        delete[] h_C;
+        delete[] h_C_bf16;
+    }
 
     // Clean up
     delete[] h_A;
     delete[] h_B;
-    delete[] h_C;
     delete[] h_C_ref;
     delete[] h_A_bf16;
     delete[] h_B_bf16;
-    delete[] h_C_bf16;
     cudaFree(d_A);
     cudaFree(d_B);
     cudaFree(d_C);
