@@ -65,7 +65,7 @@ struct matmul_template {
     struct consumer {
         __device__ static void setup(consumer_setup_args<layout> args) {
             warpgroup::increase_registers<232>(); // increase registers for consumers
-            kittens::warp::zero(args.state.accum);
+            warp::zero(args.state.accum);
         }
         __device__ static void compute(consumer_compute_args<layout> args) {
             warpgroup::mma_AB(
@@ -84,7 +84,7 @@ struct matmul_template {
                                              {args.common.coord.x, args.common.coord.y+i});
                 warp::tma::store_async_read_wait(); // wait that store is finished before reusing finish memory
             }
-            kittens::warp::zero(args.state.accum);
+            warp::zero(args.state.accum);
             if(laneid() == 0) arrive(args.finish_finished); // TODO REVIEW
         }
     };

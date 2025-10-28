@@ -133,9 +133,9 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         
         col_vec<rt_fl<16, K::kv_height>> max_vec, norm_vec, max_vec_last_scaled, max_vec_scaled;
         
-        kittens::warp::neg_infty(max_vec);
-        kittens::warp::zero(norm_vec);
-        kittens::warp::zero(o_reg);
+        warp::neg_infty(max_vec);
+        warp::zero(norm_vec);
+        warp::zero(o_reg);
 
         int kv_iters; 
         if constexpr (is_causal) {
@@ -151,9 +151,9 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             wait(k_smem_arrived[(kv_idx)%K::stages], (kv_idx/K::stages)%2);
             warpgroup::mm_ABt(att_block, q_smem[warpgroupid], k_smem[(kv_idx)%K::stages]);
             
-            kittens::warp::copy(max_vec_last_scaled, max_vec);
-            if constexpr (D == 64) { kittens::warp::mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.125f); }
-            else                   { kittens::warp::mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.08838834764f); }
+            warp::copy(max_vec_last_scaled, max_vec);
+            if constexpr (D == 64) { warp::mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.125f); }
+            else                   { warp::mul(max_vec_last_scaled, max_vec_last_scaled, 1.44269504089f*0.08838834764f); }
             
             warpgroup::mma_async_wait();
 
@@ -168,33 +168,33 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
                         auto k_idx = k_blk + j;
                         auto &attn_subtile = reinterpret_cast<rt_fl<16, 16>&>(att_block.tiles[0][j]);
 
-                        if      (k_idx >  q_blk) { kittens::warp::neg_infty  (attn_subtile); }
-                        else if (k_idx == q_blk) { kittens::warp::make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
+                        if      (k_idx >  q_blk) { warp::neg_infty  (attn_subtile); }
+                        else if (k_idx == q_blk) { warp::make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
                         __syncwarp();
                     }
                 }
             }
 
-            kittens::warp::row_max(max_vec, att_block, max_vec);
+            warp::row_max(max_vec, att_block, max_vec);
             
             if constexpr (D == 64) { 
-                kittens::warp::mul(att_block, att_block,    1.44269504089f*0.125f); 
-                kittens::warp::mul(max_vec_scaled, max_vec, 1.44269504089f*0.125f);
+                warp::mul(att_block, att_block,    1.44269504089f*0.125f); 
+                warp::mul(max_vec_scaled, max_vec, 1.44269504089f*0.125f);
             }
             else                   { 
-                kittens::warp::mul(att_block, att_block,    1.44269504089f*0.08838834764f); 
-                kittens::warp::mul(max_vec_scaled, max_vec, 1.44269504089f*0.08838834764f);
+                warp::mul(att_block, att_block,    1.44269504089f*0.08838834764f); 
+                warp::mul(max_vec_scaled, max_vec, 1.44269504089f*0.08838834764f);
             }
 
-            kittens::warp::sub_row(att_block, att_block, max_vec_scaled);
-            kittens::warp::exp2(att_block, att_block);
-            kittens::warp::sub(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
-            kittens::warp::exp2(max_vec_last_scaled,       max_vec_last_scaled);
-            kittens::warp::mul(norm_vec,            norm_vec,     max_vec_last_scaled);
-            kittens::warp::row_sum(norm_vec,  att_block, norm_vec);
-            kittens::warp::add(att_block, att_block, 0.f);
-            kittens::warp::copy(att_block_mma, att_block); 
-            kittens::warp::mul_row(o_reg, o_reg, max_vec_last_scaled); 
+            warp::sub_row(att_block, att_block, max_vec_scaled);
+            warp::exp2(att_block, att_block);
+            warp::sub(max_vec_last_scaled, max_vec_last_scaled, max_vec_scaled);
+            warp::exp2(max_vec_last_scaled,       max_vec_last_scaled);
+            warp::mul(norm_vec,            norm_vec,     max_vec_last_scaled);
+            warp::row_sum(norm_vec,  att_block, norm_vec);
+            warp::add(att_block, att_block, 0.f);
+            warp::copy(att_block_mma, att_block); 
+            warp::mul_row(o_reg, o_reg, max_vec_last_scaled); 
 
             wait(v_smem_arrived[(kv_idx)%K::stages], (kv_idx/K::stages)%2); 
 
@@ -204,7 +204,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             if(warpgroup::laneid() == 0) arrive(compute_done[(kv_idx)%K::stages], 1);
         }
 
-        kittens::warp::div_row(o_reg, o_reg, norm_vec);
+        warp::div_row(o_reg, o_reg, norm_vec);
         warpgroup::store(o_smem[warpgroupid], o_reg); 
         warpgroup::sync(warpgroupid+4);
 
@@ -213,12 +213,12 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
             tma::store_async(g.o, o_smem[warpgroupid], o_tile_idx);
         }
 
-        kittens::warp::mul(max_vec_scaled,   max_vec_scaled, 0.69314718056f);
-        kittens::warp::log(norm_vec, norm_vec);
-        kittens::warp::add(norm_vec, norm_vec, max_vec_scaled);
+        warp::mul(max_vec_scaled,   max_vec_scaled, 0.69314718056f);
+        warp::log(norm_vec, norm_vec);
+        warp::add(norm_vec, norm_vec, max_vec_scaled);
 
-        if constexpr (D == 64) { kittens::warp::mul(norm_vec, norm_vec, -8.0f); }
-        else                   { kittens::warp::mul(norm_vec, norm_vec, -11.313708499f); }
+        if constexpr (D == 64) { warp::mul(norm_vec, norm_vec, -8.0f); }
+        else                   { warp::mul(norm_vec, norm_vec, -11.313708499f); }
     
         warpgroup::store(l_smem[warpgroupid], norm_vec);
         warpgroup::sync(warpgroupid+4);
@@ -284,11 +284,11 @@ void bwd_attend_prep_ker(const __grid_constant__ bwd_prep_globals<D> g) {
     __syncthreads();
 
     wait(smem_semaphore, 0);
-    kittens::warp::load(o_reg, o_smem[warpid]);
-    kittens::warp::load(og_reg, og_smem[warpid]);
-    kittens::warp::mul(og_reg, og_reg, o_reg);
-    kittens::warp::row_sum(d_reg, og_reg);
-    kittens::warp::store(d_smem[warpid], d_reg);
+    warp::load(o_reg, o_smem[warpid]);
+    warp::load(og_reg, og_smem[warpid]);
+    warp::mul(og_reg, og_reg, o_reg);
+    warp::row_sum(d_reg, og_reg);
+    warp::store(d_smem[warpid], d_reg);
     __syncthreads(); 
 
     if (warpid == 0) {
@@ -396,8 +396,8 @@ causal_mask(auto &reg_tile, int qo_idx) {
     for (int j = 0; j < (tile_h_qo/kittens::TILE_ROW_DIM<bf16>); j++) {
         int q_idx = q_blk + j;
         auto &attn_subtile = reinterpret_cast<rt_fl<16, 16>&>(reg_tile.tiles[0][j]);
-        if      (q_idx  < k_blk) { kittens::warp::neg_infty(attn_subtile); }
-        else if (q_idx == k_blk) { kittens::warp::make_causal_t(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
+        if      (q_idx  < k_blk) { warp::neg_infty(attn_subtile); }
+        else if (q_idx == k_blk) { warp::make_causal_t(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty()); }
     }
 }
 
@@ -425,24 +425,24 @@ compute_bwd_loop(
     warpgroup::mma_commit_group();
     warpgroup::mma_async_wait();
 
-    if constexpr (D == 64) { kittens::warp::mul(s_block_t, s_block_t, 1.44269504089f*0.125f); }
-    else                   { kittens::warp::mul(s_block_t, s_block_t, 1.44269504089f*0.08838834764f); }
+    if constexpr (D == 64) { warp::mul(s_block_t, s_block_t, 1.44269504089f*0.125f); }
+    else                   { warp::mul(s_block_t, s_block_t, 1.44269504089f*0.08838834764f); }
 
     if constexpr (is_causal) { causal_mask<tile_h_qo, tile_h>(s_block_t, qo_idx); }
 
-    kittens::warp::exp2(s_block_t, s_block_t);
-    kittens::warp::copy(p_block_t, s_block_t);
-    kittens::warp::copy(p_block_t_mma, s_block_t);
+    warp::exp2(s_block_t, s_block_t);
+    warp::copy(p_block_t, s_block_t);
+    warp::copy(p_block_t_mma, s_block_t);
     stream_sub_tile(dp_block_t, d_smem, tic);
-    kittens::warp::mul(ds_block_t, p_block_t, dp_block_t);
+    warp::mul(ds_block_t, p_block_t, dp_block_t);
 
-    if constexpr (D == 64) { kittens::warp::mul(ds_block_t, ds_block_t, 0.125f); }
-    else                   { kittens::warp::mul(ds_block_t, ds_block_t, 0.08838834764f); }
+    if constexpr (D == 64) { warp::mul(ds_block_t, ds_block_t, 0.125f); }
+    else                   { warp::mul(ds_block_t, ds_block_t, 0.08838834764f); }
 
     warpgroup::mma_AB(vg_reg, p_block_t_mma, og_smem[tic]);
     warpgroup::mma_commit_group();
     
-    kittens::warp::copy(ds_block_t_mma, ds_block_t);
+    warp::copy(ds_block_t_mma, ds_block_t);
     warpgroup::store(ds_smem[kittens::warpid()/kittens::WARPGROUP_WARPS], ds_block_t);
     warpgroup::mma_AB(kg_reg, ds_block_t_mma, q_smem[tic]);
     warpgroup::mma_commit_group();
@@ -595,8 +595,8 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
         rt_fl<16, 64> ds_block_t, dp_block_t; 
         rt_bf<16, 64> ds_block_t_mma, p_block_t_mma;
 
-        kittens::warp::zero(kg_reg);
-        kittens::warp::zero(vg_reg);
+        warp::zero(kg_reg);
+        warp::zero(vg_reg);
 
         if (warpgroupid == 0) {
             warpgroup::increase_registers<256>();
