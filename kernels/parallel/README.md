@@ -1,6 +1,6 @@
 # ThunderKittens Multi-GPU Kernels ("ParallelKittens")
 
-Each directory contains a single operator (e.g., fused all-gather GEMM).
+Each directory contains a single operator (e.g., fused all-gather GEMM). All kernels assume 8 GPUs; in order to change this, you must modify the `static constexpr int NUM_DEVICES` field in the kernel code.
 
 ## How to run
 
