@@ -5,6 +5,11 @@ sources = {
             'h100': 'kernels/attn/h100/h100.cu' # define these source files for each GPU target desired.
         }
     },
+    'nsa_attn': {
+        'source_files': {
+            'h100': ['kernels/nsa/h100/compress_attn.cu', 'kernels/nsa/h100/selection_attn.cu']
+        }
+    },
     'hedgehog': {
         'source_files': {
             'h100': 'kernels/hedgehog/hh.cu'
@@ -68,7 +73,7 @@ sources = {
 ### WHICH KERNELS DO WE WANT TO BUILD?
 # (oftentimes during development work you don't need to redefine them all.)
 # kernels = ['attn', 'mamba2', 'hedgehog', 'fftconv', 'fused_rotary', 'based', 'fused_layernorm']
-kernels = ['fp8_gemm']
+kernels = ['nsa_attn', 'attn']
 
 ### WHICH GPU TARGET DO WE WANT TO BUILD FOR?
 target = 'h100'
