@@ -1,17 +1,19 @@
 import os
 import subprocess
+import sysconfig
+import torch
 from setuptools import setup
-from torch.utils.cpp_extension import BuildExtension, CUDAExtension
+from torch.utils.cpp_extension import BuildExtension, CUDAExtension, include_paths
 from config import sources, target, kernels
 target = target.lower()
 
 # Set environment variables
 thunderkittens_root = os.getenv('THUNDERKITTENS_ROOT', os.path.abspath(os.path.join(os.getcwd(), '.')))
-python_include = subprocess.check_output(['python', '-c', "import sysconfig; print(sysconfig.get_path('include'))"]).decode().strip()
-torch_include = subprocess.check_output(['python', '-c', "import torch; from torch.utils.cpp_extension import include_paths; print(' '.join(['-I' + p for p in include_paths()]))"]).decode().strip()
+python_include = sysconfig.get_path("include")
+torch_include = [f"-I{p}" + p for p in include_paths()]
 print('Thunderkittens root:', thunderkittens_root)
 print('Python include:', python_include)
-print('Torch include directories:', torch_include)
+print('Torch include directories:', " ".join(torch_include))
 
 # CUDA flags
 cuda_flags = [
@@ -31,7 +33,7 @@ cuda_flags = [
     f'-I{thunderkittens_root}/prototype',
     f'-I{python_include}',
     '-DTORCH_COMPILE'
-] + torch_include.split()
+] + torch_include
 cpp_flags = [
     '-std=c++20',
     '-O3'
