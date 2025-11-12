@@ -10,6 +10,7 @@
 using namespace kittens;
 
 constexpr int BLOCK_SIZE = 64;
+constexpr int QSIZE = 2; // Double buffering
 #define NUM_WORKERS  (8)
 #define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
 
@@ -24,63 +25,55 @@ __global__ void kernel(const __grid_constant__ matmul_globals g) {
 
     extern __shared__ alignment_dummy __shm[]; 
     shared_allocator al((int*)&__shm[0]);
-    st_bf<BLOCK_SIZE,BLOCK_SIZE> (&As)[2] = al.allocate<st_bf<BLOCK_SIZE,BLOCK_SIZE>, 2>(); 
-    st_bf<BLOCK_SIZE,BLOCK_SIZE> (&Bs)[2] = al.allocate<st_bf<BLOCK_SIZE,BLOCK_SIZE>, 2>(); 
-
-    int tic = 0;
-    int toc = 1;
+    st_bf<BLOCK_SIZE,BLOCK_SIZE> (&As)[QSIZE] = al.allocate<st_bf<BLOCK_SIZE,BLOCK_SIZE>, QSIZE>(); 
+    st_bf<BLOCK_SIZE,BLOCK_SIZE> (&Bs)[QSIZE] = al.allocate<st_bf<BLOCK_SIZE,BLOCK_SIZE>, QSIZE>(); 
     
-    rt_fl<16,BLOCK_SIZE> C_accum;
-    rt_fl<16,BLOCK_SIZE> C_accum_cpy;
+    int row = blockIdx.y, col = blockIdx.x; 
+    int num_tiles = (g.N + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-    int row = blockIdx.y; 
-    int col = blockIdx.x; 
+    const int warpid        = kittens::warpid();
+    const int warpgroupid   = warpid/4;
+    const int num_consumers = (NUM_THREADS / 128) - 1;
 
-    const int warpid      = kittens::warpid();
-    const int warpgroupid = warpid/4;
-
-    int condition = (threadIdx.x == 0 && threadIdx.y == 0 & blockIdx.x == 0);
-
-    __shared__ semaphore bar; 
+    __shared__ semaphore full[QSIZE], empty[QSIZE]; 
     if (threadIdx.x == 0) { // this should be on thread and not warp (SA: note)
-        init_semaphore(bar, 0, 1);
-        tma::expect_bytes(
-            bar, 
-            size_bytes<typeof(As[0])> +
-            size_bytes<typeof(Bs[0])>
-        );
-        tma::load_async(As[tic], g.A, {0, 0, row, 0}, bar);
-        tma::load_async(Bs[tic], g.B, {0, 0, 0, col}, bar);
+        for (int i = 0; i < QSIZE; ++i) {
+            init_semaphore(full[i], 0, 1);
+            init_semaphore(empty[i], num_consumers, 0);
+        }
     }
     __syncthreads();
 
-    kittens::warp::zero(C_accum);
-    int num_tiles = (g.N + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    for (int tile = 0; tile < num_tiles; ++tile, tic^=1, toc^=1) {
-
-        // arrive memory 
-        wait(bar, tic);
-        __syncthreads();
-
-        // load next 
-        if(warpgroupid == 0) {
-            warpgroup::decrease_registers<32>();  
-            if (threadIdx.x == 0 && tile+1 < num_tiles) { 
-                tma::expect_bytes(bar, 
-                    size_bytes<typeof(As[0])> + 
-                    size_bytes<typeof(Bs[0])>
-                );
-                tma::load_async(As[toc], g.A, {0, 0, row, tile+1}, bar);
-                tma::load_async(Bs[toc], g.B, {0, 0, tile+1, col}, bar);
+    if (warpgroupid == 0) { // producer
+        warpgroup::decrease_registers<32>();  
+        if (warpgroup::laneid() == 0) {
+            int p = 0, qidx = 0;
+            for (int tile = 0; tile < num_tiles; ++tile, ++qidx) {
+                if (qidx == QSIZE) { qidx = 0; p ^= 1; }
+                wait(empty[qidx], p);
+                tma::expect_bytes(full[qidx], size_bytes<typeof(As[0])> + size_bytes<typeof(Bs[0])>);
+                tma::load_async(As[qidx], g.A, {0, 0, row, tile}, full[qidx]);
+                tma::load_async(Bs[qidx], g.B, {0, 0, tile, col}, full[qidx]);
             }
-        } else {
-            warpgroup::increase_registers<256>();
-            warpgroup::mma_AB(C_accum, As[tic], Bs[tic]);
-            warpgroup::mma_async_wait();
         }
-        __syncthreads();
-    }
-    if ( warpgroupid == 1 ) { 
+
+    } else { // consumer
+        warpgroup::increase_registers<256>();
+        rt_fl<16,BLOCK_SIZE> C_accum;
+        kittens::warp::zero(C_accum);
+
+        if (warpgroup::laneid() == 0)
+            for (int i = 0; i < QSIZE; ++i) arrive(empty[i], 1);
+
+        int p = 0, qidx = 0;
+        for (int tile = 0; tile < num_tiles; ++tile, ++qidx) {
+            if (qidx == QSIZE) { qidx = 0; p ^= 1; }
+            wait(full[qidx], p);
+            warpgroup::mma_AB(C_accum, As[qidx], Bs[qidx]);
+            warpgroup::mma_async_wait();
+            if (warpgroup::laneid() == 0) arrive(empty[qidx], 1);
+        }
+
         warpgroup::store(g.C, C_accum, {0, 0, row, col});
     }
 }
