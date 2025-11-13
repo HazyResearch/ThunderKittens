@@ -413,3 +413,135 @@ __device__ static inline rt<typename RT::T, subtile_rows, RT::cols, typename RT:
         src.tiles[idx*(subtile_rows / TILE_ROW_DIM<T>)]
     );
 }
+
+/* ----------  CAUSAL  ---------- */
+
+/**
+ * @brief Makes a square register tile causal by zeroing elements above the main diagonal.
+ *
+ * This function modifies a square register tile in-place to make it causal. All elements
+ * above the main diagonal are set to zero, while elements on or below the main diagonal
+ * are left unchanged.
+ *
+ * @tparam T The data type of the register tile elements.
+ * @tparam _size The size (height and width) of the square register tile.
+ * @tparam layout The current layout of the register tile.
+ * @param tile[in,out] Reference to the register tile to be made causal.
+ */
+template<ducks::rt::row_layout RT>
+__device__ static inline void make_causal(RT &dst, const RT &src, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
+    const typename RT::dtype packed_val = base_types::packing<typename RT::dtype>::pack(val);
+    #ifdef KITTENS_HOPPER
+    static_assert(!std::is_same_v<typename RT::dtype, fp8e4m3_4> && !std::is_same_v<typename RT::dtype, fp8e5m2_4>, "Unsupported type for make_causal");
+    #endif
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        #pragma unroll
+        for(int j = 0; j < dst.width; j++) {
+            if(j < i) { // below the diagonal, copy
+                #pragma unroll
+                for(int k = 0; k < dst.packed_per_tile; k++) {
+                    dst.tiles[i][j].data[k] = src.tiles[i][j].data[k];
+                }
+            }
+            else if(j > i) { // above the diagonal, zero
+                #pragma unroll
+                for(int k = 0; k < dst.packed_per_tile; k++) {
+                    dst.tiles[i][j].data[k] = packed_val;
+                }
+            }
+            else { // on the diagonal, interesting!
+                constexpr uint32_t MASK_X = 0xFF773311, MASK_Y = 0xF7733110; // magic numbers for on-diagonal core matrices
+                dst.tiles[i][j].data[1] = src.tiles[i][j].data[1]; // below diagonal, copy
+                dst.tiles[i][j].data[2] = packed_val; // above diagonal, zero
+                if((MASK_X >> laneid()) & 1) {
+                    dst.tiles[i][j].data[0].x = src.tiles[i][j].data[0].x;
+                    dst.tiles[i][j].data[3].x = src.tiles[i][j].data[3].x;
+                }
+                else {
+                    dst.tiles[i][j].data[0].x = val;
+                    dst.tiles[i][j].data[3].x = val;
+                }
+                if((MASK_Y >> laneid()) & 1) {
+                    dst.tiles[i][j].data[0].y = src.tiles[i][j].data[0].y;
+                    dst.tiles[i][j].data[3].y = src.tiles[i][j].data[3].y;
+                }
+                else {
+                    dst.tiles[i][j].data[0].y = val;
+                    dst.tiles[i][j].data[3].y = val;
+                }
+            }
+            __syncwarp();
+        }
+    }
+}
+
+
+/**
+ * @brief Makes a square register tile anti-causal by zeroing elements below the main diagonal.
+ *
+ * This function modifies a square register tile in-place to make it anti-causal. All elements
+ * below the main diagonal are set to zero, while elements on or above the main diagonal
+ * are left unchanged.
+ *
+ * @tparam T The data type of the register tile elements.
+ * @tparam _size The size (height and width) of the square register tile.
+ * @tparam layout The current layout of the register tile.
+ * @param tile[in,out] Reference to the register tile to be made causal.
+ */
+template<ducks::rt::row_layout RT>
+__device__ static inline void make_causal_t(RT &dst, const RT &src, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
+    const typename RT::dtype packed_val = base_types::packing<typename RT::dtype>::pack(val);
+    #ifdef KITTENS_HOPPER
+    static_assert(!std::is_same_v<typename RT::dtype, fp8e4m3_4> && !std::is_same_v<typename RT::dtype, fp8e5m2_4>, "Unsupported type for make_causal");
+    #endif
+    #pragma unroll
+    for(int i = 0; i < dst.height; i++) {
+        #pragma unroll
+        for(int j = 0; j < dst.width; j++) {
+            if(j > i) { // above the diagonal, copy
+                #pragma unroll
+                for(int k = 0; k < dst.packed_per_tile; k++) {
+                    dst.tiles[i][j].data[k] = src.tiles[i][j].data[k];
+                }
+            }
+            else if(j < i) { // below the diagonal, zero
+                #pragma unroll
+                for(int k = 0; k < dst.packed_per_tile; k++) {
+                    dst.tiles[i][j].data[k] = packed_val;
+                }
+            }
+            else { // on the diagonal, interesting!
+                constexpr uint32_t MASK_X = 0x88CCEEF; 
+                constexpr uint32_t MASK_Y = 0x88CCEEFF;
+
+                dst.tiles[i][j].data[1] = packed_val;              // below diagonal, zero
+                dst.tiles[i][j].data[2] = src.tiles[i][j].data[2]; // above diagonal, copy
+
+                // on the diagonal or above
+                if((MASK_X >> laneid()) & 1) {
+                    dst.tiles[i][j].data[0].x = src.tiles[i][j].data[0].x;
+                    dst.tiles[i][j].data[3].x = src.tiles[i][j].data[3].x;
+                }
+                // below the diagonal
+                else {
+                    dst.tiles[i][j].data[0].x = val;
+                    dst.tiles[i][j].data[3].x = val;
+                }
+
+                // on the diagonal or above
+                if((MASK_Y >> laneid()) & 1) {
+                    dst.tiles[i][j].data[0].y = src.tiles[i][j].data[0].y;
+                    dst.tiles[i][j].data[3].y = src.tiles[i][j].data[3].y;
+                }
+                // below the diagonal
+                else {
+                    dst.tiles[i][j].data[0].y = val;
+                    dst.tiles[i][j].data[3].y = val;
+                }
+                
+            }
+            __syncwarp();
+        }
+    }
+}

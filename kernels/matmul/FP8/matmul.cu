@@ -61,12 +61,12 @@ struct matmul_template {
         }
         __device__ static void load(producer_load_args<layout> args) {
             if(warpgroup::warpid() == 0) {
-                tma::expect(args.inputs_arrived, args.input);
+                warp::tma::expect(args.inputs_arrived, args.input);
                 for(int i = 0; i < 2; i++) {
-                    tma::load_async(args.input.a[i], args.globals.A,
+                    warp::tma::load_async(args.input.a[i], args.globals.A,
                                     {args.common.coord.x+i, args.iter}, args.inputs_arrived);
                 }
-                tma::load_async(args.input.b, args.globals.B,
+                  warp::tma::load_async(args.input.b, args.globals.B,
                                 {args.common.coord.y, args.iter}, args.inputs_arrived);
             }
         }
@@ -91,9 +91,9 @@ struct matmul_template {
             warpgroup::store(args.finish.c[warpgroup::groupid()], args.state.accum_fp8);
             warpgroup::sync(warpgroup::groupid()+4);
             if(warpgroup::warpid() == 0) {
-                tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()],
+                warp::tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()],
                                  {args.common.coord.x, args.common.coord.y});
-                tma::store_async_read_wait();
+                warp::tma::store_async_read_wait();
             }
             kittens::warp::zero(args.state.accum);
             if(laneid() == 0) arrive(args.finish_finished); // TODO REVIEW

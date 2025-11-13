@@ -192,7 +192,7 @@ void la_kernel (const __grid_constant__ la_globals g, int N)
         warpgroup::exp(k_decay, k_decay);
     }
 
-    zero(kv_smem);
+    kittens::warp::zero(kv_smem);
 
     for (int block = 0; block < blocks; block++, tic^=1, toc^=1) {
 
@@ -225,7 +225,7 @@ void la_kernel (const __grid_constant__ la_globals g, int N)
             warpgroup::mma_async_wait();
 
             wg_mask(qk, qk, slope);
-            copy(qk_bf, qk);
+            kittens::warp::copy(qk_bf, qk);
 
             warpgroup::mm_AB(linear_o, qk_bf, v_smem[tic]);
             warpgroup::mma_async_wait();
@@ -248,21 +248,21 @@ void la_kernel (const __grid_constant__ la_globals g, int N)
 
             col_vec<rt_fl<CHUNK_SIZE/kittens::WARPGROUP_WARPS, ATTN_D>> decay; 
 
-            auto kv_subtile_0 = subtile_inplace<ATTN_F/2, ATTN_D>(kv_smem, {0, 0});
-            auto kv_subtile_1 = subtile_inplace<ATTN_F/2, ATTN_D>(kv_smem, {1, 0});
+            auto kv_subtile_0 = kittens::warp::subtile_inplace<ATTN_F/2, ATTN_D>(kv_smem, {0, 0});
+            auto kv_subtile_1 = kittens::warp::subtile_inplace<ATTN_F/2, ATTN_D>(kv_smem, {1, 0});
 
             warpgroup::mm_AB(linear_o, q_smem[tic], kv_smem);
             warpgroup::load(decay, q_decay);
             warpgroup::mma_async_wait();
-            mul_row(linear_o, linear_o, decay);
+            kittens::warp::mul_row(linear_o, linear_o, decay);
             
             warpgroup::store(o_smem[warpgroupid], linear_o);
 
             warpgroup::load(local_k_0, k_smem_split[tic][0]);
             warpgroup::load(local_k_1, k_smem_split[tic][1]);
             warpgroup::load(decay, k_decay);
-            mul_row(local_k_0, local_k_0, decay);
-            mul_row(local_k_1, local_k_1, decay);
+            kittens::warp::mul_row(local_k_0, local_k_0, decay);
+            kittens::warp::mul_row(local_k_1, local_k_1, decay);
             warpgroup::store(k_smem_split[toc][0], local_k_0);
             warpgroup::store(k_smem_split[toc][1], local_k_1);
 
@@ -272,11 +272,11 @@ void la_kernel (const __grid_constant__ la_globals g, int N)
             float block_decay = __expf(-slope * static_cast<float>(CHUNK_SIZE));
 
             warpgroup::load(local_kv_0, kv_subtile_0); 
-            mul(local_kv_0, local_kv_0, block_decay);
+            kittens::warp::mul(local_kv_0, local_kv_0, block_decay);
             warpgroup::mma_AtB(local_kv_0, k_smem_split[tic][0], v_smem[tic]);
             
             warpgroup::load(local_kv_1, kv_subtile_1); 
-            mul(local_kv_1, local_kv_1, block_decay);
+            kittens::warp::mul(local_kv_1, local_kv_1, block_decay);
             warpgroup::mma_AtB(local_kv_1, k_smem_split[tic][1], v_smem[tic]);
     
             warpgroup::mma_async_wait();

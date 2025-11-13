@@ -82,13 +82,13 @@ struct matmul_template {
         }
         __device__ static void load(producer_load_args<layout> args) {
             if(warpgroup::warpid() == 0) {
-                tma::expect(args.inputs_arrived, args.input);
+                warp::tma::expect(args.inputs_arrived, args.input);
                 #pragma unroll
                 for(int i = 0; i < 2; i++) {
-                    tma::load_async(args.input.a[i], args.globals.A,
+                    warp::tma::load_async(args.input.a[i], args.globals.A,
                                     {args.common.coord.x+i, args.iter}, args.inputs_arrived);
                 }
-                tma::load_async(args.input.b, args.globals.B,
+                warp::tma::load_async(args.input.b, args.globals.B,
                                 {args.common.coord.y, args.iter}, args.inputs_arrived);
             }
         }
@@ -97,7 +97,7 @@ struct matmul_template {
     struct consumer {
         __device__ static void setup(consumer_setup_args<layout> args) {
             warpgroup::increase_registers<232>(); // increase registers for consumers
-            zero(args.state.accum); 
+            warp::zero(args.state.accum); 
         }
         __device__ static void compute(consumer_compute_args<layout> args) {
             warpgroup::mma_ABt(
@@ -112,15 +112,15 @@ struct matmul_template {
             col_vec<rt<c_dtype, 16, 128>> scale_a_rv;
             row_vec<rt<c_dtype, 16, 128>> scale_b_rv;
             warpgroup::load(scale_a_rv, args.globals.scale_a, {args.common.coord.x});
-            load(scale_b_rv, args.globals.scale_b, {args.common.coord.y});
-            mul_col(args.state.accum, args.state.accum, scale_b_rv);
-            mul_row(args.state.accum, args.state.accum, scale_a_rv);
+            warp::load(scale_b_rv, args.globals.scale_b, {args.common.coord.y});
+            warp::mul_col(args.state.accum, args.state.accum, scale_b_rv);
+            warp::mul_row(args.state.accum, args.state.accum, scale_a_rv);
             warpgroup::store(args.finish.c[warpgroup::groupid()], args.state.accum);
             warpgroup::sync(warpgroup::groupid()+4);
             if(warpgroup::warpid() == 0) {
-                tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()],
+                warp::tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()],
                                  {args.common.coord.x, args.common.coord.y});
-                tma::store_async_read_wait();
+                warp::tma::store_async_read_wait();
             }
             if(laneid() == 0) arrive(args.finish_finished);
         }
