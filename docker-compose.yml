@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  thunderkittens:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    image: thunderkittens:latest
+    container_name: thunderkittens-dev
+    
+    # Enable GPU access
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    
+    # Alternative GPU configuration for older docker-compose versions
+    # runtime: nvidia
+    # environment:
+    #   - NVIDIA_VISIBLE_DEVICES=all
+    
+    volumes:
+      - ./workspace:/workspace/shared  # Mount local workspace
+      - ./examples:/workspace/ThunderKittens/examples/shared  # Mount examples
+      - thunderkittens_data:/data  # Persistent data volume
+    
+    ports:
+      - "8888:8888"  # Jupyter notebook
+      - "6006:6006"  # TensorBoard
+    
+    working_dir: /workspace/ThunderKittens
+    
+    # Keep container running
+    tty: true
+    stdin_open: true
+    
+    # Environment variables
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONPATH=/workspace/ThunderKittens
+    
+    # Command to start Jupyter by default (can be overridden)
+    command: >
+      bash -c "
+        conda activate thunderkittens &&
+        jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''
+      "
+
+volumes:
+  thunderkittens_data:

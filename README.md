@@ -267,4 +267,3 @@ Please check out our paper for even more details: [paper](https://arxiv.org/abs/
 
 Join us and get involved at the [ThunderKittens channel @ GPU Mode Discord](https://discord.com/channels/1189498204333543425/1300872762163728550)!!!!  Here is the invite link to GPU mode: https://discord.gg/gpumode
 
-
