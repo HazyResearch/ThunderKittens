@@ -22,7 +22,7 @@ struct matmul_template {
     static constexpr int NUM_CONSUMER_WARPS=M_BLOCK*4, INPUT_PIPE_STAGES=4, PRODUCER_BARRIER_ARRIVALS=1;
     // Helper functions
     template<bool PERISISTENT_GRID=true> __host__ static inline dim3 grid(int M, int N, int K) {
-        return dim3(PERISISTENT_GRID ? 132 : M*N/(M_BLOCK*N_BLOCK*layout::base_tile::num_elements));
+        return dim3(PERISISTENT_GRID ? 128 : M*N/(M_BLOCK*N_BLOCK*layout::base_tile::num_elements));
     }
     // ThunderKittens template functions
     __device__ static inline void common_setup(common_setup_args<layout> args) {
@@ -51,13 +51,13 @@ struct matmul_template {
             warpgroup::decrease_registers<40>(); // decrease registers for producers
         }
         __device__ static void load(producer_load_args<layout> args) {
-            if (warpgroup::laneid() == 0) {
-                tma::expect(args.inputs_arrived, args.input);
+            if(warpgroup::warpid() == 0) {
+                warp::tma::expect(args.inputs_arrived, args.input);
                 for(int i = 0; i < M_BLOCK; i++)
-                    tma::load_async(args.input.a[i], args.globals.A,
+                    warp::tma::load_async(args.input.a[i], args.globals.A,
                                     {args.common.coord.x+i, args.iter}, args.inputs_arrived);
                 for(int i = 0; i < N_BLOCK; i++)
-                    tma::load_async(args.input.b[i], args.globals.B,
+                    warp::tma::load_async(args.input.b[i], args.globals.B,
                                     {args.iter, args.common.coord.y+i}, args.inputs_arrived);
             }
         }
@@ -65,7 +65,7 @@ struct matmul_template {
     struct consumer {
         __device__ static void setup(consumer_setup_args<layout> args) {
             warpgroup::increase_registers<232>(); // increase registers for consumers
-            kittens::warp::zero(args.state.accum);
+            warp::zero(args.state.accum);
         }
         __device__ static void compute(consumer_compute_args<layout> args) {
             warpgroup::mma_AB(
@@ -79,13 +79,13 @@ struct matmul_template {
         __device__ static void finish(consumer_finish_args<layout> args) {
             warpgroup::store(reinterpret_cast<wide_tile&>(args.finish.c[warpgroup::groupid()]), args.state.accum);
             warpgroup::sync(warpgroup::groupid()+4);
-            if (warpgroup::laneid() == 0) for(int i = 0; i < N_BLOCK; i++) {
-                tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()][i],
+            if(warpgroup::warpid() == 0) for(int i = 0; i < N_BLOCK; i++) {
+                warp::tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()][i],
                                              {args.common.coord.x, args.common.coord.y+i});
-                tma::store_async_read_wait(); // wait that store is finished before reusing finish memory
+                warp::tma::store_async_read_wait(); // wait that store is finished before reusing finish memory
             }
-            kittens::warp::zero(args.state.accum);
-            if (warp::laneid() == 0) arrive(args.finish_finished);
+            warp::zero(args.state.accum);
+            if(laneid() == 0) arrive(args.finish_finished); // TODO REVIEW
         }
     };
 };

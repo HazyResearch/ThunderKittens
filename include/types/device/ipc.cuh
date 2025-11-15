@@ -156,7 +156,7 @@ __host__ inline static void enable_all_peer_access(int num_devices) {
 
     for (int i = 0; i < num_devices; i++) {
         CUCHECK(cuDeviceGet(&devices[i], i));
-        CUCHECK(cuCtxCreate(&contexts[i], 0, devices[i]));
+	  CUCHECK(cuCtxCreate(&contexts[i], nullptr, 0, devices[i]));
     }
 
     for (int i = 0; i < num_devices; i++) {
