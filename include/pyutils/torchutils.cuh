@@ -55,7 +55,9 @@ static inline void tensor_check(const at::Tensor &t) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Float8_e5m2, "Tensor has invalid dtype (expected fp8e5m2)");
 #ifdef KITTENS_BLACKWELL
     } else if constexpr (std::is_same_v<typename Layout::dtype, ::kittens::fp8e8m0>) {
-        TORCH_CHECK(t.dtype() == at::ScalarType::Byte, "Tensor has invalid dtype (expected fp8e8m0 represented as uint8)");
+        TORCH_CHECK(t.dtype() == at::ScalarType::Float8_e8m0fnu || t.dtype() == at::ScalarType::Byte, "Tensor has invalid dtype (expected fp8e8m0)");
+    } else if constexpr (std::is_same_v<typename Layout::dtype, ::kittens::fp4_2>) {
+        TORCH_CHECK(t.dtype() == at::ScalarType::Float4_e2m1fn_x2, "Tensor has invalid dtype (expected fp4_2)");
 #endif
     } else if constexpr (std::is_same_v<typename Layout::dtype, ::kittens::bf16>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::BFloat16, "Tensor has invalid dtype (expected bfloat16)");

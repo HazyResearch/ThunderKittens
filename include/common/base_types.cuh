@@ -13,6 +13,9 @@
 #ifdef KITTENS_HOPPER
 #include <cuda_fp8.h>
 #endif
+#ifdef KITTENS_BLACKWELL
+#include <cuda_fp4.h>
+#endif
 
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
@@ -54,6 +57,7 @@ using fp8e4m3_2 = __nv_fp8x2_e4m3;
 using fp8e5m2_2 = __nv_fp8x2_e5m2;
 #ifdef KITTENS_BLACKWELL
 using fp8e8m0_2 = __nv_fp8x2_e8m0;
+using fp4_2 = __nv_fp4x2_e2m1;
 #endif
 /**
  * @brief 4-packed float8 floating-point type.
@@ -62,6 +66,7 @@ using fp8e4m3_4 = __nv_fp8x4_e4m3;
 using fp8e5m2_4 = __nv_fp8x4_e5m2;
 #ifdef KITTENS_BLACKWELL
 using fp8e8m0_4 = __nv_fp8x4_e8m0;
+using fp4_4 = __nv_fp4x4_e2m1;
 #endif
 #endif
 
@@ -337,6 +342,16 @@ template<> struct packing<fp8e8m0_4> {
     static __device__ inline constexpr int num() { return 4; }
     using unpacked_type = fp8e8m0;
     using packed_type = fp8e8m0_4;
+};
+template<> struct packing<fp4_2> {
+    static __device__ inline constexpr int num() { return 2; }
+    using unpacked_type = fp4_2;
+    using packed_type = fp4_4;
+};
+template<> struct packing<fp4_4> {
+    static __device__ inline constexpr int num() { return 4; }
+    using unpacked_type = fp4_2;
+    using packed_type = fp4_4;
 };
 #endif
 #endif
