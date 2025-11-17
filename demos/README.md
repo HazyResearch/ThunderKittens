@@ -3,7 +3,7 @@
 ## TK Demos: play with kittens!
 
 <div align="center" >
-    <img src="assets/kittens.png" height=350 alt="Kitten workers" style="margin-bottom:px"/> 
+    <img src="../assets/kittens.png" height=350 alt="Kitten workers" style="margin-bottom:px"/> 
 </div>
 
 <br>
