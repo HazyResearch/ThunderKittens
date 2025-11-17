@@ -311,4 +311,11 @@ __device__ static inline int cluster_ctarank() {
 }
 #endif
 
+template<int half> __device__ static inline bool get_phasebit(uint32_t bitfield, int ring_id) {
+    return (bitfield & (1 << (half*16 + ring_id))) != 0;
+}
+template<int half> __device__ static inline void update_phasebit(uint32_t &bitfield, int ring_id) {
+    bitfield ^= (1 << (half*16 + ring_id));
+}
+
 } // namespace kittens
