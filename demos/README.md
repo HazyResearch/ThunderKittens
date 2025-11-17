@@ -1,5 +1,3 @@
-
-
 ## TK Demos: play with kittens!
 
 <div align="center" >
@@ -7,7 +5,6 @@
 </div>
 
 <br>
-
 
 ### General setup 
 
@@ -20,7 +17,6 @@ Set the directory at which you want the models to download in the `_model_config
 Next, install the TK kernels: 
 1. From the `ThunderKittens/` directory, run `source env.src` to set the environment variables.
 2. In `ThunderKittens/config.py` select `hedgehog` and `attn` and run `python setup.py install` to install the TK kernels.
-
 
 ### Attention 
 
@@ -63,11 +59,8 @@ We include:
 LLM inference integration:
 - Run [Based 1.3B](https://huggingface.co/hazyresearch/my-awesome-model) with TK on a series of recall-intensive in-context learning tasks
 
-
-
 ### Your Demos!
 
 If you use TK to build any demos, please reach out / make a PR! We'd love to feature it here!!
 
 - DeltaNet: https://github.com/proger/accelerated-scan/tree/delta
-
