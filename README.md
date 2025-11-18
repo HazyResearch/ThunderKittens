@@ -139,13 +139,13 @@ struct matmul_template {
 };
 ```
 
-Altogether, this is less than 100 lines of code, and achieves about 855 TFLOPs on an H100 (86% of theoretical max). We’ll go through some of these primitives more carefully in the upcoming sections, the ThunderKittens manual.
+Altogether, this is less than 100 lines of code, and achieves about 855 TFLOPs on an H100 (86% of theoretical max). We’ll go through some of these primitives more carefully later, in the ThunderKittens Manual section.
 
 ## Installation
 
 **ThunderKittens is a header-only library**. The library itself does not require any installation; just clone the repo, and include `kittens.cuh`. Eash money.
 
-### Build requirements
+#### Build requirements
 
 But ThunderKittens does use a bunch of modern stuff, so it has fairly aggressive requirements.
 
@@ -179,7 +179,7 @@ python -c "import torch; print(torch.file)"
 export LD_LIBRARY_PATH=<PRINTED_PATH>/lib:$LD_LIBRARY_PATH
 ```
 
-### Using pre-implemented kernels
+#### Using pre-implemented kernels
 
 We've provided a number of ThunderKittens kernels in the `kernels/` folder, which can be easily called from your PyTorch code. To use these kernels:
 
@@ -197,29 +197,31 @@ We've provided a number of ThunderKittens kernels in the `kernels/` folder, whic
     ```
 
 3. `cd` into the kernel directory you want to build (e.g., `kernels/gemm/B200`).
-
 4. Build:
 
     ```bash
     make
     ```
 
-5. Include the resulting shared library file in your Python code and call the function!
+5. Import the resulting shared library file in your Python code and call the kernel!
+
+The tests and benchmarks for these kernels are located alongside their source files. Note that the top-level `tests/` directory contains tests for the ThunderKittens primitives, not for the kernels built using ThunderKittens!
 
 ## ThunderKittens Manual
 
-[In-progress onboarding document](https://docs.google.com/document/d/15-Zvf6e0NLX1si4ml4sUOWCDlXNMtOWKiuo6CKZMEYA/edit?usp=sharing). Please contribute to this if you've run into issues and feel the broader community can benefit from explanations. Please leave comments if any aspect of this is unclear. 
-
 ThunderKittens is actually a pretty small library, in terms of what it gives you.
 
- - Data types: (Register + shared) * (tiles + vectors), all parameterized by layout, type, and size.
- - Operations for manipulating these objects.
+* Data types: (Register + shared) * (tiles + vectors), all parameterized by layout, type, and size.
+* Operations for manipulating these objects.
 
-Despite its simplicity, there are still a few sharp edges that you might encounter if you don’t know what’s going on under the hood. So, we do recommend giving this manual a good read before sitting down to write a kernel -- it’s not too long, we promise!
+Therefore, the best way t learn ThunderKittens is to start looking into code and run the kernels yourself! We have a step-by-step, educational kernel series on matrix multiplication under [kernels/gemm/educational](kernels/gemm/educational).
 
-### NVIDIA’s Programming Model
+Once you get used to its APIs, there are still a few sharp edges that you might encounter if you don’t know what’s going on under the hood. So, we do recommend giving this manual a good read before sitting down to write a kernel -- it’s not too long, we promise!
+
+#### NVIDIA’s Programming Model
 
 To understand ThunderKittens, it will help to begin by reviewing a bit of how NVIDIA’s programming model works, as NVIDIA provides a few different “scopes” to think about when writing parallel code.
+
 1. Thread -- this is the level of doing work on an individual bit of data, like a floating point multiplication. A thread has up to 256 32-bit registers it can access every cycle.
 2. Warp -- 32 threads make a warp. This is the level at which instructions are issued by the hardware. It’s also the base (and default) scope from which ThunderKittens operates; most ThunderKittens programming happens here.
 3. Warpgroup -- 4 warps make a warpgroup. This is the level from which asynchronous warpgroup matrix multiply-accumulate instructions are issued. (We really wish we could ignore this level, but you unfortunately need it for the H100.) Correspondingly, many matrix multiply and memory operations are supported at the warpgroup level.
@@ -227,8 +229,10 @@ To understand ThunderKittens, it will help to begin by reviewing a bit of how NV
 5. Grid -- M blocks make a grid, where M should be equal to (or slightly less) than a multiple of the number of SMs on the GPU to avoid tail effects. ThunderKittens does not touch the grid scope except through helping initialize TMA descriptors.
 
 “Register” objects exist at the level of warps -- their contents is split amongst the threads of the warp. Register objects include:
-- Register tiles, declared as the `kittens::rt` struct in `src/register_tile/rt.cuh`. Kittens provides a few useful wrappers -- for example, a 32 row, 16 column, row-layout bfloat16 register tile can be declared as `kittens::rt_bf<32,16>;` -- row-layout is implicit by default.
-- Register vectors, which are associated with register tiles. They come in three flavors: naive, aligned, and orthogonal. What's going on under the hood is a bit too complicated for a readme, but what you need to know is that the naive layout is used for when you expect to do lots of compute on vectors (like a layernorm), and otherewise you should just instantiate column or row vectors depending on how you want to interact with a tile, and let TK take care of the layout for you. Column vectors are used to reduce or map across tile rows (it's a single column of the tile), and row vectors reduce and map across tile columns (a single row of the tile). For example, to hold the sum of the rows of the tile declared above, we would create a `kittens::rt_bf<32,16>::col_vec;`
+
+* Register tiles, declared as the `kittens::rt` struct in `src/register_tile/rt.cuh`. Kittens provides a few useful wrappers -- for example, a 32 row, 16 column, row-layout bfloat16 register tile can be declared as `kittens::rt_bf<32,16>;` -- row-layout is implicit by default.
+* Register vectors, which are associated with register tiles. They come in three flavors: naive, aligned, and orthogonal. What's going on under the hood is a bit too complicated for a readme, but what you need to know is that the naive layout is used for when you expect to do lots of compute on vectors (like a layernorm), and otherewise you should just instantiate column or row vectors depending on how you want to interact with a tile, and let TK take care of the layout for you. Column vectors are used to reduce or map across tile rows (it's a single column of the tile), and row vectors reduce and map across tile columns (a single row of the tile). For example, to hold the sum of the rows of the tile declared above, we would create a `kittens::rt_bf<32,16>::col_vec;`
+
 In contrast, “Shared” objects exist at the level of the block, and sit only in shared memory.
 
 All ThunderKittens functions follow a common signature. Much like an assembly language (ThunderKittens' origin comes from thinking about an idealized tile-oriented RISC instruction set), the destination of every function is the first operand, and the source operands are passed sequentially afterwards.
@@ -237,144 +241,127 @@ For example, if we have three 32 row, 64 col floating point register tiles: `kit
 
 Similarly, if we want to then store the result into a half-precision shared tile `__shared__ kittens:st_hf<32, 64> s;`, we write the function analogously: `kittens::store(s, c);`.
 
-### Typing
+#### Typing
 
 ThunderKittens tries hard to protect you from yourself. In particular, ThunderKittens wants to know layouts of objects at compile-time and will make sure they’re compatible before letting you do operations. This is important because there are subtleties to the allowable layouts for certain operations, and without static checks it is very easy to get painful silent failures. For example, a normal matrix multiply requires the B operand to be in a column layout, whereas an outer dot product requires the B operand to be in a row layout.
 
 If you are being told an operation that you think exists doesn't exist, double-check your layouts -- this is the most common error. Only then report a bug :)
 
-### Scopes
+#### Scopes
 
 By default, ThunderKittens operations exist at the warp-level. In other words, each function expects to be called by only a single warp, and that single warp will do all of the work of the function. If multiple warps are assigned to the same work, undefined behavior will result. (And if the operation involves memory movement, it is likely to be completely catastrophic.) In general, you should expect your programming pattern to involve instantiating a `warpid` at the beginning of the kernel with `kittens::warpid()`, and assigning tasks to data based on that id.
 
 However, not all ThunderKittens functions operate at the warp level. Many important operations, particularly WGMMA instructions, require collaborative groups of warps. These operations exist in the templated `kittens::group<collaborative size>`. For example, wgmma instructions are available through `kittens::group<4>::mma_AB` (or `kittens::warpgroup::mma_AB`, which is an alias.) Groups of warps can also collaboratively load shared memory or do reductions in shared memory
 
-### Other Restrictions
+#### Other Restrictions
 
 Most operations in ThunderKittens are pure functional. However, some operations _do_ have special restrictions; ThunderKittens tries to warn you by giving them names that stand out. For example, a register tile transpose needs separable arguments: if it is given the same underlying registers as both source and destination, it will silently fail. Consequently, it is named `transpose_sep`.
 
+#### Onboarding document
 
-
-
-
+We have a slightly outdated and incomplete [onboarding document](https://docs.google.com/document/d/15-Zvf6e0NLX1si4ml4sUOWCDlXNMtOWKiuo6CKZMEYA/edit?usp=sharing). Please contribute to this if you've run into issues and feel the broader community can benefit from explanations. Please leave comments if any aspect of this is unclear. 
 
 ## Demos
 
+<div align="center" >
+    <img src="assets/kittens.png" height=350 alt="Kitten workers" style="margin-bottom:px"/> 
+</div><br/>
+
 We've included a set of starter demos in the [demos/](https://github.com/HazyResearch/ThunderKittens/tree/main/demos) folder, showing how to use TK kernels for training and LLM inference (Qwens, Llamas, LoLCATS LLMs, etc.)! 
 
-We are excited to feature any demos you build, please link PRs! Potential contributions:
-- New kernels: attention decoding, parallel scan, training long convolutions 
-- New features: converting PyTorch to TK code, supporting new hardware (AMD?)
-- Anything else that comes to mind!
+We're also excited to feature any demos you build, please link PRs!
 
-## TK Demos: play with kittens!
+#### General setup 
 
-<div align="center" >
-    <img src="../assets/kittens.png" height=350 alt="Kitten workers" style="margin-bottom:px"/> 
-</div>
+Several of these demos are setup to use large 8B models from Hugging Face. To setup, run login:
 
-<br>
-
-### General setup 
-
-Several of these demos are setup to use large 8b models from Hugging Face. To setup, run login:
 ```bash 
 huggingface-cli login
 ```
 Set the directory at which you want the models to download in the `_model_config.yaml` file in the `demos/configs/` directory.
 
 Next, install the TK kernels: 
+
 1. From the `ThunderKittens/` directory, run `source env.src` to set the environment variables.
 2. In `ThunderKittens/config.py` select `hedgehog` and `attn` and run `python setup.py install` to install the TK kernels.
 
-### Attention 
+#### Attention 
 
 Attention powers a large number of current LLMs. TK includes forwards / prefill and backwards kernels. We include causal, non-causal, and GQA variants.
 
-We include:
-1. Try training with kittens! Checkout [tk-training](https://github.com/HazyResearch/train-tk)
-2. LLM inference integration: 
-- Run [Llama 3 8B](https://huggingface.co/meta-llama/Meta-Llama-3-8B) with TK GQA attention
-- Run [Qwen 2.5 7B](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct) with TK attention
+We include LLM inference integrations:
+
+* [Llama 3 8B](https://huggingface.co/meta-llama/Meta-Llama-3-8B) with TK GQA attention
+* [Qwen 2.5 7B](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct) with TK attention
+
 ```bash
 cd llama_demo/
 bash demo_8b.sh
 ```
+
 And enter your prompt, e.g., "The capital of America is"
 
-### LoLCATS
+#### LoLCATS
 
 [LoLCATS](https://github.com/HazyResearch/lolcats) is a recent state-of-the-art method for converting quadratic attention Transformer LLMs to linear attention LLMs. TK includes a forwards / prefill kernel. 
 
-We include: 
-1. LLM inference integration:
-- Run [LoLCATS-Llama 3.1 8B](https://huggingface.co/collections/hazyresearch/lolcats-670ca4341699355b61238c37) with TK 
+We include:
+
+* [LoLCATS-Llama 3.1 8B](https://huggingface.co/collections/hazyresearch/lolcats-670ca4341699355b61238c37) with TK .
+
 ```bash
 cd lolcats_demo/
 bash demo_8b.sh
 ```
 And enter your prompt, e.g., "The capital of America is"
 
-### Based
+#### Based
 
 [Based](https://github.com/HazyResearch/based/tree/main) is a linear attention architecture that combines short sliding window attentions with large-state-size linear attentions. TK includes a forwards / prefill kernel.
 
 Added installs:
+
 ```bash
 pip install -U git+https://github.com/sustcsonglin/flash-linear-attention
 ```
 
 We include:
-LLM inference integration:
-- Run [Based 1.3B](https://huggingface.co/hazyresearch/my-awesome-model) with TK on a series of recall-intensive in-context learning tasks
 
-### Your Demos!
+* [Based 1.3B](https://huggingface.co/hazyresearch/my-awesome-model) with TK on a series of recall-intensive in-context learning tasks.
+
+#### Your Demos!
 
 If you use TK to build any demos, please reach out / make a PR! We'd love to feature it here!!
 
-- DeltaNet: https://github.com/proger/accelerated-scan/tree/delta
-
-
+* DeltaNet: https://github.com/proger/accelerated-scan/tree/delta
 
 ## Tests
 
-To validate your install, and run TK's fairly comprehensive unit testing suite, simply run `make -j` in the tests folder. Be warned: this may nuke your computer for a minute or two while it compiles thousands of kernels.
+ThunderKittens has fairly comprehensive unit testing suite. Simply run `make -j` in the `tests/` folder. Be warned: this may nuke your computer for a minute or two while it compiles thousands of kernels.
 
-## Kittens Unit Tests
 
-This directory contains unit tests for ThunderKittens.
+#### Compilation Options
 
-### Requirements
+The `tests/Makefile` provides several options to customize the test:
 
-- NVIDIA GPU
-- CUDA Toolkit (12.3 or 12.4 preferred.)
-- C++20 compatible compiler
+* `GPU_TARGET`: Set to either `H100` or `B200` to specify the target GPU architecture (default: H100).
+* `COMP_LEVEL`: Set the compiler optimization level. Available options are `fast`, `debug`, and `profile` (default: fast).
+* `TEST_INTENSITY`: Set the level of test intensity. Higher levels compile more tests but take longer. Available options are 1, 2, 3, and 4 (default: 2).
+* `TEST_ALL`: Compile and run all available tests. You can also specify individual test sections or tests using flags like -DTEST_WARP_MEMORY or -DTEST_WARP_MEMORY_VEC_DSMEM.
 
-### Compiling the Tests
+#### Running the Tests
 
-To compile the unit tests, use the provided Makefile in this directory. It is highly recommended to run the compilation with multiple threads to speed up the process. For example, if your machine has 32 threads, run:
-
-```bash
-make -j32
-```
-
-### Compilation Options
-The Makefile provides several options to customize the compilation:
-- `GPU_TARGET`: Set to either `4090`, `A100`, or `H100` to specify the target GPU architecture (default: H100).
-- `COMP_LEVEL`: Set the compiler optimization level. Available options are `fast`, `debug`, and `profile` (default: fast).
-- `TEST_INTENSITY`: Set the level of test intensity. Higher levels compile more tests but take longer. Available options are 1, 2, 3, and 4 (default: 2).
-- `TEST_ALL`: Compile and run all available tests. You can also specify individual test sections or tests using flags like -DTEST_WARP_MEMORY or -DTEST_WARP_MEMORY_VEC_DSMEM.
-
-### Running the Tests
 After successful compilation, run the tests using:
 
 ```bash
 mkdir outputs
 ./unit_tests printout
 ```
+
 This will execute the compiled unit tests and dump results of any failed tests to the `outputs/` folder. As a quick note, it is expected for mma tests to occasionally fail. Careful inspection of the output will usually show just a single element differing by a small amount, which we think is due to how floating-point arithmetic is implemented within the tensor cores.
 
-### Cleaning the Build
+#### Cleaning the Build
+
 To clean the build directory and remove the compiled binary, run:
 
 ```bash
@@ -383,24 +370,30 @@ make clean
 
 ## Learn more and get involved!
 
-Join us on Discord to get involved: [ThunderKittens channel @ GPU Mode Discord](https://discord.com/channels/1189498204333543425/1300872762163728550)!!!! Here is the invite link to GPU mode: https://discord.gg/gpumode
-
-If you would like to contribute new tests or improve existing ones, please follow the established coding style and naming conventions. Make sure to test your changes thoroughly before submitting a pull request.
-
-The unit tests directly mirror the file structure of the main repo. This makes it much easier to track coverage. and identify untested regions of code.
-
-For more information on contributing to the Kittens project, please refer to the main repository's contributing guidelines.
-
-
 Learn more about ThunderKittens and how GPUs work by checking out our blogs:
-- [Easier, Better, Faster, Cuter Blogpost, Oct. 2024](https://hazyresearch.stanford.edu/blog/2024-10-29-tk2)
-- [GPUs Go Brrr Blogpost, May 2024](https://hazyresearch.stanford.edu/blog/2024-05-12-tk)
-- [ThunderKittens: Bringing fp8 to theaters near you, Nov 2024](https://hazyresearch.stanford.edu/blog/2024-11-27-tk-fp8)
-- [ThunderMittens For Your ThunderKittens, Nov 2024](https://hazyresearch.stanford.edu/blog/2024-11-28-tk-mlx)
 
-Please check out our paper for even more details: [paper](https://arxiv.org/abs/2410.20399)
+* [GPUs Go Brrr, May 2024](https://hazyresearch.stanford.edu/blog/2024-05-12-tk)
+* [Easier, Better, Faster, Cuter, Oct. 2024](https://hazyresearch.stanford.edu/blog/2024-10-29-tk2)
+* [ThunderKittens: Bringing fp8 to theaters near you, Nov 2024](https://hazyresearch.stanford.edu/blog/2024-11-27-tk-fp8)
+* [ThunderMLA: FlashMLA, Faster and Fused-er! Mar 2025](https://hazyresearch.stanford.edu/blog/2025-03-04-thundermla)
+* [ThunderKittens Now on Blackwells! Mar 2025](https://hazyresearch.stanford.edu/blog/2025-03-15-tk-blackwell)
+* [Look Ma, No Bubbles! Designing a Low-Latency Megakernel for Llama-1B, May 2025](https://hazyresearch.stanford.edu/blog/2025-05-27-no-bubbles)
+* [One Kernel for All Your GPUs, Sep 2025](https://hazyresearch.stanford.edu/blog/2025-09-22-pgl)
+* [We Bought the Whole GPU, So We're Damn Well Going to Use the Whole GPU, Sep 2025](https://hazyresearch.stanford.edu/blog/2025-09-28-tp-llama-main)
+* [Loads and Loads of Fluffy Kittens, Nov 2025](https://hazyresearch.stanford.edu/blog/2025-11-17-fluffy-kittens)
 
-Join us and get involved at the [ThunderKittens channel @ GPU Mode Discord](https://discord.com/channels/1189498204333543425/1300872762163728550)!!!!  Here is the invite link to GPU mode: https://discord.gg/gpumode
+Explore the Kittens Cinematic Universe:
+
+* [ThunderKittens](https://github.com/HazyResearch/ThunderKittens) for NVIDIA
+* [HipKittens](https://github.com/HazyResearch/HipKittens) for AMD
+* [ThunderMittens](https://github.com/HazyResearch/ThunderMittens) for Apple Silicon
+
+Please check out our papers for even more details!
+
+* [Single GPU](https://arxiv.org/abs/2410.20399)
+* [Multiple GPUs](TODO)
+
+Finally, join us on Discord to get involved: [ThunderKittens channel @ GPU Mode Discord](https://discord.com/channels/1189498204333543425/1300872762163728550)!!!! Here is the invite link to GPU mode: https://discord.gg/gpumode
 
 ## License
 
