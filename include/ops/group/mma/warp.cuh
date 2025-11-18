@@ -1,6 +1,6 @@
 /**
  * @file
- * @brief Matrix multiply-accumulate operations for tiles stored in registers.
+ * @brief Warp-level matrix multiply-accumulate operations for tiles stored in registers.
  */
 
 /**
