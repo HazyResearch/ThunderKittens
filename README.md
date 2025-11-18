@@ -9,11 +9,13 @@
 
 1. **Simplicity**. ThunderKittens is stupidly simple to write.
 2. **Extensibility**. ThunderKittens is natively embedded into CUDA, so that if you need more than ThunderKittens can offer, it won’t get in your way of building it yourself.
-3. **Speed**. Kernels written in ThunderKittens should be at least as fast as those written from scratch -- especially because ThunderKittens can do things the “right” way under the hood. We think our Flash Attention 3 implementation speaks for this point.
+3. **Speed**. Kernels written in ThunderKittens should be at least as fast as those written from scratch -- especially because ThunderKittens can do things the “right” way under the hood. We think our FlashAttention-3 implementation speaks for this point.
 
 <div align="center">
     <img src="assets/attn.png" height=600 alt="Flash Attention 3, but with kittens!" style="margin-bottom:px"/> 
 </div>
+
+ThunderKittens is used by many AI companies for production-scale training and inference (e.g., [Together AI](https://www.together.ai/blog/thunderkittens), Jump Trading, and [Cursor](https://cursor.com/en-US/blog/kernels)).
 
 ThunderKittens is built for NVIDIA GPUs. For AMD GPUs, check out [HipKittens](https://github.com/HazyResearch/HipKittens). 
 
@@ -38,7 +40,7 @@ ThunderKittens makes a few tricky things easy that enable high utilization on mo
 3. Loads and stores. Hide latencies with asynchronous copies and address generation with TMA.
 4. Distributed Shared Memory. L2 is _so_ last year.
 5. Worker overlapping. Use our Load-Store-Compute-Finish template to overlap work and I/O.
-6. GPU networking. ThunderKittens lets you transfer data over NVLink and utilize NVSwich acceleration for fast multi-GPU operations.
+6. GPU networking. ThunderKittens lets you transfer data over NVLink and utilize NVSwitch acceleration for fast multi-GPU operations.
 
 #### Example: A Simple Matrix Multiplication Kernel
 
@@ -143,7 +145,7 @@ Altogether, this is less than 100 lines of code, and achieves about 855 TFLOPs o
 
 ## Installation
 
-**ThunderKittens is a header-only library**. The library itself does not require any installation; just clone the repo, and include `kittens.cuh`. Eash money.
+**ThunderKittens is a header-only library**. The library itself does not require any installation; just clone the repo, and include `kittens.cuh`. Easy money.
 
 #### Build requirements
 
@@ -183,7 +185,7 @@ export LD_LIBRARY_PATH=<PRINTED_PATH>/lib:$LD_LIBRARY_PATH
 
 We've provided a number of ThunderKittens kernels in the `kernels/` folder, which can be easily called from your PyTorch code. To use these kernels:
 
-1. Make sure the currently activate Python environment has PyTorch 2.8+ and PyBind11 installed. Ensure your PyTorch version meets the CUDA version (follow the [official instructions](https://pytorch.org/get-started/locally/)).
+1. Make sure the currently activated Python environment has PyTorch 2.8+ and PyBind11 installed. Ensure your PyTorch version meets the CUDA version (follow the [official instructions](https://pytorch.org/get-started/locally/)).
 2. (Optional) Set environment variables. Our build system sets this for you, but it's quite slow to set it every time. So it is recommended to set them first.
 
     ```bash
@@ -214,24 +216,24 @@ ThunderKittens is actually a pretty small library, in terms of what it gives you
 * Data types: (Register + shared) * (tiles + vectors), all parameterized by layout, type, and size.
 * Operations for manipulating these objects.
 
-Therefore, the best way t learn ThunderKittens is to start looking into code and run the kernels yourself! We have a step-by-step, educational kernel series on matrix multiplication under [kernels/gemm/educational](kernels/gemm/educational).
+Therefore, the best way to learn ThunderKittens is to start looking into kernels and run the them yourself! We have a step-by-step, educational kernel series on matrix multiplication under [kernels/gemm/educational](kernels/gemm/educational).
 
-Once you get used to its APIs, there are still a few sharp edges that you might encounter if you don’t know what’s going on under the hood. So, we do recommend giving this manual a good read before sitting down to write a kernel -- it’s not too long, we promise!
+Once you get used to its APIs, there are still a few sharp edges that you might encounter if you don’t know what’s going on under the hood. So, we do recommend giving this manual a good read before sitting down to write a serious kernel -- it’s not too long, we promise!
 
 #### NVIDIA’s Programming Model
 
 To understand ThunderKittens, it will help to begin by reviewing a bit of how NVIDIA’s programming model works, as NVIDIA provides a few different “scopes” to think about when writing parallel code.
 
-1. Thread -- this is the level of doing work on an individual bit of data, like a floating point multiplication. A thread has up to 256 32-bit registers it can access every cycle.
-2. Warp -- 32 threads make a warp. This is the level at which instructions are issued by the hardware. It’s also the base (and default) scope from which ThunderKittens operates; most ThunderKittens programming happens here.
-3. Warpgroup -- 4 warps make a warpgroup. This is the level from which asynchronous warpgroup matrix multiply-accumulate instructions are issued. (We really wish we could ignore this level, but you unfortunately need it for the H100.) Correspondingly, many matrix multiply and memory operations are supported at the warpgroup level.
-4. Block -- N warps make a block, which is the level that shares “shared memory” in the CUDA programming model. In ThunderKittens, N is often 8.
-5. Grid -- M blocks make a grid, where M should be equal to (or slightly less) than a multiple of the number of SMs on the GPU to avoid tail effects. ThunderKittens does not touch the grid scope except through helping initialize TMA descriptors.
+1. **Thread**: this is the level of doing work on an individual bit of data, like a floating point multiplication. A thread has up to 256 32-bit registers it can access every cycle.
+2. **Warp**: 32 threads make a warp. This is the level at which instructions are issued by the hardware. It’s also the base (and default) scope from which ThunderKittens operates; most ThunderKittens programming happens here.
+3. **Warpgroup**: 4 warps make a warpgroup. This is the level from which asynchronous warpgroup matrix multiply-accumulate instructions are issued. (We really wish we could ignore this level, but you unfortunately need it for the H100.) Correspondingly, many matrix multiply and memory operations are supported at the warpgroup level.
+4. **Block**: N warps make a block, which is the level that shares “shared memory” in the CUDA programming model. In ThunderKittens, N is often 8.
+5. **Grid**: M blocks make a grid, where M should be equal to (or slightly less) than a multiple of the number of SMs on the GPU to avoid tail effects. ThunderKittens does not touch the grid scope except through helping initialize TMA descriptors.
 
-“Register” objects exist at the level of warps -- their contents is split amongst the threads of the warp. Register objects include:
+“Register” objects exist at the level of warps; their contents are split amongst the threads of the warp. Register objects include:
 
 * Register tiles, declared as the `kittens::rt` struct in `src/register_tile/rt.cuh`. Kittens provides a few useful wrappers -- for example, a 32 row, 16 column, row-layout bfloat16 register tile can be declared as `kittens::rt_bf<32,16>;` -- row-layout is implicit by default.
-* Register vectors, which are associated with register tiles. They come in three flavors: naive, aligned, and orthogonal. What's going on under the hood is a bit too complicated for a readme, but what you need to know is that the naive layout is used for when you expect to do lots of compute on vectors (like a layernorm), and otherewise you should just instantiate column or row vectors depending on how you want to interact with a tile, and let TK take care of the layout for you. Column vectors are used to reduce or map across tile rows (it's a single column of the tile), and row vectors reduce and map across tile columns (a single row of the tile). For example, to hold the sum of the rows of the tile declared above, we would create a `kittens::rt_bf<32,16>::col_vec;`
+* Register vectors, which are associated with register tiles. They come in three flavors: naive, aligned, and orthogonal. What's going on under the hood is a bit too complicated for a readme, but what you need to know is that the naive layout is used for when you expect to do lots of compute on vectors (like a layernorm), and otherwise you should just instantiate column or row vectors depending on how you want to interact with a tile, and let TK take care of the layout for you. Column vectors are used to reduce or map across tile rows (it's a single column of the tile), and row vectors reduce and map across tile columns (a single row of the tile). For example, to hold the sum of the rows of the tile declared above, we would create a `kittens::rt_bf<32,16>::col_vec;`
 
 In contrast, “Shared” objects exist at the level of the block, and sit only in shared memory.
 
@@ -273,7 +275,7 @@ We're also excited to feature any demos you build, please link PRs!
 
 #### General setup 
 
-Several of these demos are setup to use large 8B models from Hugging Face. To setup, run login:
+Several of these demos are set up to use large 8B models from Hugging Face. To setup, run `login`:
 
 ```bash 
 huggingface-cli login
