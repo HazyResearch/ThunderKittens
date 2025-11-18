@@ -268,3 +268,136 @@ Please check out our paper for even more details: [paper](https://arxiv.org/abs/
 Join us and get involved at the [ThunderKittens channel @ GPU Mode Discord](https://discord.com/channels/1189498204333543425/1300872762163728550)!!!!  Here is the invite link to GPU mode: https://discord.gg/gpumode
 
 
+
+
+
+# So that you can see the python packages from the tests
+export PYTHONPATH=""
+export THUNDERKITTENS_ROOT=""
+export PYTHONPATH=${PYTHONPATH}:$PWD/src/common/pyutils
+export THUNDERKITTENS_ROOT=${PWD}
+export CUDA_HOME=${CUDA_HOME:-/usr/local/cuda-12.6}
+export PATH=${CUDA_HOME}/bin:${PATH}
+export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
+
+# Demos
+
+## TK Demos: play with kittens!
+
+<div align="center" >
+    <img src="../assets/kittens.png" height=350 alt="Kitten workers" style="margin-bottom:px"/> 
+</div>
+
+<br>
+
+### General setup 
+
+Several of these demos are setup to use large 8b models from Hugging Face. To setup, run login:
+```bash 
+huggingface-cli login
+```
+Set the directory at which you want the models to download in the `_model_config.yaml` file in the `demos/configs/` directory.
+
+Next, install the TK kernels: 
+1. From the `ThunderKittens/` directory, run `source env.src` to set the environment variables.
+2. In `ThunderKittens/config.py` select `hedgehog` and `attn` and run `python setup.py install` to install the TK kernels.
+
+### Attention 
+
+Attention powers a large number of current LLMs. TK includes forwards / prefill and backwards kernels. We include causal, non-causal, and GQA variants.
+
+We include:
+1. Try training with kittens! Checkout [tk-training](https://github.com/HazyResearch/train-tk)
+2. LLM inference integration: 
+- Run [Llama 3 8B](https://huggingface.co/meta-llama/Meta-Llama-3-8B) with TK GQA attention
+- Run [Qwen 2.5 7B](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct) with TK attention
+```bash
+cd llama_demo/
+bash demo_8b.sh
+```
+And enter your prompt, e.g., "The capital of America is"
+
+### LoLCATS
+
+[LoLCATS](https://github.com/HazyResearch/lolcats) is a recent state-of-the-art method for converting quadratic attention Transformer LLMs to linear attention LLMs. TK includes a forwards / prefill kernel. 
+
+We include: 
+1. LLM inference integration:
+- Run [LoLCATS-Llama 3.1 8B](https://huggingface.co/collections/hazyresearch/lolcats-670ca4341699355b61238c37) with TK 
+```bash
+cd lolcats_demo/
+bash demo_8b.sh
+```
+And enter your prompt, e.g., "The capital of America is"
+
+### Based
+
+[Based](https://github.com/HazyResearch/based/tree/main) is a linear attention architecture that combines short sliding window attentions with large-state-size linear attentions. TK includes a forwards / prefill kernel.
+
+Added installs:
+```bash
+pip install -U git+https://github.com/sustcsonglin/flash-linear-attention
+```
+
+We include:
+LLM inference integration:
+- Run [Based 1.3B](https://huggingface.co/hazyresearch/my-awesome-model) with TK on a series of recall-intensive in-context learning tasks
+
+### Your Demos!
+
+If you use TK to build any demos, please reach out / make a PR! We'd love to feature it here!!
+
+- DeltaNet: https://github.com/proger/accelerated-scan/tree/delta
+
+
+
+# Tests
+
+# Kittens Unit Tests
+
+This directory contains unit tests for ThunderKittens.
+
+### Requirements
+
+- NVIDIA GPU
+- CUDA Toolkit (12.3 or 12.4 preferred.)
+- C++20 compatible compiler
+
+### Compiling the Tests
+
+To compile the unit tests, use the provided Makefile in this directory. It is highly recommended to run the compilation with multiple threads to speed up the process. For example, if your machine has 32 threads, run:
+
+```bash
+make -j32
+```
+
+### Compilation Options
+The Makefile provides several options to customize the compilation:
+- `GPU_TARGET`: Set to either `4090`, `A100`, or `H100` to specify the target GPU architecture (default: H100).
+- `COMP_LEVEL`: Set the compiler optimization level. Available options are `fast`, `debug`, and `profile` (default: fast).
+- `TEST_INTENSITY`: Set the level of test intensity. Higher levels compile more tests but take longer. Available options are 1, 2, 3, and 4 (default: 2).
+- `TEST_ALL`: Compile and run all available tests. You can also specify individual test sections or tests using flags like -DTEST_WARP_MEMORY or -DTEST_WARP_MEMORY_VEC_DSMEM.
+
+### Running the Tests
+After successful compilation, run the tests using:
+
+```bash
+mkdir outputs
+./unit_tests printout
+```
+This will execute the compiled unit tests and dump results of any failed tests to the `outputs/` folder. As a quick note, it is expected for mma tests to occasionally fail. Careful inspection of the output will usually show just a single element differing by a small amount, which we think is due to how floating-point arithmetic is implemented within the tensor cores.
+
+### Cleaning the Build
+To clean the build directory and remove the compiled binary, run:
+
+```bash
+make clean
+```
+
+## Contributing
+
+If you would like to contribute new tests or improve existing ones, please follow the established coding style and naming conventions. Make sure to test your changes thoroughly before submitting a pull request.
+
+The unit tests directly mirror the file structure of the main repo. This makes it much easier to track coverage. and identify untested regions of code.
+
+For more information on contributing to the Kittens project, please refer to the main repository's contributing guidelines.
