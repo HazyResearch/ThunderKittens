@@ -7,7 +7,7 @@
 #include "tile/tile.cuh"
 #include "vec/vec.cuh"
 
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 struct tma {
 #include "util/tma.cuh"
 #include "tile/tma.cuh"

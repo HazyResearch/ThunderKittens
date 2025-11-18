@@ -90,7 +90,7 @@ struct test_type_convert {
     }
 };
 
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 struct test_type_convert_typed { 
     template<int H, int W, int NW, typename T2, typename U2> using valid = std::bool_constant<NW == 1 && W*H<=32 && (
         ( ( 
@@ -178,7 +178,7 @@ void group::reg::tile::conversions::tests(test_data &results) {
     // sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::half, kittens::bf16>::run(results);
     // sweep_size_2d_warp<test_type_convert, SIZE, SIZE, kittens::bf16, kittens::half>::run(results);
 
-    // #ifdef KITTENS_HOPPER
+    // #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     // sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, float, kittens::fp8e4m3>::run(results); // fp8 
     // sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, kittens::fp8e4m3, float>::run(results);
     // sweep_size_2d_warp<test_type_convert_typed, SIZE, SIZE, float, kittens::fp8e5m2>::run(results); 

@@ -10,7 +10,7 @@ struct test_load { // load with TMA, write out normally
     >;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_load_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_load_gmem=half" :
-                                                        #ifdef KITTENS_HOPPER
+                                                        #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
                                                       std::is_same_v<T, kittens::fp8e4m3> ? "tma_load_gmem=fp8e4m3":
                                                       std::is_same_v<T, kittens::fp8e5m2> ? "tma_load_gmem=fp8e5m2":
                                                         #endif
@@ -93,7 +93,7 @@ struct test_store { // load normally, store with TMA
     >;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_gmem=half" :
-                                                      #ifdef KITTENS_HOPPER
+                                                      #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
                                                       std::is_same_v<T, kittens::fp8e4m3> ? "tma_load_gmem=fp8e4m3":
                                                       std::is_same_v<T, kittens::fp8e5m2> ? "tma_load_gmem=fp8e5m2":
                                                       #endif
@@ -128,7 +128,7 @@ struct test_store_add_reduce {
     >;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_add_reduce_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_add_reduce_gmem=half" :
-                                                      #ifdef KITTENS_HOPPER
+                                                      #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
                                                       std::is_same_v<T, kittens::fp8e4m3> ? "tma_load_gmem=fp8e4m3":
                                                       std::is_same_v<T, kittens::fp8e5m2> ? "tma_load_gmem=fp8e5m2":
                                                         #endif
@@ -168,7 +168,7 @@ struct test_store_min_reduce {
     >;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_min_reduce_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_min_reduce_gmem=half" :
-                                                      #ifdef KITTENS_HOPPER
+                                                      #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
                                                       std::is_same_v<T, kittens::fp8e4m3> ? "tma_load_gmem=fp8e4m3":
                                                       std::is_same_v<T, kittens::fp8e5m2> ? "tma_load_gmem=fp8e5m2":
                                                         #endif
@@ -207,7 +207,7 @@ struct test_store_max_reduce {
     >;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "tma_store_max_reduce_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "tma_store_max_reduce_gmem=half" :
-                                                      #ifdef KITTENS_HOPPER
+                                                      #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
                                                       std::is_same_v<T, kittens::fp8e4m3> ? "tma_load_gmem=fp8e4m3":
                                                       std::is_same_v<T, kittens::fp8e5m2> ? "tma_load_gmem=fp8e5m2":
                                                         #endif
@@ -290,7 +290,7 @@ struct tma_sweep_gmem_type_2d {
         tma_sweep_size_2d<test<float>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
         tma_sweep_size_2d<test<kittens::bf16>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
         tma_sweep_size_2d<test<kittens::half>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
-        #ifdef KITTENS_HOPPER
+        #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
         tma_sweep_size_2d<test<kittens::fp8e4m3>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
         tma_sweep_size_2d<test<kittens::fp8e5m2>, MAX_H, MAX_W, NUM_WORKERS, args...>::run(results);
         #endif

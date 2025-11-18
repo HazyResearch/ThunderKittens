@@ -10,7 +10,7 @@
 
 #pragma once
 
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 #include <cuda_fp8.h>
 #endif
 #ifdef KITTENS_BLACKWELL
@@ -41,7 +41,7 @@ using bf16_2 = __nv_bfloat162;
  * @brief Packed word of two half-precision floating-point values.
  */
 using half_2 = __half2;
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 /**
  * @brief float8 floating-point type.
  */
@@ -78,7 +78,7 @@ namespace ducks {
  */
 namespace base_types {
 
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 #ifdef KITTENS_BLACKWELL
 template<typename T>
 concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2> || std::is_same_v<T, half_2> || std::is_same_v<T, fp8e4m3_4> || std::is_same_v<T, fp8e5m2_4> || std::is_same_v<T, fp8e8m0_4>; // could add half_2 later if implemented.
@@ -164,7 +164,7 @@ template<> struct constants<half_2> {
     static __device__ inline constexpr half_2 pos_infty() { return half_2{constants<half>::pos_infty(), constants<half>::pos_infty()}; }
     static __device__ inline constexpr half_2 neg_infty() { return half_2{constants<half>::neg_infty(), constants<half>::neg_infty()}; }
 };
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 template<> struct constants<fp8e4m3> {
     static __device__ inline constexpr fp8e4m3 zero() { return std::bit_cast<__nv_fp8_e4m3>(uint8_t(0x00)); }
     static __device__ inline constexpr fp8e4m3 one() { return std::bit_cast<__nv_fp8_e4m3>(uint8_t(0x38)); }
@@ -311,7 +311,7 @@ template<> struct packing<float4> {
 template<> struct packing<int4> {
     static __device__ inline constexpr int num() { return 4; }
 };
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 template<> struct packing<fp8e4m3> {
     static __device__ inline constexpr int num() { return 1; }
     using unpacked_type = fp8e4m3;
@@ -434,7 +434,7 @@ template<> struct convertor<half_2, bf16_2> {
         return __float22half2_rn(__bfloat1622float2(u));
     }
 };
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 // fp8e4m3
 template<> struct convertor<fp8e4m3_4, float4> {
     static __host__ __device__ inline fp8e4m3_4 convert(const float4& u) {

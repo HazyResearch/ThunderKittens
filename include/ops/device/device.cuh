@@ -17,7 +17,7 @@ struct device {
 static_assert(_NUM_DEVICES >= 0 && _NUM_DEVICES <= 72, "Invalid number of devices");
 static constexpr int NUM_DEVICES = _NUM_DEVICES;
 
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 
 using barrier_t = pgl<gl<int, -1, -1, -1, -1>, NUM_DEVICES, true>;
 

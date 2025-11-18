@@ -249,7 +249,7 @@ struct test_mma_AtBt_half {
     template<int H, int W, typename K> using make_c_layout = typename kittens::gl<float, 1, 1, 16*H, 16*W>;
 };
 
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 struct test_mma_ABt_fp8 {
     using dtype = kittens::fp8e4m3;
     template<int H, int W, int NW, typename K> using valid = std::bool_constant<
@@ -348,7 +348,7 @@ template<typename test, int MAX_H=8, int MAX_W=8, int NUM_WORKERS=1, typename...
 template<typename test, int MAX_H=8, int MAX_W=8, typename... args> using mma_sweep_size_warp = mma_sweep_size<test, MAX_H, MAX_W, 1, args...>;
 
 
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 // fp8 
 template<typename test, int H, int W, int NUM_WORKERS, typename _K, typename... args>
 struct mma_wrapper_2d_fp8 {
@@ -416,7 +416,7 @@ void group::mma::warp::mma::tests(test_data &results) {
     mma_sweep_size_warp<test_mma_AtBt, SIZE, SIZE, std::integral_constant<int, 3>>::run(results);
     mma_sweep_size_warp<test_mma_AtBt, SIZE, SIZE, std::integral_constant<int, 4>>::run(results);
 
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     // fp8
     mma_sweep_size_warp_fp8<test_mma_ABt_fp8, SIZE, SIZE, std::integral_constant<int, 1>>::run(results);
     mma_sweep_size_warp_fp8<test_mma_ABt_fp8, SIZE, SIZE, std::integral_constant<int, 2>>::run(results);

@@ -204,7 +204,7 @@ __device__ inline float2 packed_shfl_sync<float2>(uint32_t mask, const float2 &f
 #define KITTENS_ALIGN_AS(n) alignas(n)
 #endif
 
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 #define KITTENS_DEFAULT_ALIGN KITTENS_ALIGN_AS(128)
 #else
 #define KITTENS_DEFAULT_ALIGN KITTENS_ALIGN_AS(16)
@@ -218,7 +218,7 @@ struct KITTENS_DEFAULT_ALIGN alignment_dummy { int dummy; };
  * @brief Very simple allocator for dynamic shared memory. Advances pointer and tracks alignments.
  * @tparam default_alignment The default alignment this allocator will enforce. If <=0 (default -1) it will not align.
  */
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 template<int default_alignment=1024> 
 #else
 template<int default_alignment=16> 

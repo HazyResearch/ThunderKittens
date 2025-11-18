@@ -9,7 +9,7 @@
 #include "../shared/cst.cuh"
 #include "gl.cuh"
 #include "util.cuh"
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 #include "tma.cuh"
 #endif
 

@@ -8,7 +8,7 @@
 #include "../../common/common.cuh"
 #include "../shared/shared.cuh"
 #include "util.cuh"
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 #include <utility>
 #include "tma.cuh"
 #endif
@@ -26,7 +26,7 @@ struct dim {
 
 /* ----------   Associative dictionary for global layouts  ---------- */
 
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 namespace ducks {
 namespace tma {
 namespace descriptor {
@@ -68,7 +68,7 @@ struct descriptor_dict {
     __host__ descriptor_dict() {}
     template<typename T> __host__ descriptor_dict(T _, int b, int d, int r, int c) {}
     __host__ __device__ descriptor_dict(const descriptor_dict &other) {}
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     template<typename T, int U> __device__ const CUtensorMap* get() const {
         static_assert(
             std::is_same_v<T, std::true_type> && std::is_same_v<T, std::false_type>,
@@ -78,7 +78,7 @@ struct descriptor_dict {
 #endif
 };
 
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 template<typename _T, typename... Args>
 struct descriptor_dict<_T, Args...> {
     static_assert(ducks::sv::all<_T> || ducks::st::all<_T> || ducks::tma::descriptor::all<_T>, "Must be a shared TK type to generate a TMA descriptor.");
@@ -145,7 +145,7 @@ struct gl {
     }
     __host__ __device__ inline gl(const gl &other) :
             raw_ptr(other.raw_ptr), batch_internal(other.batch_internal), depth_internal(other.depth_internal), rows_internal(other.rows_internal), cols_internal(other.cols_internal), tma_descs(other.tma_descs) {}
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     template<typename U, int axis> __device__ inline const CUtensorMap* get_tma() const {
         return tma_descs.template get<U, axis>();
     }

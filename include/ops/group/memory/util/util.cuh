@@ -83,7 +83,7 @@ template<int num_warps> __device__ static inline void arrive(barrier<num_warps> 
     asm volatile("bar.arrive %0, %1;\n" :: "r"(bar.barrier_id), "n"(num_warps*WARP_THREADS) : "memory");
 }
 
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 /**
 * @brief Arrives at a semaphore.
 *
@@ -115,7 +115,7 @@ __device__ static inline void wait(semaphore& sem, int kPhaseBit) {
     void const* const ptr = &sem;
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
 
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     asm volatile (
         "{\n"
         ".reg .pred                P1;\n"

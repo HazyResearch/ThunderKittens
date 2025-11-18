@@ -156,7 +156,7 @@ __device__ static inline void mma_AB(D &d,
     // Usings
     using T_AB = A::T;
     using T_D  = D::T;
-    #ifdef KITTENS_HOPPER
+    #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     static_assert(!std::is_same_v<T_AB, fp8e4m3> && !std::is_same_v<T_AB, fp8e5m2>, "Currently unsupported type");
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
@@ -211,7 +211,7 @@ __device__ static inline void mma_AB(D &d,
     // Usings
     using T_AB = A::T;
     using T_D  = D::T;
-    #ifdef KITTENS_HOPPER
+    #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     static_assert(!std::is_same_v<T_AB, fp8e4m3> && !std::is_same_v<T_AB, fp8e5m2>, "Currently unsupported type");
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
@@ -406,7 +406,7 @@ __device__ static inline void mma_AtB(D &d,
     // Usings
     using T_AB = A::T;
     using T_D  = D::T;
-    #ifdef KITTENS_HOPPER
+    #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     static_assert(!std::is_same_v<T_AB, fp8e4m3> && !std::is_same_v<T_AB, fp8e5m2>, "Currently unsupported type");
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
@@ -469,7 +469,7 @@ __device__ static inline void mma_AtBt(D &d,
     // Usings
     using T_AB = A::T;
     using T_D  = D::T;
-    #ifdef KITTENS_HOPPER
+    #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     static_assert(!std::is_same_v<T_AB, fp8e4m3> && !std::is_same_v<T_AB, fp8e5m2>, "Currently unsupported type");
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
@@ -566,7 +566,7 @@ __device__ static inline void mma_AB(D &d,
     // Usings
     using T_AB = A::T;
     using T_D  = D::T;
-    #ifdef KITTENS_HOPPER
+    #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     static_assert(!std::is_same_v<T_AB, fp8e4m3> && !std::is_same_v<T_AB, fp8e5m2>, "Currently unsupported type");
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
@@ -659,7 +659,7 @@ __device__ static inline void mma_AB(D &d,
     // Usings
     using T_AB = A::T;
     using T_D  = D::T;
-    #ifdef KITTENS_HOPPER
+    #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     static_assert(!std::is_same_v<T_AB, fp8e4m3> && !std::is_same_v<T_AB, fp8e5m2>, "Currently unsupported type");
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
@@ -962,7 +962,7 @@ __device__ static inline void mma_AtB(D &d,
     // Usings
     using T_AB = A::T;
     using T_D  = D::T;
-    #ifdef KITTENS_HOPPER
+    #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     static_assert(!std::is_same_v<T_AB, fp8e4m3> && !std::is_same_v<T_AB, fp8e5m2>, "Currently unsupported type");
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif
@@ -1060,7 +1060,7 @@ __device__ static inline void mma_AtBt(D &d,
     // Usings
     using T_AB = A::T;
     using T_D  = D::T;
-    #ifdef KITTENS_HOPPER
+    #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     static_assert(!std::is_same_v<T_AB, fp8e4m3> && !std::is_same_v<T_AB, fp8e5m2>, "Currently unsupported type");
     static_assert(!std::is_same_v<T_D, fp8e4m3> && !std::is_same_v<T_D, fp8e5m2>, "Currently unsupported type");
     #endif

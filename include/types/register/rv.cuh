@@ -76,7 +76,7 @@ struct rv {
     static constexpr int tiles  = _length / kittens::TILE_ROW_DIM<T>; ///< Length in subtiles, aliased for consistency with sv type
     static constexpr int inner_dim = layout::inner_dim; ///< Internal layout within a subtile. Either 1 or 2.
     static constexpr int outer_dim = is_naive ? (tiles+1)/2 : tiles; ///< Outer dim (also length in tiles)
-    #ifdef KITTENS_HOPPER
+    #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     static_assert(!std::is_same_v<T2, fp8e4m3_4> && !std::is_same_v<T2, fp8e5m2_4>, "Unsupported type for fp8");
     #endif
 

@@ -6,7 +6,7 @@
 #include "shared_to_register.cuh"
 #include "global_to_register.cuh"
 #include "global_to_shared.cuh"
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 #include "pgl.cuh"
 #endif
 #ifdef KITTENS_BLACKWELL

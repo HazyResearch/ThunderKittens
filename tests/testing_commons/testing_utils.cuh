@@ -162,7 +162,7 @@ void initialize(T **d_i, T **d_o, std::vector<float> &i_ref, std::vector<float> 
             i_t[idx] = __float2half(f);
             i_ref[idx] = __half2float(i_t[idx]);
         }
-        #ifdef KITTENS_HOPPER
+        #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
         else if constexpr (std::is_same_v<T, fp8e4m3>) {
             i_t[idx] = __nv_fp8_e4m3(f); 
             i_ref[idx] = float(i_t[idx]); 
@@ -296,7 +296,7 @@ test_result validate(T *d_i, T *d_o, const std::vector<float> &i_ref, std::vecto
             o[idx] = o_t[idx];
             o_ref[idx] = o_ref[idx];
         }
-        #ifdef KITTENS_HOPPER
+        #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
         else if constexpr(std::is_same_v<T, fp8e4m3>) {
             o[idx] = float(o_t[idx]);
             o_ref[idx] = float(__nv_fp8_e4m3(o_ref[idx])); 
@@ -399,7 +399,7 @@ test_result validate(
                 o[unit_idx] = o_t[unit_idx];
                 o_ref[dev_idx][idx] = o_ref[dev_idx][idx];
             }
-            #ifdef KITTENS_HOPPER
+            #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
             else if constexpr(std::is_same_v<T, kittens::fp8e4m3>) {
                 o[unit_idx] = float(o_t[unit_idx]);
                 o_ref[dev_idx][idx] = float(__nv_fp8_e4m3(o_ref[dev_idx][idx])); 

@@ -285,7 +285,7 @@ st<_T, _rows, _cols>::subtile(int2 rowcol) // Qualified function name and parame
 template<int _height, int _width> using st_bf = st<bf16,  _height, _width>;
 template<int _height, int _width> using st_hf = st<half,  _height, _width>;
 template<int _height, int _width> using st_fl = st<float, _height, _width>;
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 template<int _height, int _width> using st_fp8e4m3 = st<fp8e4m3, _height, _width>;
 template<int _height, int _width> using st_fp8e5m2 = st<fp8e5m2, _height, _width>;
 #ifdef KITTENS_BLACKWELL

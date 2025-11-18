@@ -214,7 +214,7 @@ __device__ static inline void copy(rt_base<T, layout> &dst, const rt_base<U, lay
         dst.data[k] = base_types::convertor<T2, U2>::convert(src.data[k]);
     }
 }
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 /**
  * @brief Copies a register tile, converting the underlying type if necessary.
  *

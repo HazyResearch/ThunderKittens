@@ -7,7 +7,7 @@
 #include "warp/warp.cuh"
 
 // Hopper has its own warpgroup-scope MMA operations.
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 #include "warpgroup/warpgroup.cuh"
 #endif
 
