@@ -1,146 +1,141 @@
 # ThunderKittens
 
-### Recent Updates (August 30, 2025)
-- large-scale merge of blackwell-derived branches (incl Megakernels) into main, including a large-scale code refactor. Most important change is that warp scope must now be explicitly stated as kittens::warp::
-- this has likely broken many kernels in kernels/ which will be gradually fixed over time. They are nonetheless still reasonable references algorithmically, even if syntax is somewhat broken.
-- we are intending to merge in various industry contributions over the course of the next week, and will do a proper release of TK 3.0 within a few weeks.
-
-
-### Previous Updates (Nov 23, 2024)
-- kernels/example_bind has a newer, simpler way to get started binding TK kernels up to PyTorch.
-- FP8 support.
-- New-axis loads, automatic padding, and other QoL improvements.
-
-### Tile primitives for speedy kernels
-
 <div align="center" >
-    <img src="assets/thunderkittens.png" height=350 alt="ThunderKittens logo" style="margin-bottom:px"/> 
+    <img src="assets/thunderkittens.png" height=350 alt="ThunderKittens logo" style="margin-bottom:px"/><br/>
+    <em>ThunderKittens: Tile primitives for speedy kernels</em><br/><br/>
 </div>
 
-<br>
-<br>
+**ThunderKittens** is a framework to make it easy to write fast deep learning kernels in CUDA. It is built around three key principles:
 
-ThunderKittens is a framework to make it easy to write fast deep learning kernels in CUDA (and, soon, MPS, and eventually ROCm and others, too!)
+1. **Simplicity**. ThunderKittens is stupidly simple to write.
+2. **Extensibility**. ThunderKittens is natively embedded into CUDA, so that if you need more than ThunderKittens can offer, it won’t get in your way of building it yourself.
+3. **Speed**. Kernels written in ThunderKittens should be at least as fast as those written from scratch -- especially because ThunderKittens can do things the “right” way under the hood. We think our Flash Attention 3 implementation speaks for this point.
 
-ThunderKittens is built around three key principles:
-1. Simplicity. ThunderKittens is stupidly simple to write.
-2. Extensibility. ThunderKittens embeds itself natively, so that if you need more than ThunderKittens can offer, it won’t get in your way of building it yourself.
-3. Speed. Kernels written in ThunderKittens should be at least as fast as those written from scratch -- especially because ThunderKittens can do things the “right” way under the hood. We think our Flash Attention 3 implementation speaks for this point.
+ThunderKittens is built for NVIDIA GPUs. For AMD GPUs, check out [HipKittens](https://github.com/HazyResearch/HipKittens). 
 
-<div align="center" >
-    <img src="assets/attn.png" height=600 alt="Flash Attention 3, but with kittens!" style="margin-bottom:px"/> 
-</div>
+## Recent Updates
 
-Join us on Discord to get involved: [ThunderKittens channel @ GPU Mode Discord](https://discord.com/channels/1189498204333543425/1300872762163728550)!!!! Here is the invite link to GPU mode: https://discord.gg/gpumode
+**Nov 17, 2025:** **ThunderKittens 3.0** is out!
 
-ThunderKittens is built from the hardware up -- we do what the silicon tells us. And modern GPUs tell us that they want to work with fairly small tiles of data. A GPU is not really a 1000x1000 matrix multiply machine (even if it is often used as such); it’s a manycore processor where each core can efficiently run ~16x16 matrix multiplies. Consequently, ThunderKittens is built around manipulating tiles of data no smaller than 16x16 values.
+* This release brings full support for Blackwell GPUs and NVFP4 precision, and merges major contributions from across the industry.
+* We've fixed numerous bugs, improved overall performance, and finally added proper docstrings for most functions.
+* The repository structure has changed. We no longer support the repo as a Python package (i.e., a top-level `setup.py`), since ThunderKittens is fundamentally a CUDA framework. Kernels built with ThunderKittens are still located under the `/kernels` directory, and we still welcome new kernel contributions, but they must now be compiled individually. Tests and benchmarks reside alongside their corresponding kernel files. Some kernel examples may break due to this update; please let us know if you find any! 
+* Removed all unused files and directories.
+* **ThunderKittens 3.0 drops support for Ampere and older generations.** From now on, we're focusing development exclusively on Hopper and Blackwell.
+
+## Overview
+
+ThunderKittens is built from the hardware up; we do what the silicon tells us. And modern GPUs tell us that they want to work with fairly small tiles of data. A GPU is not really a 1000x1000 matrix multiply machine (even if it is often used as such); it’s a manycore processor where each core can efficiently run ~16x16 matrix multiplies. Consequently, ThunderKittens is built around manipulating tiles of data no smaller than 16x16 values.
 
 ThunderKittens makes a few tricky things easy that enable high utilization on modern hardware.
-1. Tensor cores. ThunderKittens can call fast tensor core functions, including asynchronous WGMMA calls on H100 GPUs.
+
+1. Tensor cores. ThunderKittens can call fast tensor core functions, including asynchronous WGMMA calls on H100 GPUs and TCGEN05 calls on B200 GPUs.
 2. Shared Memory. I got ninety-nine problems but a bank conflict ain’t one.
 3. Loads and stores. Hide latencies with asynchronous copies and address generation with TMA.
 4. Distributed Shared Memory. L2 is _so_ last year.
 5. Worker overlapping. Use our Load-Store-Compute-Finish template to overlap work and I/O.
+6. GPU networking. ThunderKittens lets you transfer data over NVLink and utilize NVSwich acceleration for fast multi-GPU operations.
 
+#### Example: A Simple Matrix Multiplication Kernel
 
-*Example: A Simple Attention Kernel*
-
-Here’s an example of what a simple FlashAttention-2 kernel for an RTX 4090 looks like written in ThunderKittens.
+For example, here’s an example of what a simple matrix multiplication kernel for an H100 looks like written in ThunderKittens.
 
 ```Cuda
 #include "kittens.cuh"
+#include "prototype.cuh"
 
 using namespace kittens;
+using namespace kittens::prototype;
+using namespace kittens::prototype::lcf;
 
-constexpr int NUM_WORKERS = 4; // This kernel uses 4 worker warps per block, and 2 blocks per SM.
-template<int D> constexpr size_t ROWS = 16*(128/D); // height of each worker tile (rows)
-template<int D, typename T=bf16, typename L=row_l> using qkvo_tile = rt<T, ROWS<D>, D, L>;
-template<int D, typename T=float> using attn_tile = rt<T, ROWS<D>, ROWS<D>>;
-template<int D> using shared_tile = st_bf<ROWS<D>, D>;
-template<int D> using global_layout = gl<bf16, -1, -1, -1, D>; // B, H, g.Qg.rows specified at runtime, D=64 known at compile time for this kernel
-template<int D> struct globals { global_layout<D> Qg, Kg, Vg, Og; };
-
-template<int D> __launch_bounds__(NUM_WORKERS*WARP_THREADS, 1)
-__global__ void attend_ker(const __grid_constant__ globals<D> g) {
-    using load_group = kittens::group<2>; // pairs of workers collaboratively load k, v tiles
-    int loadid = load_group::groupid(), workerid = kittens::warpid(); // which worker am I?
-    constexpr int LOAD_BLOCKS = NUM_WORKERS / load_group::GROUP_WARPS;
-    const int batch = blockIdx.z, head  = blockIdx.y, q_seq = blockIdx.x * NUM_WORKERS + workerid;
-
-    extern __shared__ alignment_dummy __shm[]; // this is the CUDA shared memory
-    shared_allocator al((int*)&__shm[0]);
-    // K and V live in shared memory. Here, we instantiate three tiles for a 3-stage pipeline.
-    shared_tile<D> (&k_smem)[LOAD_BLOCKS][3] = al.allocate<shared_tile<D>, LOAD_BLOCKS, 3>();
-    shared_tile<D> (&v_smem)[LOAD_BLOCKS][3] = al.allocate<shared_tile<D>, LOAD_BLOCKS, 3>();
-    // We also reuse this memory to improve coalescing of DRAM reads and writes.
-    shared_tile<D> (&qo_smem)[NUM_WORKERS] = reinterpret_cast<shared_tile<D>(&)[NUM_WORKERS]>(k_smem);
-    // Initialize all of the register tiles.
-    qkvo_tile<D, bf16> q_reg, k_reg; // Q and K are both row layout, as we use mma_ABt.
-    qkvo_tile<D, bf16, col_l> v_reg; // V is column layout, as we use mma_AB.
-    qkvo_tile<D, float> o_reg; // Output tile.
-    attn_tile<D, float> att_block; // attention tile, in float. (We want to use float wherever possible.)
-    attn_tile<D, bf16> att_block_mma; // bf16 attention tile for the second mma_AB. We cast right before that op.
-    typename attn_tile<D, float>::col_vec max_vec_last, max_vec, norm_vec; // these are column vectors for the in-place softmax.
-    // each warp loads its own Q tile of 16x64
-    if (q_seq*ROWS<D> < g.Qg.rows) {
-        load(qo_smem[workerid], g.Qg, {batch, head, q_seq, 0});  // going through shared memory improves coalescing of dram reads.
-        __syncwarp();
-        load(q_reg, qo_smem[workerid]);
+template<int M_BLOCK, int N_BLOCK>
+struct matmul_layout {
+    using  base_tile      = st_bf<64, 64>;
+    using  global_layout  = gl<bf16, 1, 1, -1, -1, base_tile>;
+    struct globals        { global_layout A, B, C; };
+    struct input_block    { base_tile a[M_BLOCK], b[N_BLOCK]; };
+    struct finish_block   { base_tile c[M_BLOCK][N_BLOCK]; };
+    struct common_state   { int2 coord; };
+    struct consumer_state { rt_fl<16, N_BLOCK*base_tile::cols> accum; };
+};
+template<int _M_BLOCK=2, int _N_BLOCK=4, int _SUPER_M=12>
+struct matmul_template {
+    static constexpr int M_BLOCK = _M_BLOCK, N_BLOCK = _N_BLOCK, SUPER_M = _SUPER_M;
+    using layout    = matmul_layout<M_BLOCK, N_BLOCK>;
+    using wide_tile = st_bf<64, 64*N_BLOCK>;
+    static constexpr int NUM_CONSUMER_WARPS=M_BLOCK*4, INPUT_PIPE_STAGES=4, PRODUCER_BARRIER_ARRIVALS=1;
+    // Helper functions
+    template<bool PERISISTENT_GRID=true> __host__ static inline dim3 grid(int M, int N, int K) {
+        return dim3(PERISISTENT_GRID ? 132 : M*N/(M_BLOCK*N_BLOCK*layout::base_tile::num_elements));
     }
-    __syncthreads();
-    // temperature adjustment. Pre-multiplying by lg2(e), too, so we can use exp2 later.
-    if constexpr(D == 64) mul(q_reg, q_reg, __float2bfloat16(0.125f * 1.44269504089));
-    else if constexpr(D == 128) mul(q_reg, q_reg, __float2bfloat16(0.08838834764f * 1.44269504089));
-    // initialize flash attention L, M, and O registers.
-    neg_infty(max_vec); // zero registers for the Q chunk
-    zero(norm_vec);
-    zero(o_reg);
-    // launch the load of the first k, v tiles
-    int kv_blocks = g.Qg.rows / (LOAD_BLOCKS*ROWS<D>), tic = 0;
-    load_group::load_async(k_smem[loadid][0], g.Kg, {batch, head, loadid, 0});
-    load_group::load_async(v_smem[loadid][0], g.Vg, {batch, head, loadid, 0});
-    // iterate over k, v for these q's that have been loaded
-    for(auto kv_idx = 0; kv_idx < kv_blocks; kv_idx++, tic=(tic+1)%3) {
-        int next_load_idx = (kv_idx+1)*LOAD_BLOCKS + loadid;
-        if(next_load_idx*ROWS<D> < g.Kg.rows) {
-            int next_tic = (tic+1)%3;
-            load_group::load_async(k_smem[loadid][next_tic], g.Kg, {batch, head, next_load_idx, 0});
-            load_group::load_async(v_smem[loadid][next_tic], g.Vg, {batch, head, next_load_idx, 0});
-            load_async_wait<2>(); // next k, v can stay in flight.
+    // ThunderKittens template functions
+    __device__ static inline void common_setup(common_setup_args<layout> args) {
+        int Rblocks = args.globals.C.rows() / (M_BLOCK*64), Cblocks = args.globals.C.cols() / (N_BLOCK*64);
+        int super_rows = (Rblocks/SUPER_M)*SUPER_M,
+            final_rows = Rblocks - super_rows,
+            super_repeat = SUPER_M*Cblocks;
+        int task_id = args.task_iter*gridDim.x + blockIdx.x;
+        if (task_id < super_rows * Cblocks)
+            args.common.coord = { SUPER_M*(task_id/super_repeat) + task_id%SUPER_M,
+                           (task_id%super_repeat)/SUPER_M };
+        else if (task_id < Rblocks*Cblocks) {
+            int remainder_id = task_id - super_rows*Cblocks;
+            args.common.coord = { super_rows + (remainder_id%final_rows), remainder_id/final_rows };
         }
-        else load_async_wait(); // all must arrive
-        __syncthreads(); // Everyone's memory must be ready for the next stage.
-        // now each warp goes through all of the subtiles, loads them, and then does the flash attention internal alg.
-        #pragma unroll LOAD_BLOCKS
-        for(int subtile = 0; subtile < LOAD_BLOCKS && (kv_idx*LOAD_BLOCKS + subtile) < g.Qg.rows; subtile++) {
-            load(k_reg, k_smem[subtile][tic]); // load k from shared into registers
-            zero(att_block); // zero 16x16 attention tile
-            mma_ABt(att_block, q_reg, k_reg, att_block); // Q@K.T
-            copy(max_vec_last,  max_vec);
-            row_max(max_vec, att_block, max_vec); // accumulate onto the max_vec
-            sub_row(att_block, att_block, max_vec); // subtract max from attention -- now all <=0
-            exp2(att_block, att_block); // exponentiate the block in-place.
-            sub(max_vec_last, max_vec_last, max_vec); // subtract new max from old max to find the new normalization.
-            exp2(max_vec_last, max_vec_last); // exponentiate this vector -- this is what we need to normalize by.
-            mul(norm_vec, norm_vec, max_vec_last); // and the norm vec is now normalized.
-            row_sum(norm_vec, att_block, norm_vec); // accumulate the new attention block onto the now-rescaled norm_vec
-            copy(att_block_mma, att_block); // convert to bf16 for mma_AB
-            load(v_reg, v_smem[subtile][tic]); // load v from shared into registers.
-            mul_row(o_reg, o_reg, max_vec_last); // normalize o_reg in advance of mma_AB'ing onto it
-            mma_AB(o_reg, att_block_mma, v_reg, o_reg); // mfma onto o_reg with the local attention@V matmul.
+        else { // Id is too high, no more work to do
+            args.num_iters = -1;
+            return;
         }
+        args.num_iters = args.globals.A.cols()/64;
+        int id = warpgroup::groupid() == NUM_CONSUMER_WARPS/4 ? 0 : warpgroup::groupid(); // producer sets as 0
+        args.common.coord = { args.common.coord.x*M_BLOCK + id, args.common.coord.y*N_BLOCK };
     }
-    div_row(o_reg, o_reg, norm_vec);
-    __syncthreads();
-    if (q_seq*ROWS<D> < g.Qg.rows) { // write out o.
-        store(qo_smem[workerid], o_reg); // going through shared memory improves coalescing of dram writes.
-        __syncwarp();
-        store(g.Og, qo_smem[workerid], {batch, head, q_seq, 0});
-    }
-}
+    struct producer {
+        __device__ static void setup(producer_setup_args<layout> args) {
+            warpgroup::decrease_registers<40>(); // decrease registers for producers
+        }
+        __device__ static void load(producer_load_args<layout> args) {
+            if (warpgroup::laneid() == 0) {
+                tma::expect(args.inputs_arrived, args.input);
+                for(int i = 0; i < M_BLOCK; i++)
+                    tma::load_async(args.input.a[i], args.globals.A,
+                                    {args.common.coord.x+i, args.iter}, args.inputs_arrived);
+                for(int i = 0; i < N_BLOCK; i++)
+                    tma::load_async(args.input.b[i], args.globals.B,
+                                    {args.iter, args.common.coord.y+i}, args.inputs_arrived);
+            }
+        }
+    };
+    struct consumer {
+        __device__ static void setup(consumer_setup_args<layout> args) {
+            warpgroup::increase_registers<232>(); // increase registers for consumers
+            kittens::warp::zero(args.state.accum);
+        }
+        __device__ static void compute(consumer_compute_args<layout> args) {
+            warpgroup::mma_AB(
+                args.state.accum, // dest registers
+                args.input.a[warpgroup::groupid()], // A matrix
+                reinterpret_cast<wide_tile&>(args.input.b) // B matrix
+            );
+            warpgroup::mma_async_wait();
+            if (warp::laneid() == 0) arrive(args.inputs_finished);
+        }
+        __device__ static void finish(consumer_finish_args<layout> args) {
+            warpgroup::store(reinterpret_cast<wide_tile&>(args.finish.c[warpgroup::groupid()]), args.state.accum);
+            warpgroup::sync(warpgroup::groupid()+4);
+            if (warpgroup::laneid() == 0) for(int i = 0; i < N_BLOCK; i++) {
+                tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()][i],
+                                             {args.common.coord.x, args.common.coord.y+i});
+                tma::store_async_read_wait(); // wait that store is finished before reusing finish memory
+            }
+            kittens::warp::zero(args.state.accum);
+            if (warp::laneid() == 0) arrive(args.finish_finished);
+        }
+    };
+};
 ```
 
-Altogether, this is less than 100 lines of code, and achieves about 155 TFLOPs on an RTX 4090. (93% of theoretical max.) We’ll go through some of these primitives more carefully in the next section, the ThunderKittens manual.
+Altogether, this is less than 100 lines of code, and achieves about 855 TFLOPs on an H100 (86% of theoretical max). We’ll go through some of these primitives more carefully in the upcoming sections, the ThunderKittens manual.
 
 ## Installation
 
@@ -256,6 +251,8 @@ Most operations in ThunderKittens are pure functional. However, some operations 
 
 
 ## Learn more and get involved!
+
+Join us on Discord to get involved: [ThunderKittens channel @ GPU Mode Discord](https://discord.com/channels/1189498204333543425/1300872762163728550)!!!! Here is the invite link to GPU mode: https://discord.gg/gpumode
 
 Learn more about ThunderKittens and how GPUs work by checking out our blogs:
 - [Easier, Better, Faster, Cuter Blogpost, Oct. 2024](https://hazyresearch.stanford.edu/blog/2024-10-29-tk2)
