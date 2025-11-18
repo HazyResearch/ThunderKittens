@@ -11,6 +11,10 @@
 2. **Extensibility**. ThunderKittens is natively embedded into CUDA, so that if you need more than ThunderKittens can offer, it won’t get in your way of building it yourself.
 3. **Speed**. Kernels written in ThunderKittens should be at least as fast as those written from scratch -- especially because ThunderKittens can do things the “right” way under the hood. We think our Flash Attention 3 implementation speaks for this point.
 
+<div align="center">
+    <img src="assets/attn.png" height=600 alt="Flash Attention 3, but with kittens!" style="margin-bottom:px"/> 
+</div>
+
 ThunderKittens is built for NVIDIA GPUs. For AMD GPUs, check out [HipKittens](https://github.com/HazyResearch/HipKittens). 
 
 ## Recent Updates
@@ -139,68 +143,68 @@ Altogether, this is less than 100 lines of code, and achieves about 855 TFLOPs o
 
 ## Installation
 
-To use Thunderkittens, there's not all that much you need to do with TK itself. It's a header only library, so just clone the repo, and include kittens.cuh. Easy money.
+**ThunderKittens is a header-only library**. The library itself does not require any installation; just clone the repo, and include `kittens.cuh`. Eash money.
 
-### Library requirements
+### Build requirements
 
 But ThunderKittens does use a bunch of modern stuff, so it has fairly aggressive requirements.
- - CUDA 12.3+. Anything after CUDA 12.1 will _probably_ work, but you'll likely end up with serialized wgmma pipelines on H100s due to a bug in those earlier versions of CUDA. We do our dev work on CUDA 12.6, because we want our kittens to play in the nicest, most modern environment possible.
- - (Extensive) C++20 use -- TK runs on concepts. If you get weird compilation errors, chances are your gcc is out of date.
+
+* **CUDA 12.6+**. Anything after CUDA 12.1 will _probably_ work, but you'll likely end up with serialized wgmma pipelines on H100s due to a bug in those earlier versions of CUDA. We do our dev work on CUDA 12.6-12.9, because we want our kittens to play in the nicest, most modern environment possible. Make sure you run the following to set up your CUDA environment properly:
+
+    ```bash
+    export CUDA_HOME=/usr/local/cuda-<YOUR-CUDA-VERSION> # ex. cuda-12.6
+    export PATH=${CUDA_HOME}/bin:${PATH} 
+    export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
+    ```
+
+* **C++20**. TK runs on `concepts`. If you get weird compilation errors, chances are your `gcc` is out of date. Update your compiler with:
+
+    ```bash
+    sudo apt update
+    sudo apt install gcc-11 g++-11
+
+    sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100 --slave /usr/bin/g++ g++ /usr/bin/g++-11
+
+    sudo apt update
+    sudo apt install clang-11
+    ```
+
+Sometimes, there's a libc10.so error, which you can fix with:
 
 ```bash
-sudo apt update
-sudo apt install gcc-11 g++-11
-
-sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100 --slave /usr/bin/g++ g++ /usr/bin/g++-11
-
-sudo apt update
-sudo apt install clang-11
-```
-
-If you can't find nvcc, or you experience issues where your environment is pointing to the wrong CUDA version:
-```bash
-export CUDA_HOME=/usr/local/cuda-12.6
-export PATH=${CUDA_HOME}/bin:${PATH} 
-export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
-```
-
-Sometimes there's a libc10.so error:
-```
-# take the PRINTED_PATH from below
+# Take the <PRINTED_PATH> from below
 python -c "import torch; print(torch.file)"
-# and run the command below
-export LD_LIBRARY_PATH=PRINTED_PATH/lib:$LD_LIBRARY_PATH
+
+# And run the command below
+export LD_LIBRARY_PATH=<PRINTED_PATH>/lib:$LD_LIBRARY_PATH
 ```
 
-### Installing pre-existing kernels
+### Using pre-implemented kernels
 
-We've provided a number of TK kernels in the `kernels/` folder! To use these with PyTorch bindings:
+We've provided a number of ThunderKittens kernels in the `kernels/` folder, which can be easily called from your PyTorch code. To use these kernels:
 
-1. Set environment variables. 
+1. Make sure the currently activate Python environment has PyTorch 2.8+ and PyBind11 installed. Ensure your PyTorch version meets the CUDA version (follow the [official instructions](https://pytorch.org/get-started/locally/)).
+2. (Optional) Set environment variables. Our build system sets this for you, but it's quite slow to set it every time. So it is recommended to set them first.
 
-To compile examples, run `source env.src` from the root directory before going into the examples directory. (Many of the examples use the `$THUNDERKITTENS_ROOT` environment variable to orient themselves and find the src directory.
+    ```bash
+    # Make sure the Python environment you want to use is active and called by python3.
+    export PYTHON_VERSION=$(python3 -c "import sysconfig; print(sysconfig.get_config_var('LDVERSION'))")
+    export PYTHON_INCLUDES=$(python3 -c "import sysconfig; print('-I', sysconfig.get_path('include'), sep='')")
+    export PYBIND_INCLUDES=$(python3 -m pybind11 --includes)
+    export PYTORCH_INCLUDES=$(python3 -c "from torch.utils.cpp_extension import include_paths; print(' '.join(['-I' + p for p in include_paths()]))")
+    export PYTHON_LIBDIR=$(python3 -c "import sysconfig; print('-L', sysconfig.get_config_var('LIBDIR'), sep='')")
+    export PYTORCH_LIBDIR=$(python3 -c "from torch.utils.cpp_extension import library_paths; print(' '.join(['-L' + p for p in library_paths()]))")
+    ```
 
-2. Select the kernels you want to build in `configs.py` file
+3. `cd` into the kernel directory you want to build (e.g., `kernels/gemm/B200`).
 
-3. Install:
-```bash
-python setup.py install
-```
+4. Build:
 
-Finally, thanks to Jordan Juravsky for putting together a quick doc on setting up a [kittens-compatible conda](https://github.com/HazyResearch/ThunderKittens/blob/main/docs/conda_setup.md).
+    ```bash
+    make
+    ```
 
-### Demos
-
-We've included a set of starter demos in the [demos/](https://github.com/HazyResearch/ThunderKittens/tree/main/demos) folder, showing how to use TK kernels for training and LLM inference (Qwens, Llamas, LoLCATS LLMs, etc.)! 
-
-We are excited to feature any demos you build, please link PRs! Potential contributions:
-- New kernels: attention decoding, parallel scan, training long convolutions 
-- New features: converting PyTorch to TK code, supporting new hardware (AMD?)
-- Anything else that comes to mind!
-
-## Tests
-
-To validate your install, and run TK's fairly comprehensive unit testing suite, simply run `make -j` in the tests folder. Be warned: this may nuke your computer for a minute or two while it compiles thousands of kernels.
+5. Include the resulting shared library file in your Python code and call the function!
 
 ## ThunderKittens Manual
 
@@ -250,34 +254,18 @@ However, not all ThunderKittens functions operate at the warp level. Many import
 Most operations in ThunderKittens are pure functional. However, some operations _do_ have special restrictions; ThunderKittens tries to warn you by giving them names that stand out. For example, a register tile transpose needs separable arguments: if it is given the same underlying registers as both source and destination, it will silently fail. Consequently, it is named `transpose_sep`.
 
 
-## Learn more and get involved!
-
-Join us on Discord to get involved: [ThunderKittens channel @ GPU Mode Discord](https://discord.com/channels/1189498204333543425/1300872762163728550)!!!! Here is the invite link to GPU mode: https://discord.gg/gpumode
-
-Learn more about ThunderKittens and how GPUs work by checking out our blogs:
-- [Easier, Better, Faster, Cuter Blogpost, Oct. 2024](https://hazyresearch.stanford.edu/blog/2024-10-29-tk2)
-- [GPUs Go Brrr Blogpost, May 2024](https://hazyresearch.stanford.edu/blog/2024-05-12-tk)
-- [ThunderKittens: Bringing fp8 to theaters near you, Nov 2024](https://hazyresearch.stanford.edu/blog/2024-11-27-tk-fp8)
-- [ThunderMittens For Your ThunderKittens, Nov 2024](https://hazyresearch.stanford.edu/blog/2024-11-28-tk-mlx)
-
-Please check out our paper for even more details: [paper](https://arxiv.org/abs/2410.20399)
-
-Join us and get involved at the [ThunderKittens channel @ GPU Mode Discord](https://discord.com/channels/1189498204333543425/1300872762163728550)!!!!  Here is the invite link to GPU mode: https://discord.gg/gpumode
 
 
 
 
+## Demos
 
-# So that you can see the python packages from the tests
-export PYTHONPATH=""
-export THUNDERKITTENS_ROOT=""
-export PYTHONPATH=${PYTHONPATH}:$PWD/src/common/pyutils
-export THUNDERKITTENS_ROOT=${PWD}
-export CUDA_HOME=${CUDA_HOME:-/usr/local/cuda-12.6}
-export PATH=${CUDA_HOME}/bin:${PATH}
-export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
+We've included a set of starter demos in the [demos/](https://github.com/HazyResearch/ThunderKittens/tree/main/demos) folder, showing how to use TK kernels for training and LLM inference (Qwens, Llamas, LoLCATS LLMs, etc.)! 
 
-# Demos
+We are excited to feature any demos you build, please link PRs! Potential contributions:
+- New kernels: attention decoding, parallel scan, training long convolutions 
+- New features: converting PyTorch to TK code, supporting new hardware (AMD?)
+- Anything else that comes to mind!
 
 ## TK Demos: play with kittens!
 
@@ -348,9 +336,11 @@ If you use TK to build any demos, please reach out / make a PR! We'd love to fea
 
 
 
-# Tests
+## Tests
 
-# Kittens Unit Tests
+To validate your install, and run TK's fairly comprehensive unit testing suite, simply run `make -j` in the tests folder. Be warned: this may nuke your computer for a minute or two while it compiles thousands of kernels.
+
+## Kittens Unit Tests
 
 This directory contains unit tests for ThunderKittens.
 
@@ -391,10 +381,27 @@ To clean the build directory and remove the compiled binary, run:
 make clean
 ```
 
-## Contributing
+## Learn more and get involved!
+
+Join us on Discord to get involved: [ThunderKittens channel @ GPU Mode Discord](https://discord.com/channels/1189498204333543425/1300872762163728550)!!!! Here is the invite link to GPU mode: https://discord.gg/gpumode
 
 If you would like to contribute new tests or improve existing ones, please follow the established coding style and naming conventions. Make sure to test your changes thoroughly before submitting a pull request.
 
 The unit tests directly mirror the file structure of the main repo. This makes it much easier to track coverage. and identify untested regions of code.
 
 For more information on contributing to the Kittens project, please refer to the main repository's contributing guidelines.
+
+
+Learn more about ThunderKittens and how GPUs work by checking out our blogs:
+- [Easier, Better, Faster, Cuter Blogpost, Oct. 2024](https://hazyresearch.stanford.edu/blog/2024-10-29-tk2)
+- [GPUs Go Brrr Blogpost, May 2024](https://hazyresearch.stanford.edu/blog/2024-05-12-tk)
+- [ThunderKittens: Bringing fp8 to theaters near you, Nov 2024](https://hazyresearch.stanford.edu/blog/2024-11-27-tk-fp8)
+- [ThunderMittens For Your ThunderKittens, Nov 2024](https://hazyresearch.stanford.edu/blog/2024-11-28-tk-mlx)
+
+Please check out our paper for even more details: [paper](https://arxiv.org/abs/2410.20399)
+
+Join us and get involved at the [ThunderKittens channel @ GPU Mode Discord](https://discord.com/channels/1189498204333543425/1300872762163728550)!!!!  Here is the invite link to GPU mode: https://discord.gg/gpumode
+
+## License
+
+This project is licensed under the terms of the MIT license.
