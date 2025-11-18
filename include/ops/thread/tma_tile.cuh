@@ -1,11 +1,13 @@
+/**
+ * @file
+ * @brief Tensor Memory Accelerator (TMA) operations targetting ThunderKittens tile types.
+ */
+
 #pragma once
 
-#include "../../../../common/common.cuh"
-#include "../../../../types/types.cuh"
-#include "../util/util.cuh"
-
-#include <cuda.h>
-#include <iostream>
+#include "/../../common/common.cuh"
+#include "/../../types/types.cuh"
+#include "util.cuh"
 
 namespace kittens {
 namespace tma {

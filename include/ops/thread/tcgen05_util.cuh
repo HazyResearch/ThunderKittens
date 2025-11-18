@@ -1,15 +1,9 @@
 /**
  * @file
- * @brief Functions for transferring data directly between tensor memory and register memory.
+ * @brief Utils for multiply-accumulate operations on SM100.
  */
 
 #pragma once
-
-#include <type_traits>
-
-#include "../../../../common/common.cuh"
-#include "../../../../types/types.cuh"
-#include "util.cuh"
 
 namespace kittens {
 

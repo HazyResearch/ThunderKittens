@@ -1,6 +1,6 @@
 /**
  * @file
- * @brief General memory utilities not specialized for either tiles or vectors.
+ * @brief General single-threaded utilities not specialized for either tiles or vectors.
  */
 
 #pragma once
@@ -432,12 +432,3 @@ template<typename... Args>             inline constexpr uint32_t size_bytes     
 template<typename T, typename... Args> inline constexpr uint32_t size_bytes<T, Args...> = detail::size_info<T>::bytes + size_bytes<Args...>; // recursive case
 
 } // namespace kittens
-
-#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
-#include "multimem.cuh"
-#include "tma.cuh"
-#endif
-
-#ifdef KITTENS_BLACKWELL
-#include "tensor.cuh"
-#endif

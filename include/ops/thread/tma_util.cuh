@@ -1,10 +1,12 @@
+/**
+ * @file
+ * @brief Utilities for Tensor Memory Accelerator (TMA)
+ */
+
 #pragma once
 
-#include "../../../../common/common.cuh"
-#include "../../../../types/types.cuh"
-
-#include <cuda.h>
-#include <iostream>
+#include "../../common/common.cuh"
+#include "../../types/types.cuh"
 
 namespace kittens {
 /**

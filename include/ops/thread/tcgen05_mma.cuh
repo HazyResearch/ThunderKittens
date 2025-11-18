@@ -5,8 +5,8 @@
 
 #pragma once
 
-#include "../../../../common/common.cuh"
-#include "../../../../types/types.cuh"
+#include "../../common/common.cuh"
+#include "../../types/types.cuh"
 
 namespace kittens {
 namespace detail {
@@ -518,6 +518,4 @@ __device__ static inline void mm2_AtBt(D &d, const A &a, const B &b) {
     mma2<transpose::T, transpose::T, D, A, B, 0>(d, a, b);
 }
 
-
 } // namespace kittens
-
