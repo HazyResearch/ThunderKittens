@@ -646,9 +646,9 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
 
 #ifdef TORCH_COMPILE
 
-#include "pyutils/torch_helpers.cuh"
+#include "pyutils/torchutils.cuh"
 #include <ATen/cuda/CUDAContext.h>
-#include <iostream>
+#include <iostream>z
 
 std::vector<torch::Tensor> 
 attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal)

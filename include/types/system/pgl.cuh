@@ -170,4 +170,8 @@ template<ducks::pgl::all PGL, bool safe=true> __host__ inline PGL make_pgl(
     );
 }
 
+// Convenience type alias for inter-device barriers
+template <int NUM_DEVICES>
+using barrier_t = pgl<gl<int, -1, -1, -1, -1>, NUM_DEVICES, true>;
+
 } // namespace kittens

@@ -49,6 +49,7 @@ using fp8e4m3 = __nv_fp8_e4m3;
 using fp8e5m2 = __nv_fp8_e5m2;
 #ifdef KITTENS_BLACKWELL
 using fp8e8m0 = __nv_fp8_e8m0;
+using fp4e2m1 = __nv_fp4_e2m1;
 #endif
 /**
  * @brief 2-packed float8 floating-point type.
@@ -57,7 +58,7 @@ using fp8e4m3_2 = __nv_fp8x2_e4m3;
 using fp8e5m2_2 = __nv_fp8x2_e5m2;
 #ifdef KITTENS_BLACKWELL
 using fp8e8m0_2 = __nv_fp8x2_e8m0;
-using fp4_2 = __nv_fp4x2_e2m1;
+using fp4e2m1_2 = __nv_fp4x2_e2m1;
 #endif
 /**
  * @brief 4-packed float8 floating-point type.
@@ -66,7 +67,7 @@ using fp8e4m3_4 = __nv_fp8x4_e4m3;
 using fp8e5m2_4 = __nv_fp8x4_e5m2;
 #ifdef KITTENS_BLACKWELL
 using fp8e8m0_4 = __nv_fp8x4_e8m0;
-using fp4_4 = __nv_fp4x4_e2m1;
+using fp4e2m1_4 = __nv_fp4x4_e2m1;
 #endif
 #endif
 

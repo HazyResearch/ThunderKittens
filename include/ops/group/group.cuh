@@ -16,7 +16,7 @@
 #define KITTENS_CHECK_WARPGROUP static_assert(GROUP_WARPS==4, "Warpgroup (GROUP_WARPS=4) function called from a non-warpgroup group.");
 
 // WGMMA relies on some template structures that cannot be specialized within the group struct, so we declare them in advance.
-#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
+#if defined(KITTENS_HOPPER)
 #include "mma/warpgroup/base/base.cuh"
 #endif
 

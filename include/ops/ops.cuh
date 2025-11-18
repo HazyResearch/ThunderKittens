@@ -7,7 +7,6 @@
 
 #include "thread/thread.cuh"
 #include "group/group.cuh"
-#include "device/device.cuh"
 
 namespace kittens {
 

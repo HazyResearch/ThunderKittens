@@ -5,12 +5,13 @@
 
 #pragma once
 
+#include <concepts>
+#include <iostream>
+#include <memory>
 #include <stdint.h>
 #include <type_traits>
-#include <concepts>
-#include <memory>
 
-// CUDA driver API
+// For checking CUDA driver API calls
 #define CUCHECK(cmd) do {                                     \
     CUresult err = cmd;                                       \
     if (err != CUDA_SUCCESS) {                                \
@@ -22,7 +23,7 @@
     }                                                         \
 } while(0)
 
-// CUDA runtime API
+// For checking CUDA runtime API calls
 #define CUDACHECK(cmd) do {                                   \
     cudaError_t err = cmd;                                    \
     if (err != cudaSuccess) {                                 \
@@ -31,6 +32,19 @@
         exit(EXIT_FAILURE);                                   \
     }                                                         \
 } while(0)
+
+// Convenience utility
+#define CHECK_CUDA_ERROR(val) check((val), #val, __FILE__, __LINE__)
+template <typename T> void check(
+    T err, char const* const func, char const* const file, int const line
+) {
+    if (err != cudaSuccess) {
+        std::cerr << "CUDA Runtime Error at: " << file << ":" << line
+                  << std::endl;
+        std::cerr << cudaGetErrorString(err) << " " << func << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+}
 
 /**
  * @namespace kittens
@@ -68,27 +82,17 @@ constexpr int WARPGROUP_WARPS{4};
  * @brief Get the warp ID of the current thread.
  * @return The warp ID.
  */
-__device__ static __forceinline__ int warpid() {
-    // uint32_t wid;
-    // asm volatile("mov.u32 %0, %warpid;" : "=r"(wid));
-    // return wid;
-    return threadIdx.x >> 5;
-}
+__device__ __forceinline__ int warpid() { return threadIdx.x >> 5; } 
 /**
  * @brief Get the warpgroup ID of the current thread.
  * @return The warpgroup ID.
  */
-__device__ static __forceinline__ int warpgroupid() { return warpid() >> 2; }
+__device__ __forceinline__ int warpgroupid() { return threadIdx.x >> 7; } 
 /**
  * @brief Get the lane ID of the current thread within its warp.
  * @return The lane ID.
  */
-__device__ static __forceinline__ int laneid() {
-    // uint32_t lid;
-    // asm volatile("mov.u32 %0, %laneid;" : "=r"(lid));
-    // return lid;
-    return threadIdx.x & 31;
-}
+__device__ __forceinline__ int laneid() { return threadIdx.x & 0x1f; }
 
 #if defined(KITTENS_HOPPER)
 constexpr int MAX_SHARED_MEMORY = 227000;
@@ -211,6 +215,18 @@ __device__ inline float2 packed_shfl_sync<float2>(uint32_t mask, const float2 &f
 #endif
 
 /**
+ * @brief Perform a ceiling division operation.
+ * @tparam T The type of the value to be divided.
+ * @param a[in] numerator.
+ * @param b[in] denominator.
+ * @return The result of the ceiling division.
+ */
+template <typename T>
+__host__ __device__ constexpr T cdiv(T a, T b) {
+    return (a + b - 1) / b;
+}
+
+/**
  * @brief Dummy structure for alignment purposes. Needed for WGMMA and TMA calls.
  */
 struct KITTENS_DEFAULT_ALIGN alignment_dummy { int dummy; };
@@ -226,69 +242,70 @@ template<int default_alignment=16>
 struct shared_allocator {
     int *ptr;
 
-    private:
-        // Recursive template to generate N-dimensional array type
-        template<typename A, size_t... dims>
-        struct variadic_array;
-        template<typename A, size_t first_dim, size_t... rest_dims>
-        struct variadic_array<A, first_dim, rest_dims...> {
-            using type = typename variadic_array<A, rest_dims...>::type[first_dim];
-        };
-        template<typename A>
-        struct variadic_array<A> {
-            using type = A;
-        };
-        template<typename A, size_t... dims> 
-        using variadic_array_t = typename variadic_array<A, dims...>::type;
+private:
+    // Recursive template to generate N-dimensional array type
+    template<typename A, size_t... dims>
+    struct variadic_array;
+    template<typename A, size_t first_dim, size_t... rest_dims>
+    struct variadic_array<A, first_dim, rest_dims...> {
+        using type = typename variadic_array<A, rest_dims...>::type[first_dim];
+    };
+    template<typename A>
+    struct variadic_array<A> {
+        using type = A;
+    };
+    template<typename A, size_t... dims> 
+    using variadic_array_t = typename variadic_array<A, dims...>::type;
 
-        template<int alignment>
-        __device__ inline void align_ptr() {
-            if constexpr (alignment > 0) {
-                uint64_t p = reinterpret_cast<uint64_t>(ptr);
-                if(p % alignment != 0) {
-                    ptr = (int*)(p + (alignment-(p%alignment)));
-                }
+    template<int alignment>
+    __device__ inline void align_ptr() {
+        if constexpr (alignment > 0) {
+            uint64_t p = reinterpret_cast<uint64_t>(ptr);
+            if(p % alignment != 0) {
+                ptr = (int*)(p + (alignment-(p%alignment)));
             }
         }
+    }
 
-    public:
-        /**
-        * @brief Construct a new shared allocator using a pointer to extern shared memory.
-        * @param[in] _ptr Pointer to the start of the extern shared memory.
-        */
-        __device__ shared_allocator(int *_ptr): ptr(_ptr) {}
-        /**
-        * @brief Allocate shared memory for a single instance or N-dimensional array of type A.
-        * @tparam A The type of the object to allocate.
-        * @tparam dims... A list of dimensions for the N-dimensional array.
-        * @return Reference to the allocated object.
-        */
-        template<typename A, size_t... dims> 
-        __device__ inline variadic_array_t<A, dims...>& allocate() {
-            // static_assert(sizeof(A) % default_alignment == 0, "Type is not aligned properly for array allocation");
-            align_ptr<default_alignment>();
-            using at = variadic_array_t<A, dims...>;
-            at*p = reinterpret_cast<at*>(ptr);
-            ptr += sizeof(at)/sizeof(int);
-            return *p;
-        }
-        /**
-        * @brief Allocate shared memory for a single instance or N-dimensional array of type A.
-        * @tparam alignment An alignment to enforce for this particular object.
-        * @tparam A The type of the object to allocate.
-        * @tparam dims... A list of dimensions for the N-dimensional array.
-        * @return Reference to the allocated object.
-        */
-        template<int alignment, typename A, size_t... dims> 
-        __device__ inline variadic_array_t<A, dims...>& allocate() {
-            // static_assert(sizeof(A) % alignment == 0, "Type is not aligned properly for array allocation");
-            align_ptr<alignment>();
-            using at = variadic_array_t<A, dims...>;
-            at*p = reinterpret_cast<at*>(ptr);
-            ptr += sizeof(at)/sizeof(int);
-            return *p;
-        }
+public:
+    /**
+    * @brief Construct a new shared allocator using a pointer to extern shared memory.
+    * @param[in] _ptr Pointer to the start of the extern shared memory.
+    */
+    __device__ shared_allocator(int *_ptr): ptr(_ptr) {}
+    /**
+    * @brief Allocate shared memory for a single instance or N-dimensional array of type A.
+    * @tparam A The type of the object to allocate.
+    * @tparam dims... A list of dimensions for the N-dimensional array.
+    * @return Reference to the allocated object.
+    */
+    template<typename A, size_t... dims> 
+    __device__ inline variadic_array_t<A, dims...>& allocate() {
+        // static_assert(sizeof(A) % default_alignment == 0, "Type is not aligned properly for array allocation");
+        align_ptr<default_alignment>();
+        using at = variadic_array_t<A, dims...>;
+        at*p = reinterpret_cast<at*>(ptr);
+        ptr += sizeof(at)/sizeof(int);
+        return *p;
+    }
+    /**
+    * @brief Allocate shared memory for a single instance or N-dimensional array of type A.
+    * @tparam alignment An alignment to enforce for this particular object.
+    * @tparam A The type of the object to allocate.
+    * @tparam dims... A list of dimensions for the N-dimensional array.
+    * @return Reference to the allocated object.
+    */
+    template<int alignment, typename A, size_t... dims> 
+    __device__ inline variadic_array_t<A, dims...>& allocate() {
+        // static_assert(sizeof(A) % alignment == 0, "Type is not aligned properly for array allocation");
+        align_ptr<alignment>();
+        using at = variadic_array_t<A, dims...>;
+        at*p = reinterpret_cast<at*>(ptr);
+        ptr += sizeof(at)/sizeof(int);
+        return *p;
+    }
 };
+
 #if (defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL))
 /**
  * @brief A wrapper for an allocator that enforces sufficient alignment to be used for TMA loads and stores.
@@ -311,10 +328,13 @@ __device__ static inline int cluster_ctarank() {
 }
 #endif
 
-template<int half> __device__ static inline bool get_phasebit(uint32_t bitfield, int ring_id) {
+template<int half> 
+__device__ static inline bool get_phasebit(uint32_t bitfield, int ring_id) {
     return (bitfield & (1 << (half*16 + ring_id))) != 0;
 }
-template<int half> __device__ static inline void update_phasebit(uint32_t &bitfield, int ring_id) {
+
+template<int half> 
+__device__ static inline void update_phasebit(uint32_t &bitfield, int ring_id) {
     bitfield ^= (1 << (half*16 + ring_id));
 }
 

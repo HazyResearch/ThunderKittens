@@ -15,7 +15,7 @@
     <img src="assets/attn.png" height=600 alt="Flash Attention 3, but with kittens!" style="margin-bottom:px"/> 
 </div>
 
-ThunderKittens is used by many AI companies for production-scale training and inference (e.g., [Together AI](https://www.together.ai/blog/thunderkittens), Jump Trading, and [Cursor](https://cursor.com/en-US/blog/kernels)).
+ThunderKittens began as an internal art project and is maintained by graduate students at the [Hazy Research Lab](https://hazyresearch.stanford.edu/). Nonetheless, many AI companies use it for production-scale training and inference (e.g., [Together AI](https://www.together.ai/blog/thunderkittens), Jump Trading, and [Cursor](https://cursor.com/en-US/blog/kernels)).
 
 ThunderKittens is built for NVIDIA GPUs. For AMD GPUs, check out [HipKittens](https://github.com/HazyResearch/HipKittens). 
 

@@ -155,7 +155,7 @@ void inner_run(
 
 #ifdef TK_COMPILE_SCALED_MATMUL
 #include <ATen/cuda/CUDAContext.h> 
-#include "pyutils/torch_helpers.cuh"
+#include "pyutils/torchutils.cuh"
 
 torch::Tensor scaled_matmul(torch::Tensor A, torch::Tensor B, torch::Tensor scale_a, torch::Tensor scale_b) {
     CHECK_INPUT(A);

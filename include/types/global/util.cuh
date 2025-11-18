@@ -2,7 +2,6 @@
 
 #include <type_traits>
 #include <cstddef>
-#include "../register/register.cuh"
 
 namespace kittens {
 namespace ducks {
@@ -29,6 +28,79 @@ template<int d> using make_arg_t = std::conditional_t<rdim<d>, size_t, std::null
 namespace detail {
 template<typename T> concept tile = ducks::st::all<T> || ducks::rt::all<T> || ducks::cst::all<T> || ducks::crt::all<T>;
 template<typename T> concept vec  = ducks::sv::all<T> || ducks::rv::all<T> || ducks::csv::all<T> || ducks::crv::all<T>;
+
+namespace tma {
+
+__host__ static inline std::string format_tma_error(
+    const char* error_type,
+    const char* error_string,
+    int batch, int depth, int rows, int cols,
+    CUtensorMap* tma_map,
+    CUtensorMapDataType tma_format,
+    uint32_t tma_dim,
+    void* global_addr,
+    const uint64_t* gmem_shape,
+    const uint64_t* gmem_stride,
+    const uint32_t* smem_shape,
+    const uint32_t* smem_stride,
+    size_t gmem_shape_size,
+    size_t gmem_stride_size,
+    size_t smem_shape_size,
+    size_t smem_stride_size,
+    CUtensorMapInterleave tma_interleave,
+    CUtensorMapSwizzle tma_swizzle,
+    CUtensorMapL2promotion tma_l2Promotion,
+    CUtensorMapFloatOOBfill tma_oobFill,
+    const std::string& extra_info = ""
+) {
+    std::ostringstream oss;
+    oss << "Error in " << error_type << " TMA descriptor creation: ";
+    oss << (error_string ? error_string : "Unknown CUDA error");
+    oss << "\nParameters:";
+    oss << "\n  batch: " << batch;
+    oss << "\n  depth: " << depth;
+    oss << "\n  rows: " << rows;
+    oss << "\n  cols: " << cols;
+    if (!extra_info.empty()) oss << "\n  " << extra_info;
+    oss << "\ncuTensorMapEncodeTiled arguments:";
+    oss << "\n  tma_map: " << reinterpret_cast<uintptr_t>(tma_map);
+    oss << "\n  tma_format: " << tma_format;
+    oss << "\n  tma_dim: " << tma_dim;
+    oss << "\n  global_addr: " << reinterpret_cast<uintptr_t>(global_addr);
+
+    cudaPointerAttributes attributes;
+    cudaError_t err = cudaPointerGetAttributes(&attributes, global_addr);
+    if (err == cudaSuccess) {
+        oss << "\n  global_addr memory type: ";
+        if (attributes.type == cudaMemoryTypeDevice) oss << "valid device memory";
+        else if (attributes.type == cudaMemoryTypeHost) oss << "host memory (invalid for TMA)";
+        else if (attributes.type == cudaMemoryTypeManaged) oss << "managed memory";
+        else oss << "unknown memory type";
+    } else {
+        oss << "\n  global_addr memory type: unable to determine (error: " << cudaGetErrorString(err) << ")";
+    }
+
+    oss << "\n  gmem_shape: " << reinterpret_cast<uintptr_t>(gmem_shape) << " [";
+    for (size_t i = 0; i < gmem_shape_size; ++i) oss << gmem_shape[i] << (i < gmem_shape_size - 1 ? ", " : "");
+    oss << "]";
+    oss << "\n  gmem_stride: " << reinterpret_cast<uintptr_t>(gmem_stride) << " [";
+    for (size_t i = 0; i < gmem_stride_size; ++i) oss << gmem_stride[i] << (i < gmem_stride_size - 1 ? ", " : "");
+    oss << "]";
+    oss << "\n  smem_shape: " << reinterpret_cast<uintptr_t>(smem_shape) << " [";
+    for (size_t i = 0; i < smem_shape_size; ++i) oss << smem_shape[i] << (i < smem_shape_size - 1 ? ", " : "");
+    oss << "]";
+    oss << "\n  smem_stride: " << reinterpret_cast<uintptr_t>(smem_stride) << " [";
+    for (size_t i = 0; i < smem_stride_size; ++i) oss << smem_stride[i] << (i < smem_stride_size - 1 ? ", " : "");
+    oss << "]";
+    oss << "\n  tma_interleave: " << tma_interleave;
+    oss << "\n  tma_swizzle: " << tma_swizzle;
+    oss << "\n  tma_l2Promotion: " << tma_l2Promotion;
+    oss << "\n  tma_oobFill: " << tma_oobFill;
+
+    return oss.str();
+}
+
+}
 }
 
 namespace ducks {

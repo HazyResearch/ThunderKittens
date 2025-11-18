@@ -112,7 +112,7 @@ template<int _headdim> struct rotary_template {
 };
 
 #ifdef TK_COMPILE_FUSED_ROTARY
-#include "pyutils/torch_helpers.cuh"
+#include "pyutils/torchutils.cuh"
 #include <iostream>
 template<int ATTN_D>
 void dispatch_fused_rotary(

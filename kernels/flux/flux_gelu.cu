@@ -338,7 +338,7 @@ int main() {
 
 
 #ifdef TORCH_COMPILE_GELU
-#include "pyutils/torch_helpers.cuh"
+#include "pyutils/torchutils.cuh"
 #include <iostream>
 
 template<int M_tile, int K_tile, int N_tile, int transpose_lhs, int transpose_rhs>

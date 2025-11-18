@@ -374,7 +374,7 @@ hedgehog_globals hedgehog_init(
 }
 
 #ifdef TK_COMPILE_HEDGEHOG
-#include "pyutils/torch_helpers.cuh"
+#include "pyutils/torchutils.cuh"
 #include <iostream>
 void dispatch_hedgehog( 
     bf16 *d_q, bf16 *d_k, bf16 *d_v, bf16 *d_o,

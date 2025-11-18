@@ -1,6 +1,6 @@
 /**
  * @file
- * @brief The ThunderKittens tensor memory struct.
+ * @brief The ThunderKittens tensor memory tile struct.
  */
 
 #pragma once

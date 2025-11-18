@@ -77,7 +77,7 @@ struct KITTENS_DEFAULT_ALIGN st {
     static constexpr int width               = _cols / kittens::TILE_COL_DIM<T>; ///< Width of the tile in terms of 16-element subtiles.
     static constexpr int num_elements        = rows * cols; ///< Total number of elements in the tile.
 
-    static_assert(base_types::packing<dtype>::num() == 1 || std::is_same_v<dtype, fp4_2>); // must be a 1-packed type (e.g. float, bf16, etc)
+    static_assert(base_types::packing<dtype>::num() == 1); // must be a 1-packed type (e.g. float, bf16, etc)
 
     static constexpr int swizzle_bytes = (
         sizeof(dtype) == 1 ? (  // Add FP8 case
@@ -290,7 +290,6 @@ template<int _height, int _width> using st_fp8e4m3 = st<fp8e4m3, _height, _width
 template<int _height, int _width> using st_fp8e5m2 = st<fp8e5m2, _height, _width>;
 #ifdef KITTENS_BLACKWELL
 template<int _height, int _width> using st_fp8e8m0 = st<fp8e8m0, _height, _width>;
-template<int _height, int _width> using st_fp4_2 = st<fp4_2, _height, _width>;
 #endif
 #endif
 
@@ -326,21 +325,25 @@ __device__ inline void print(const ST& tile) {
     for (int r = 0; r < ST::rows; r++) {
         printf("%3d |", r); // Row index
         for (int c = 0; c < ST::cols; c++) {
-            if constexpr (std::is_same_v<typename ST::dtype, fp8e4m3>) {
-                printf("%8.3f ", static_cast<float>(tile[{r,c}]));
-#ifdef KITTENS_BLACKWELL
-            } else if constexpr (std::is_same_v<typename ST::dtype, fp8e8m0>) {
-                printf("%8.3f ", static_cast<float>(tile[{r,c}]));
+        if constexpr (std::is_same_v<typename ST::dtype, float>) {
+            printf("%8.3f ", tile[{r,c}]);
+        } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
+            printf("%8.3f ", __bfloat162float(tile[{r,c}]));
+        } else if constexpr (std::is_integral_v<typename ST::dtype>) {
+            printf("%8d ", (int)tile[{r,c}]);
+#ifdef defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
+        } else if constexpr (std::is_same_v<typename ST::dtype, fp8e4m3>) {
+            printf("%8.3f ", static_cast<float>(tile[{r,c}]));
+        } else if constexpr (std::is_same_v<typename ST::dtype, fp8e5m2>) {
+            printf("%8.3f ", static_cast<float>(tile[{r,c}]));
 #endif
-            } else if constexpr (std::is_same_v<typename ST::dtype, float>) {
-                printf("%8.3f ", tile[{r,c}]);
-            } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
-                printf("%8.3f ", __bfloat162float(tile[{r,c}]));
-            } else if constexpr (std::is_integral_v<typename ST::dtype>) {
-                printf("%8d ", (int)tile[{r,c}]);
-            } else {
-                printf("%8.3f ", (float)tile[{r,c}]);
-            }
+#ifdef KITTENS_BLACKWELL
+        } else if constexpr (std::is_same_v<typename ST::dtype, fp8e8m0>) {
+            printf("%8.3f ", static_cast<float>(tile[{r,c}]));
+#endif
+        } else {
+            printf("%8.3f ", (float)tile[{r,c}]);
+        }
         }
         printf("\n");
     }
