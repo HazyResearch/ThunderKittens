@@ -51,24 +51,21 @@ template<typename _T, ducks::rt_layout::all _layout> struct rt_base {
     using T2 = kittens::base_types::packing<_T>::packed_type;
     using dtype = T2; ///< Data type of the matrix elements
 
-    #if defined(KITTENS_HOPPER)
+#if defined(KITTENS_HOPPER)
     static_assert(
-        std::is_same_v<dtype, bf16_2> || std::is_same_v<dtype, float2> || std::is_same_v<dtype, half_2> || 
-        std::is_same_v<dtype, fp8e4m3_4> || std::is_same_v<dtype, fp8e5m2_4>,
+        std::is_same_v<dtype, bf16_2> || std::is_same_v<dtype, float2> || std::is_same_v<dtype, half_2> || std::is_same_v<dtype, fp8e4m3_4> || std::is_same_v<dtype, fp8e5m2_4>
+#if defined(KITTENS_BLACKWELL)
+        || std::is_same_v<dtype, fp8e8m0_4> || std::is_same_v<dtype, fp4e2m1_4>
+#endif
+        ,
         "rt_base was provided an unsupported type."
     );
-    #elif defined(KITTENS_BLACKWELL)
-    static_assert(
-        std::is_same_v<dtype, bf16_2> || std::is_same_v<dtype, float2> || std::is_same_v<dtype, half_2> || 
-        std::is_same_v<dtype, fp8e4m3_4> || std::is_same_v<dtype, fp8e5m2_4> || std::is_same_v<dtype, fp4e2m1_4>,
-        "rt_base was provided an unsupported type."
-    );
-    #else
+#else
     static_assert(
         std::is_same_v<dtype, bf16_2> || std::is_same_v<dtype, float2> || std::is_same_v<dtype, half_2>,
         "rt_base was provided an unsupported type."
     );
-    #endif
+#endif
 
     static constexpr int tile_size_row        = kittens::TILE_ROW_DIM<T>; // < Tile size is a constant 16 for everyone
     static constexpr int tile_size_col        = kittens::TILE_COL_DIM<T>;
@@ -115,5 +112,9 @@ template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_hf = rt_ba
 #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fp8e4m3 = rt_base<fp8e4m3, L>;
 template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fp8e5m2 = rt_base<fp8e5m2, L>;
+#endif
+#ifdef KITTENS_BLACKWELL
+template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fp8e8m0 = rt_base<fp8e8m0, L>;
+template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fp4e2m1 = rt_base<fp4e2m1, L>;
 #endif
 }

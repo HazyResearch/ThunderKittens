@@ -6,6 +6,7 @@
 #pragma once
 
 #include "tt.cuh"
+#include "../../ops/warp/memory/tile/tensor_to_register.cuh"
 
 // A thin wrapper that allows for certain compile-time checks to be performed when allocating tensor memory.
 namespace kittens {
@@ -71,8 +72,9 @@ template<int _nblocks, int _ncta> struct tensor_allocator {
     __device__ inline uint32_t get_addr(int superlane, int col_offset) const { return addr + ((superlane*16) << 16) + col_offset; }
     template<ducks::tt::half TT> __device__ inline auto allocate(int superlane, int col_offset) {
 #ifndef NDEBUG
-        if(col_offset + TT::cols > cols) {
-            printf("Tile allocation extends out of bounds of the tensor allocator! col_offset: %d, TT::cols: %d, allocator cols: %d\n", col_offset, TT::cols, cols);
+        int allocate_cols = std::is_same_v<typename TT::dtype, fp8e8m0> ? TT::cols/4 : TT::cols; // for fp8e8m0 and fp8e4m3, we need to divide by 4 to get the correct number of columns
+        if(col_offset + allocate_cols > cols) {
+            if(laneid() == 0) printf("Tile allocation extends out of bounds of the tensor allocator! col_offset: %d, TT::cols: %d, allocator cols: %d\n", col_offset, TT::cols, cols);
             asm volatile("trap;");
         }
         if(superlane < 0 || superlane > 1) {
@@ -84,8 +86,9 @@ template<int _nblocks, int _ncta> struct tensor_allocator {
     }
     template<ducks::tt::full TT> __device__ inline auto allocate(int col_offset) {
 #ifndef NDEBUG
-        if(col_offset + TT::cols > cols) {
-            printf("Tile allocation extends out of bounds of the tensor allocator! col_offset: %d, TT::cols: %d, allocator cols: %d\n", col_offset, TT::cols, cols);
+        int allocate_cols = std::is_same_v<typename TT::dtype, fp8e8m0> ? TT::cols/4 : TT::cols;
+        if(col_offset + allocate_cols > cols) {
+            if(laneid() == 0) printf("Tile allocation extends out of bounds of the tensor allocator! col_offset: %d, TT::cols: %d, allocator cols: %d\n", col_offset, TT::cols, cols);
             asm volatile("trap;");
         }
 #endif

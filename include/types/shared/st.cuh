@@ -192,7 +192,7 @@ struct st_subtile {
         col_offset = rowcol.y * cols;
     }
 
-    __device__ inline T* idx(T *ptr, const int2 coord) { // naive row-major coord default
+    __device__ inline T* idx(T *ptr, const int2 coord) const { // naive row-major coord default
         int r = coord.x+row_offset, c = coord.y+col_offset; // alias
         static constexpr int swizzle_repeat = swizzle_bytes * 8;
         static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
@@ -288,12 +288,86 @@ template<int _height, int _width> using st_fl = st<float, _height, _width>;
 #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 template<int _height, int _width> using st_fp8e4m3 = st<fp8e4m3, _height, _width>;
 template<int _height, int _width> using st_fp8e5m2 = st<fp8e5m2, _height, _width>;
-#ifdef KITTENS_BLACKWELL
-template<int _height, int _width> using st_fp8e8m0 = st<fp8e8m0, _height, _width>;
 #endif
+#if defined(KITTENS_BLACKWELL)
+template<int _height, int _width> using st_fp8e8m0 = st<fp8e8m0, _height, _width>;
+template<int _height, int _width> using st_fp4e2m1 = st<fp4e2m1, _height, _width>;
 #endif
 
 /* ----------  PRINTOUTS  ---------- */
+
+/**
+ * @brief Get a readable type name for shared tiles
+ */
+template<typename T, int rows, int cols>
+__device__ constexpr const char* get_tile_type_name() {
+    if constexpr (std::is_same_v<T, float>) {
+        return "st_fl";
+    } else if constexpr (std::is_same_v<T, half>) {
+        return "st_hf";
+    } else if constexpr (std::is_same_v<T, bf16>) {
+        return "st_bf";
+    } else if constexpr (std::is_same_v<T, fp4e2m1>) {
+        return "st_fl4_e2m1";
+    } else if constexpr (std::is_same_v<T, fp8e8m0>) {
+        return "st_fl8_e8m0";
+    } else if constexpr (std::is_same_v<T, fp8e4m3>) {
+        return "st_fl8_e4m3";
+    } else if constexpr (std::is_same_v<T, fp8e5m2>) {
+        return "st_fl8_e5m2";
+    } else {
+        return "st_unknown";
+    }
+}
+/**
+ * @brief Print the contents of a shared tile as a formatted table.
+ * 
+ * This function should be called by a single thread in the warp.
+ * It will print the entire tile atomically to avoid interleaved output.
+ * 
+ * @param tile The shared tile to print
+ */
+template<ducks::st::all ST>
+__device__ inline void print_fp4(const ST& tile) {
+    if (std::is_same_v<typename ST::dtype, fp4e2m1>) {
+
+        constexpr int cols = ST::cols * 2;
+        printf("Block %d: Shared Tile %dx%d (Type: %s<%d,%d>):\n", blockIdx.x, ST::rows, cols, get_tile_type_name<typename ST::dtype, ST::rows, cols>(), ST::rows, cols);
+
+        // Print column headers
+        printf("     "); // Padding for row indices
+        for (int c = 0; c < cols; c++) {
+            printf("%8d ", c);
+        }
+        printf("\n");
+        
+        // Print separator line
+        printf("     ");
+        for (int c = 0; c < cols; c++) {
+            printf("--------+");
+        }
+        printf("\n");
+        
+        // Print data rows
+        for (int r = 0; r < ST::rows; r++) {
+            printf("%3d |", r); // Row index
+            for (int c = 0; c < cols; c += 2) {
+                uint8_t *vals = reinterpret_cast<uint8_t*>(const_cast<fp4e2m1*>(&tile[{r,c/2}]));
+
+                // Convert to fp4e2m1 and then to float
+                float f1 = static_cast<float>(fp4e2m1(vals[0] & 0xF));
+                float f2 = static_cast<float>(fp4e2m1((vals[0] >> 4) & 0xF));
+
+                printf("%8.3f %8.3f ", f1, f2);
+
+            }
+            printf("\n");
+        }
+        printf("\n");
+    } else {
+        printf("Type must be FP4 in this function\n");
+    }
+}
 
 /**
  * @brief Print the contents of a shared tile as a formatted table.
@@ -305,7 +379,7 @@ template<int _height, int _width> using st_fp8e8m0 = st<fp8e8m0, _height, _width
  */
 template<ducks::st::all ST>
 __device__ inline void print(const ST& tile) {
-    printf("Shared Tile %dx%d:\n", ST::rows, ST::cols);
+    printf("Block %d: Shared Tile %dx%d (Type: %s<%d,%d>):\n", blockIdx.x, ST::rows, ST::cols, get_tile_type_name<typename ST::dtype, ST::rows, ST::cols>(), ST::rows, ST::cols);
     
     // Print column headers
     printf("     "); // Padding for row indices
@@ -325,25 +399,204 @@ __device__ inline void print(const ST& tile) {
     for (int r = 0; r < ST::rows; r++) {
         printf("%3d |", r); // Row index
         for (int c = 0; c < ST::cols; c++) {
-        if constexpr (std::is_same_v<typename ST::dtype, float>) {
-            printf("%8.3f ", tile[{r,c}]);
-        } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
-            printf("%8.3f ", __bfloat162float(tile[{r,c}]));
-        } else if constexpr (std::is_integral_v<typename ST::dtype>) {
-            printf("%8d ", (int)tile[{r,c}]);
+            if constexpr (std::is_same_v<typename ST::dtype, float>) {
+                printf("%8.3f ", tile[{r,c}]);
+            } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
+                printf("%8.3f ", __bfloat162float(tile[{r,c}]));
+            } else if constexpr (std::is_integral_v<typename ST::dtype>) {
+                printf("%8d ", (int)tile[{r,c}]);
 #ifdef defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
-        } else if constexpr (std::is_same_v<typename ST::dtype, fp8e4m3>) {
-            printf("%8.3f ", static_cast<float>(tile[{r,c}]));
-        } else if constexpr (std::is_same_v<typename ST::dtype, fp8e5m2>) {
-            printf("%8.3f ", static_cast<float>(tile[{r,c}]));
+            } else if constexpr (std::is_same_v<typename ST::dtype, fp8e4m3>) {
+                printf("%8.3f ", static_cast<float>(tile[{r,c}]));
+            } else if constexpr (std::is_same_v<typename ST::dtype, fp8e5m2>) {
+                printf("%8.3f ", static_cast<float>(tile[{r,c}]));
 #endif
 #ifdef KITTENS_BLACKWELL
-        } else if constexpr (std::is_same_v<typename ST::dtype, fp8e8m0>) {
-            printf("%8.3f ", static_cast<float>(tile[{r,c}]));
+            } else if constexpr (std::is_same_v<typename ST::dtype, fp8e8m0>) {
+                printf("%8.3f ", static_cast<float>(tile[{r,c}]));
 #endif
-        } else {
-            printf("%8.3f ", (float)tile[{r,c}]);
+            } else {
+                printf("%8.3f ", (float)tile[{r,c}]);
+            }
         }
+        printf("\n");
+    }
+    printf("\n");
+}
+
+/**
+ * @brief Print the contents of a shared subtile as a formatted table.
+ * 
+ * This function prints subtiles with additional information about their position
+ * within the parent tile.
+ * 
+ * @param subtile The shared subtile to print
+ */
+template<typename ST, int subtile_rows, int subtile_cols>
+__device__ inline void print(const st_subtile<ST, subtile_rows, subtile_cols>& subtile) {
+    printf("Block %d: Shared Subtile %dx%d (offset: [%d,%d], Type: %s<%d,%d> from %s<%d,%d>):\n", 
+            blockIdx.x, subtile.rows, subtile.cols, 
+            subtile.row_offset, subtile.col_offset,
+            get_tile_type_name<typename ST::dtype, subtile.rows, subtile.cols>(), subtile.rows, subtile.cols,
+            get_tile_type_name<typename ST::dtype, ST::rows, ST::cols>(), ST::rows, ST::cols);
+    
+    // Print column headers
+    printf("     "); // Padding for row indices
+    for (int c = 0; c < subtile.cols; c++) {
+        printf("%8d ", c);
+    }
+    printf("\n");
+    
+    // Print separator line
+    printf("     ");
+    for (int c = 0; c < subtile.cols; c++) {
+        printf("--------+");
+    }
+    printf("\n");
+    
+    // Print data rows
+    for (int r = 0; r < subtile.rows; r++) {
+        printf("%3d |", r); // Row index
+        for (int c = 0; c < subtile.cols; c++) {
+            if constexpr (std::is_same_v<typename ST::dtype, float>) {
+                printf("%8.3f ", subtile[{r,c}]);
+            } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
+                printf("%8.3f ", __bfloat162float(subtile[{r,c}]));
+            } else if constexpr (std::is_integral_v<typename ST::dtype>) {
+                printf("%8d ", (int)subtile[{r,c}]);
+            } else {
+                printf("%8.3f ", (float)subtile[{r,c}]);
+            }
+        }
+        printf("\n");
+    }
+    printf("\n");
+}
+}
+
+/**
+ * @brief Fill a shared tile with ones.
+ * 
+ * This function should be called by a single thread in the warp.
+ * It will fill the entire tile with 1s (value, not bits) in the tile.
+ * 
+ * @param tile The shared tile to fill with 1s
+ */
+template<ducks::st::all ST>
+__device__ inline void fill_value(ST& tile, float value) {
+    printf("Filling Tile %dx%d with %f:\n", ST::rows, ST::cols, value);
+
+    // Fill tile with value
+    for (int r = 0; r < ST::rows; r++) {
+        for (int c = 0; c < ST::cols; c++) {
+            if constexpr (std::is_same_v<typename ST::dtype, float>) {
+                tile[{r,c}] = value;
+            } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
+                tile[{r,c}] = __float2bfloat16(value);
+            } else if constexpr (std::is_same_v<typename ST::dtype, fp4e2m1>) {
+                tile.data[r*ST::cols + c] = fp4e2m1(value);
+            } else if constexpr (std::is_same_v<typename ST::dtype, fp8e8m0>) {
+                tile.data[r*ST::cols + c] = fp8e8m0(value);
+            } else {    
+                tile[{r,c}] = value;
+            }
+        }
+    }
+}
+
+/**
+ * @brief Fill a shared tile with something!
+ * 
+ * This function should be called by a single thread in the warp.
+ * It will fill the entire tile with 1s (value, not bits) in the tile.
+ * 
+ * @param tile The shared tile to fill with 1s
+ */
+template<ducks::st::all ST>
+__device__ inline void fill_identity(ST& tile) {
+    printf("Filling Tile %dx%d with identity:\n", ST::rows, ST::cols);
+    
+    // Print data rows
+    for (int r = 0; r < ST::rows; r++) {
+        for (int c = 0; c < ST::cols; c++) {
+            if constexpr (std::is_same_v<typename ST::dtype, float>) {
+                // printf("%8.3f ", tile[{r,c}]);
+                tile[{r,c}] = 1.0f;
+            } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
+                // printf("%8.3f ", __bfloat162float(tile[{r,c}]));
+                tile[{r,c}] = __float2bfloat16(1.0f);
+            } else if constexpr (std::is_same_v<typename ST::dtype, fp4e2m1>) {
+                if(r == c){
+                    // tile[{r,c}] = std::bit_cast<fp4e2m1>(uint8_t(0xFF));
+                    tile.data[r*ST::cols + c] = std::bit_cast<fp4e2m1>(uint8_t(0xFF));
+                } else {
+                    tile.data[r*ST::cols + c] = std::bit_cast<fp4e2m1>(uint8_t(0x00));
+                }
+            } else {    
+                // printf("%8.3f ", (float)tile[{r,c}]);
+            }
+        }
+    }
+}
+
+/**
+ * @brief Print the contents of a shared tile as a formatted table in bits.
+ * 
+ * This function should be called by a single thread in the warp.
+ * It will print the entire tile atomically to avoid interleaved output.
+ * Each element will be printed as a bitfield
+ * 
+ * @param tile The shared tile to print
+ */
+template<ducks::st::all ST>
+__device__ inline void print_bits(const ST& tile, bool unswizzle = false) {
+    printf("Block %d: Shared Tile %dx%d (Type: %s<%d,%d>):\n", blockIdx.x, ST::rows, ST::cols, get_tile_type_name<typename ST::dtype, ST::rows, ST::cols>(), ST::rows, ST::cols);
+    
+    // Print column headers
+    printf(" "); // Padding for row indices
+    for (int c = 0; c < ST::cols; c++) {
+        printf("%11d ", c);
+    }
+    printf("\n");
+    
+    // Print separator line
+    printf("     ");
+    for (int c = 0; c < ST::cols; c++) {
+        printf("-----------+");
+    }
+    printf("\n");
+    
+    // Print data rows
+    for (int r = 0; r < ST::rows; r++) {
+        printf("%3d |", r); // Row index
+        for (int c = 0; c < ST::cols; c++) {
+            if constexpr (std::is_same_v<typename ST::dtype, float>) {
+                printf("%8.3f ", tile[{r,c}]);
+            } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
+                printf("%8.3f ", __bfloat162float(tile[{r,c}]));
+            // } else if constexpr (std::is_integral_v<typename ST::dtype>) {
+            //     printf("%8d ", (int)tile[{r,c}]);
+            } else if constexpr (std::is_same_v<typename ST::dtype, fp4e2m1> || std::is_same_v<typename ST::dtype, fp8e8m0>) {
+                // print as bitfield
+
+                uint8_t bits;
+                if(unswizzle){
+                    bits = *reinterpret_cast<const uint8_t*>(&tile.data[r*ST::cols + c]); // Assuming 4-bit value
+                } else {
+                    bits = *reinterpret_cast<const uint8_t*>(&tile[{r,c}]); // Assuming 4-bit value
+                }
+                // Print all 32 bits with formatting for readability
+                printf("0b");
+                // Print in groups of 4 for readability
+                for (int bit = 7; bit >= 0; bit--) {
+                    printf("%d", (bits >> bit) & 0x1);
+                    if (bit % 4 == 0 && bit > 0) printf("_");
+                }
+                printf(" ");
+
+            } else {
+                printf("%8.3f ", (float)tile[{r,c}]);
+            }
         }
         printf("\n");
     }

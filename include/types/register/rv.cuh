@@ -119,4 +119,102 @@ template<int _l, ducks::rv_layout::all layout=ducks::rv_layout::naive> using rv_
 template<int _l, ducks::rv_layout::all layout=ducks::rv_layout::naive> using rv_bf = rv<bf16,  _l, layout>;
 template<int _l, ducks::rv_layout::all layout=ducks::rv_layout::naive> using rv_hf = rv<half,  _l, layout>;
 
+/* ----------  PRINT FUNCTION  ---------- */
+
+/**
+ * @brief Print the contents of a register vector as a formatted output.
+ * 
+ * This function prints register vectors with information about their dimensions
+ * and data contents, handling both packed and unpacked data types.
+ * 
+ * @param vec The register vector to print
+ */
+template<ducks::rv::all RV>
+__device__ void print(const RV &vec) {
+    if (laneid() == 0) { // Only first thread in warp prints
+        printf("Block %d, Warp %d: Register Vector %d (Type: %s, Layout: %s) - Distributed View:\n", 
+               blockIdx.x, threadIdx.x / WARP_THREADS, RV::length,
+               std::is_same_v<typename RV::T, float> ? "float" :
+               std::is_same_v<typename RV::T, bf16> ? "bf16" :
+               std::is_same_v<typename RV::T, half> ? "half" :
+               std::is_same_v<typename RV::T, fp8e8m0> ? "fp8e8m0" :
+               std::is_same_v<typename RV::T, fp8e4m3> ? "fp8e4m3" :
+               std::is_same_v<typename RV::T, fp8e5m2> ? "fp8e5m2" : "unknown",
+               RV::is_naive ? "naive" : "tile");
+        printf("Each thread holds %dx%d elements\n", RV::outer_dim, RV::inner_dim);
+        printf("\n");
+    }
+    __syncwarp();
+    
+    // Each thread prints its own data
+    for (int tid = 0; tid < WARP_THREADS; tid++) {
+        if (laneid() == tid) {
+            printf("Thread %2d: ", tid);
+            
+            // Print the vector data this thread holds
+            for (int i = 0; i < RV::outer_dim; i++) {
+                printf("Outer[%d]: ", i);
+                for (int j = 0; j < RV::inner_dim; j++) {
+                    auto value = vec.data[i][j];
+                    
+                    if constexpr (std::is_same_v<typename RV::dtype, typename RV::T>) {
+                        // Unpacked type, print directly
+                        if constexpr (std::is_same_v<typename RV::T, float>) {
+                            printf("%.3f ", value);
+                        } else if constexpr (std::is_same_v<typename RV::T, half>) {
+                            printf("%.3f ", __half2float(value));
+                        } else if constexpr (std::is_same_v<typename RV::T, bf16>) {
+                            printf("%.3f ", __bfloat162float(value));
+                        } else if constexpr (std::is_same_v<typename RV::T, fp8e8m0>) {
+                            printf("%.3f ", (float)value);
+                        } else if constexpr (std::is_same_v<typename RV::T, fp8e4m3>) {
+                            printf("%.3f ", (float)value);
+                        } else if constexpr (std::is_same_v<typename RV::T, fp8e5m2>) {
+                            printf("%.3f ", (float)value);
+                        } else {
+                            printf("%.3f ", (float)value);
+                        }
+                    } else {
+                        // Packed type - check what type we're dealing with
+                        if constexpr (std::is_same_v<typename RV::T, float>) {
+                            printf("[%.3f, %.3f] ", value.x, value.y);
+                        } else if constexpr (std::is_same_v<typename RV::T, bf16>) {
+                            // Handle packed bf16_2 type
+                            printf("[%.3f, %.3f] ", __bfloat162float(value.x), __bfloat162float(value.y));
+                        } else if constexpr (std::is_same_v<typename RV::T, half>) {
+                            // Handle packed half2 type
+                            printf("[%.3f, %.3f] ", __half2float(value.x), __half2float(value.y));
+                        } else if constexpr (std::is_same_v<typename RV::T, fp8e8m0>) {
+                            // Handle packed fp8e8m0_4 types
+                            __nv_fp8_e8m0 *vals = reinterpret_cast<__nv_fp8_e8m0*>(const_cast<fp8e8m0_4*>(&value));
+                            printf("[%.3f,%.3f,%.3f,%.3f] ", 
+                                   (float)vals[0], (float)vals[1], (float)vals[2], (float)vals[3]);
+                        } else if constexpr (std::is_same_v<typename RV::T, fp8e4m3>) {
+                            // Handle packed fp8e4m3_4 types  
+                            __nv_fp8_e4m3 *vals = reinterpret_cast<__nv_fp8_e4m3*>(const_cast<fp8e4m3_4*>(&value));
+                            printf("[%.3f,%.3f,%.3f,%.3f] ", 
+                                   (float)vals[0], (float)vals[1], (float)vals[2], (float)vals[3]);
+                        } else if constexpr (std::is_same_v<typename RV::T, fp8e5m2>) {
+                            // Handle packed fp8e5m2_4 types
+                            __nv_fp8_e5m2 *vals = reinterpret_cast<__nv_fp8_e5m2*>(const_cast<fp8e5m2_4*>(&value));
+                            printf("[%.3f,%.3f,%.3f,%.3f] ", 
+                                   (float)vals[0], (float)vals[1], (float)vals[2], (float)vals[3]);
+                        } else {
+                            // Other packed types - print the raw packed value
+                            printf("0x%x ", *(uint32_t*)&value);
+                        }
+                    }
+                }
+                printf(" ");
+            }
+            printf("\n");
+        }
+        __syncwarp(); // Ensure threads print in order
+    }
+    
+    if (laneid() == 0) {
+        printf("\n");
+    }
+}
+
 } // namespace kittens
