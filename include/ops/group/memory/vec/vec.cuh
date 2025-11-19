@@ -6,3 +6,6 @@
 #include "shared_to_register.cuh"
 #include "global_to_register.cuh"
 #include "global_to_shared.cuh"
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
+#include "tma.cuh"
+#endif

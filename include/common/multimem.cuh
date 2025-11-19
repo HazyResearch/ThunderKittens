@@ -1,6 +1,6 @@
 /**
  * @file
- * @brief Wrappers for multimem operations
+ * @brief Wrappers for multimem instructions
  */
 
 #pragma once

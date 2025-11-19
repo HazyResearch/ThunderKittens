@@ -17,7 +17,7 @@
 
 // WGMMA relies on some template structures that cannot be specialized within the group struct, so we declare them in advance.
 #if defined(KITTENS_HOPPER)
-#include "mma/warpgroup/base/base.cuh"
+#include "mma/base/base.cuh"
 #endif
 
 namespace kittens {
@@ -46,9 +46,10 @@ __device__ static inline void arrive(int id) {
 #include "memory/memory.cuh"
 #include "shared/shared.cuh"
 #include "register/register.cuh"
+#include "mma/mma.cuh"
+#include "util/util.cuh"
 
 #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
-#include "mma/mma.cuh"
 
 template<int n_reg> __device__ static inline void increase_registers() {
     static_assert(n_reg % 8 == 0, "n_reg must be a multiple of 8");

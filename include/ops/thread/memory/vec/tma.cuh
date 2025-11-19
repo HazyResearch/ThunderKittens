@@ -5,8 +5,8 @@
 
 #pragma once
 
-#include "../../common/common.cuh"
-#include "../../types/types.cuh"
+#include "../../../../common/common.cuh"
+#include "../../../../types/types.cuh"
 #include "util.cuh"
 
 // This is a macro that helps us define default cache policy versions of each function.
