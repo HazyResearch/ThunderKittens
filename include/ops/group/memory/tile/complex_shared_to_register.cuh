@@ -4,31 +4,29 @@
  */
 
 /**
- * @brief Collaboratively load data from a shared tile into register tiles split across a group.
+ * @brief Load data from a complex shared tile into a complex register tile.
  *
- * @tparam RT The register tile type
- * @tparam ST The shared tile type
- * @param dst[out] The destination register tile.
- * @param src[in]  The source shared tile.
+ * @tparam CRT The complex register tile type
+ * @tparam CST The complex shared tile type
+ * @param dst[out] The destination complex register tile.
+ * @param src[in]  The source complex shared tile.
  */
-template<ducks::crt::all RT, ducks::cst::all ST>
-__device__ inline static void load(RT &dst, const ST &src) {
+template<ducks::crt::all CRT, ducks::cst::all CST>
+__device__ inline static void load(CRT &dst, const CST &src) {
     load(dst.real, src.real);
     load(dst.imag, src.imag);
 }
 
-
 /**
- * @brief Collaboratively store data into a shared tile from register tiles split across a group.
+ * @brief Store data into a complex shared tile from a complex register tile.
  *
- * @tparam RT The register tile type
- * @tparam ST The shared tile type
- * @param dst[out] The destination shared tile.
- * @param src[in]  The source register tile.
+ * @tparam RT The complex register tile type
+ * @tparam ST The complex shared tile type
+ * @param dst[out] The destination complex shared tile.
+ * @param src[in]  The source complex register tile.
  */
-template<ducks::cst::all ST, ducks::crt::all RT>
-__device__ inline static void store(ST &dst, const RT &src) {
+template<ducks::crt::all CRT, ducks::cst::all CST>
+__device__ inline static void store(CST &dst, const CRT &src) {
     store(dst.real, src.real);
     store(dst.imag, src.imag);
 }
-
