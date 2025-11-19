@@ -6,6 +6,20 @@
 // The fastest way to do this, under most circumstances, is actually to just have each warp replicate it.
 // This is not true for enormous shared vectors, but doing that efficiently actually requires some extra scratch shared memory.
 // So, this is sufficient for the time being.
+/**
+ * @brief Performs a reduction operation on elements of a shared memory vector within a warp.
+ *
+ * This function applies a specified operation to reduce the elements of a shared memory vector `src` to a single value.
+ * The result is stored in `accum`. If the `reset` parameter is true, the reduction includes an initial value `src_accum`.
+ * The reduction operation is performed in a warp-wide context, ensuring synchronization between threads in the warp.
+ *
+ * @tparam op The operation to perform on the elements. Must provide a static `op` method.
+ * @tparam SV The type of the shared memory vector. Must satisfy the `ducks::sv::all` concept.
+ * @tparam reset A boolean flag indicating whether to include an initial value in the reduction.
+ * @param[out] accum The result of the reduction operation.
+ * @param[in] src The shared memory vector to reduce.
+ * @param[in] src_accum The initial value to include in the reduction if `reset` is false.
+ */
 template<typename op, ducks::sv::all SV, bool reset>
 __device__ static inline void reduce(typename SV::dtype &dst_accum, const SV &src, const typename SV::dtype &src_accum) {
     if constexpr (GROUP_WARPS == 1) {
