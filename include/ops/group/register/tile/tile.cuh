@@ -42,6 +42,5 @@ __device__ static inline bool hasnan(const RT &src) {
     return (__ballot_sync(0xffffffff, nan_detected) != 0);
 }
 
-#include "complex/complex_conversions.cuh"
-#include "complex/complex_maps.cuh"
-
+#include "complex_conversions.cuh"
+#include "complex_maps.cuh"
