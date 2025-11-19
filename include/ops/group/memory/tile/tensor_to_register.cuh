@@ -27,7 +27,7 @@ __device__ inline static void load_async(RT &dst, const TM &src) {
                 #pragma unroll
                 for(int j = 0; j < dst.width; j++) {
                     asm volatile(
-                        "tcgen05.ld.sync.aligned.16x128b.x2.pack::16b.b32 {%0, %1, %2, %3}, [%4];\n"
+                        "tcgen05.ld.sync.aligned.16x128b.x2.b32 {%0, %1, %2, %3}, [%4];\n"   // pack::16b doesn't make sense for fp8
                         : "=r"(*(uint32_t*) &dst.tiles[i][j].data[0]),
                             "=r"(*(uint32_t*) &dst.tiles[i][j].data[1]),
                             "=r"(*(uint32_t*) &dst.tiles[i][j].data[2]),
