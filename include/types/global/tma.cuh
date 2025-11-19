@@ -1,11 +1,8 @@
 #pragma once
 
 #include <cuda.h>
-#include <iostream>
 #include <assert.h>
 #include <functional> // for std::hash
-#include <unordered_map>
-#include <sstream>
 #include "../../common/common.cuh"
 #include "../shared/shared.cuh"
 
@@ -23,13 +20,15 @@ namespace tma {
 * map based on the provided source tensor pointer and the layout specified by the ST template parameter.
 *
 * @tparam ST The source tensor type, which must be TMA-compatible.
-* @tparam blocks_height The number of tiles present on the height axis in global memory.
-* @tparam blocks_width The number of tiles present on the width axis in global memory. Defaults to 1.
+* @tparam axis The first axis (0, 1, or 2; default is 2)
+* @tparam enable_swizzle Whether to swizzle load
 * @param tma_map Pointer to the CUtensorMap object to be initialized.
 * @param src Pointer to the source tensor data in global memory.
 */
 template<ducks::st::all ST, int axis, bool enable_swizzle = true>
-__host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typename ST::dtype *src, int batch, int depth, int rows, int cols) {
+__host__ static inline void create_tensor_map(
+    CUtensorMap *tma_map, const typename ST::dtype *src, int batch, int depth, int rows, int cols
+) {
     using dtype = typename ST::dtype;
     static_assert(axis==0 || axis==1 || axis==2, "axis must be 0, 1, or 2");
     
@@ -44,7 +43,6 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
         std::is_same_v<dtype, fp8e5m2> ? CU_TENSOR_MAP_DATA_TYPE_UINT8 :
 #ifdef KITTENS_BLACKWELL
         std::is_same_v<dtype, fp8e8m0> ? CU_TENSOR_MAP_DATA_TYPE_UINT8 :
-        std::is_same_v<dtype, fp4_2> ? CU_TENSOR_MAP_DATA_TYPE_16U4_ALIGN8B :
 #endif
         CUtensorMapDataType(-1)
     );
@@ -58,7 +56,6 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
         CU_TENSOR_MAP_SWIZZLE_NONE
     ) : CU_TENSOR_MAP_SWIZZLE_NONE;
 
-    // Works for tma_dim = 4 too
     uint64_t gmem_shape [5] = {0, 0, 0, 0, 0};
     uint64_t gmem_stride[4] = {0, 0, 0, 0};
     uint32_t smem_shape [5] = {0, 0, 0, 0, 0};
@@ -198,8 +195,6 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
 * map based on the provided source tensor pointer and the layout specified by the ST template parameter.
 *
 * @tparam ST The source tensor type, which must be TMA-compatible.
-* @tparam blocks_height The number of tiles present on the height axis in global memory.
-* @tparam blocks_width The number of tiles present on the width axis in global memory. Defaults to 1.
 * @param src Pointer to the source tensor data in global memory.
 * @returns Pointer to the CUtensorMap object to be initialized.
 */
@@ -235,7 +230,8 @@ template<typename SV> constexpr int sv_tma_dim2 = (SV::length / sv_tma_dim1<SV>)
 * map based on the provided source tensor pointer and the layout specified by the SV template parameter.
 *
 * @tparam SV The source tensor type, which must be TMA-compatible.
-* @tparam num_vectors The number of vectors present in global memory.
+* @tparam axis The first axis (0, 1, or 2; default is 2)
+* @tparam enable_swizzle Whether to not swizzle load
 * @param tma_map Pointer to the CUtensorMap object to be initialized.
 * @param src Pointer to the source tensor data in global memory.
 */
@@ -259,7 +255,6 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
         std::is_same_v<dtype, fp8e5m2> ? CU_TENSOR_MAP_DATA_TYPE_UINT8 :
 #ifdef KITTENS_BLACKWELL
         std::is_same_v<dtype, fp8e8m0> ? CU_TENSOR_MAP_DATA_TYPE_UINT8 :
-        std::is_same_v<dtype, fp4_2> ? CU_TENSOR_MAP_DATA_TYPE_16U4_ALIGN8B :
 #endif
         CUtensorMapDataType(-1)
     );
