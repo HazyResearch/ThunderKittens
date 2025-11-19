@@ -27,7 +27,7 @@ ThunderKittens is built for NVIDIA GPUs. For AMD GPUs, check out [HipKittens](ht
 * We've fixed numerous bugs, improved overall performance, and finally added proper docstrings for most functions.
 * The repository structure has changed. We no longer support the repo as a Python package (i.e., a top-level `setup.py`), since ThunderKittens is fundamentally a CUDA framework. Kernels built with ThunderKittens are still located under the `/kernels` directory, and we still welcome new kernel contributions, but they must now be compiled individually. Tests and benchmarks reside alongside their corresponding kernel files. Some kernel examples may break due to this update; please let us know if you find any! 
 * Removed all unused files and directories.
-* **ThunderKittens 3.0 drops support for Ampere and older generations.** From now on, we're focusing development exclusively on Hopper and Blackwell.
+* We no longer test on Ampere GPUs (because we don't have any). ThunderKittens should still work on Ampere, but active development and testing are focused on Hopper and Blackwell.
 
 ## Overview
 
@@ -146,6 +146,11 @@ Altogether, this is less than 100 lines of code, and achieves about 855 TFLOPs o
 ## Installation
 
 **ThunderKittens is a header-only library**. The library itself does not require any installation; just clone the repo, and include `kittens.cuh`. Easy money.
+
+#### Hardware requirements
+
+* ThunderKittens is mainly built and tested for Hopper and Blackwell GPUs.
+* We make our best effort to support Ampere GPUs too, but some features may not work correctly. Contributions are welcome!
 
 #### Build requirements
 
