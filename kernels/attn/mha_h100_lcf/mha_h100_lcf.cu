@@ -1,3 +1,8 @@
+/*
+    This kernel leverages one of ThunderKittens' pipeline templates (load-compute-finish) to concisely implement a 
+    two-stage pipeline with minimal boilerplate. TK pipeline templates are also used in our matrix multiply, rotary, 
+    mamba, and fftconv kernels -- they're pretty flexible.
+*/
 #include "kittens.cuh"
 #include "prototype.cuh"
 
