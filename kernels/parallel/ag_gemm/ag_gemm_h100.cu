@@ -40,7 +40,7 @@ struct globals {
     using A_pgl = pgl<gl<bf16, 1, 1, -1, -1, A_tile, A_comm_tile>, NUM_DEVICES, true, A_comm_tile>;
     using B_gl = gl<bf16, 1, 1, -1, -1, B_tile>;
     using C_gl = gl<bf16, 1, 1, -1, -1, C_tile>;
-    using barrier_pgl = device<NUM_DEVICES>::barrier_t;
+    using barrier_pgl = barrier_t<NUM_DEVICES>;
 
     A_pgl A;
     B_gl B;
@@ -101,7 +101,7 @@ __device__ inline void comm_sm(const globals &G) {
 
             // Signal
             if (col_idx + G.num_comm_sms * globals::NUM_CHUNKS >= col_blocks)
-                device<globals::NUM_DEVICES>::signal_all(G.barrier, {global_row_idx}, 1);
+                signal_all(G.barrier, {global_row_idx}, 1);
         }
     }
 }
@@ -176,7 +176,7 @@ __device__ inline void comp_sm(const globals &G) {
                     const int shard_row_idx = idx_in_shard % num_peer_devices;
                     row_idx = (shard_row_idx >= G.dev_idx ? shard_row_idx + 1 : shard_row_idx) * local_row_blocks + target_shard;
                     col_idx = idx_in_shard / num_peer_devices;
-                    device<globals::NUM_DEVICES>::wait(G.barrier, {row_idx / 2}, G.dev_idx, num_comm_workers_per_stage);
+                    wait(G.barrier, {row_idx / 2}, G.dev_idx, num_comm_workers_per_stage);
                 }
 
                 for (int red_idx = 0; red_idx < num_iters; red_idx++) {
@@ -269,7 +269,7 @@ __device__ inline void epilogue_kernel(const globals &G) {
 
     // Ensure all devices exit together
     if (blockIdx.x == 0 && threadIdx.x == 0)
-        device<globals::NUM_DEVICES>::barrier(G.barrier, {1, 0, 0}, G.dev_idx);
+        barrier_all(G.barrier, {1, 0, 0}, G.dev_idx);
 }
 
 void entrypoint(

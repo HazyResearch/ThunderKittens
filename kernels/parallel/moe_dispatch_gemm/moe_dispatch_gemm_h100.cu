@@ -44,7 +44,7 @@ struct globals {
     using outputs_gl = gl<bf16, 1, 1, -1, I, C_tile>;
     using padded_tokens_per_expert_gl = gl<int, 1, 1, 1, NUM_EXPERTS>;
     using pull_dispatch_indices_gl = gl<int, 1, 1, -1, 2>;
-    using barrier_pgl = device<NUM_DEVICES>::barrier_t;
+    using barrier_pgl = barrier_t<NUM_DEVICES>;
 
     pre_tokens_pgl pre_tokens;
     post_tokens_gl post_tokens;

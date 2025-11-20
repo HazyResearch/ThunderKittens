@@ -37,7 +37,7 @@ struct globals {
     using A_gl = gl<bf16, 1, 1, -1, -1, A_tile>;
     using B_gl = gl<bf16, 1, 1, -1, -1, B_tile>;
     using C_pgl = pgl<gl<bf16, 1, 1, -1, -1, C_tile>, NUM_DEVICES, true>;
-    using barrier_pgl = device<NUM_DEVICES>::barrier_t;
+    using barrier_pgl = barrier_t<NUM_DEVICES>;
 
     A_gl A;
     B_gl B;
@@ -202,7 +202,7 @@ struct lcsct {
         arrive(sem.outputs_finished);
 
         int signal_dev_idx = regs.task_id % globals::NUM_DEVICES; // static assignment for now. Ordering must match with comm SM signaling
-        device<globals::NUM_DEVICES>::signal(G.barrier, {row_idx, col_idx}, signal_dev_idx, 1);
+        signal(G.barrier, {row_idx, col_idx}, signal_dev_idx, 1);
     }
 
     __device__ static inline void consumer(const globals &G, comp_sem &sem, comp_smem &smem, comp_regs &regs) {
@@ -239,7 +239,7 @@ struct lcsct {
 
         // Cross-GPU barrier
         if (threadIdx.x == 0)
-            device<globals::NUM_DEVICES>::wait(G.barrier, {row_idx, col_idx}, G.dev_idx, globals::NUM_DEVICES);
+            wait(G.barrier, {row_idx, col_idx}, G.dev_idx, globals::NUM_DEVICES);
         __syncthreads();
 
         // Do in-network all-reduce
@@ -259,7 +259,7 @@ __device__ inline void epilogue_kernel(const globals &G) {
 
     // Ensure all devices exit together
     if (blockIdx.x == 0 && threadIdx.x == 0)
-        device<globals::NUM_DEVICES>::barrier(G.barrier, {1, 0, 0}, G.dev_idx);
+        barrier_all(G.barrier, {1, 0, 0}, G.dev_idx);
 }
 
 void entrypoint(
