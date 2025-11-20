@@ -9,8 +9,8 @@
 #define TK_COMPILE_FUSED_LAYERNORM
 #endif
 
-#define NUM_WORKERS (2) 
-#define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
+static constexpr int NUM_WORKERS = (2);
+static constexpr int NUM_THREADS = (NUM_WORKERS*kittens::WARP_THREADS);
 
 using namespace kittens;
 
@@ -213,12 +213,13 @@ void dispatch_layernorm(
 
 #ifdef TK_COMPILE_FUSED_LAYERNORM
 #include "pyutils/torchutils.cuh"
+#include <ATen/Functions.h>
 #include <iostream>
-std::tuple<torch::Tensor, torch::Tensor> fused_layernorm(
-    const torch::Tensor x, 
-    const torch::Tensor residual, 
-    const torch::Tensor norm_weight, 
-    const torch::Tensor norm_bias, 
+std::tuple<at::Tensor, at::Tensor> fused_layernorm(
+    const at::Tensor x, 
+    const at::Tensor residual, 
+    const at::Tensor norm_weight, 
+    const at::Tensor norm_bias, 
     float dropout_p
 ) {
     CHECK_INPUT(x);
@@ -239,8 +240,8 @@ std::tuple<torch::Tensor, torch::Tensor> fused_layernorm(
     TORCH_CHECK(x.size(1) % kittens::TILE_ROW_DIM<bf16> == 0,        "sequence length is divisible by 16?");
     TORCH_CHECK(residual.size(1) % kittens::TILE_ROW_DIM<bf16> == 0, "sequence length is divisible by 16?");
 
-    torch::Tensor out = torch::empty({b, n, d}, x.options());
-    torch::Tensor out_resid = torch::empty({b, n, d}, x.options());
+    at::Tensor out = at::empty({b, n, d}, x.options());
+    at::Tensor out_resid = at::empty({b, n, d}, x.options());
 
     // convert to bf16
     c10::BFloat16 *x_ptr           = x.data_ptr<c10::BFloat16>();
@@ -264,6 +265,9 @@ std::tuple<torch::Tensor, torch::Tensor> fused_layernorm(
     CHECK_CUDA_ERROR(cudaGetLastError());
 
     return std::make_tuple(out, out_resid);
+}
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("fused_layernorm", fused_layernorm, "LayerNorm TK. Takes tensors (x, residual, norm_weight, norm_bias, dropout_p). x, residual, norm_weight, norm_bias are bf16. dropout_p is float. Returns (B, H, N, 128) in bf16.");
 }
 #else
 #include "harness.impl"
