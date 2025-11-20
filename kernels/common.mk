@@ -1,8 +1,8 @@
 # Example usage:
 #   GPU := H100 | B200
-#   SRC := all_to_all.cu
-#   OUT := all_to_all
-#   CMD := ./all_to_all
+#   SRC := kernel.cu
+#   OUT := kernel
+#   CMD := ./kernel
 #   CONFIG := standalone | python | pytorch
 #   include common.mk
 
@@ -11,7 +11,7 @@ GPU ?= NOT_SET # H100 | B200
 SRC ?= NOT_SET # ex. my_kernel.cu
 OUT ?= NOT_SET # ex. _C$(shell python3 -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))")
 CMD ?= NOT_SET # ex. ./my_kernel, OMP_NUM_THREADS=1 torchrun --nproc_per_node=8 benchmark.py
-CONFIG ?= NOT_SET
+CONFIG ?= NOT_SET # standalone | python | pytorch
 ifeq ($(GPU),NOT_SET)
 $(error GPU is not set. Please set GPU to B200 or H100)
 endif
@@ -46,9 +46,9 @@ NVCCFLAGS += -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills
 NVCCFLAGS += -I${THUNDERKITTENS_ROOT}/include -I${THUNDERKITTENS_ROOT}/prototype
 
 # Development flags
-NVCCFLAGS := -DNDEBUG # disable debug blocks
-NVCCFLAGS := -lineinfo # show line number with compute-sanitizer (does not affect perf, but binary gets larger)
-NVCCFLAGS := -ftemplate-backtrace-limit=0 # show full template trace
+NVCCFLAGS += -DNDEBUG # disable debug blocks
+NVCCFLAGS += -lineinfo # show line number with compute-sanitizer (does not affect perf, but binary gets larger)
+NVCCFLAGS += -ftemplate-backtrace-limit=0 # show full template trace
 
 # Python configuration (i.e., run with Python + PyTorch, but C++-side does not use the PyTorch API)
 ifeq ($(CONFIG),python)

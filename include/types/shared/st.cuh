@@ -307,18 +307,24 @@ __device__ constexpr const char* get_tile_type_name() {
         return "st_hf";
     } else if constexpr (std::is_same_v<T, bf16>) {
         return "st_bf";
+#if defined(KITTENS_BLACKWELL)
     } else if constexpr (std::is_same_v<T, fp4e2m1>) {
-        return "st_fl4_e2m1";
+        return "st_fp4_e2m1";
     } else if constexpr (std::is_same_v<T, fp8e8m0>) {
-        return "st_fl8_e8m0";
+        return "st_fp8_e8m0";
+#endif
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     } else if constexpr (std::is_same_v<T, fp8e4m3>) {
-        return "st_fl8_e4m3";
+        return "st_fp8_e4m3";
     } else if constexpr (std::is_same_v<T, fp8e5m2>) {
-        return "st_fl8_e5m2";
+        return "st_fp8_e5m2";
+#endif  
     } else {
         return "st_unknown";
     }
 }
+
+#if defined(KITTENS_BLACKWELL)
 /**
  * @brief Print the contents of a shared tile as a formatted table.
  * 
@@ -368,6 +374,7 @@ __device__ inline void print_fp4(const ST& tile) {
         printf("Type must be FP4 in this function\n");
     }
 }
+#endif
 
 /**
  * @brief Print the contents of a shared tile as a formatted table.
@@ -405,13 +412,13 @@ __device__ inline void print(const ST& tile) {
                 printf("%8.3f ", __bfloat162float(tile[{r,c}]));
             } else if constexpr (std::is_integral_v<typename ST::dtype>) {
                 printf("%8d ", (int)tile[{r,c}]);
-#ifdef defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
             } else if constexpr (std::is_same_v<typename ST::dtype, fp8e4m3>) {
                 printf("%8.3f ", static_cast<float>(tile[{r,c}]));
             } else if constexpr (std::is_same_v<typename ST::dtype, fp8e5m2>) {
                 printf("%8.3f ", static_cast<float>(tile[{r,c}]));
 #endif
-#ifdef KITTENS_BLACKWELL
+#if defined(KITTENS_BLACKWELL)
             } else if constexpr (std::is_same_v<typename ST::dtype, fp8e8m0>) {
                 printf("%8.3f ", static_cast<float>(tile[{r,c}]));
 #endif
@@ -493,10 +500,12 @@ __device__ inline void fill_value(ST& tile, float value) {
                 tile[{r,c}] = value;
             } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
                 tile[{r,c}] = __float2bfloat16(value);
+#if defined(KITTENS_BLACKWELL)  
             } else if constexpr (std::is_same_v<typename ST::dtype, fp4e2m1>) {
                 tile.data[r*ST::cols + c] = fp4e2m1(value);
             } else if constexpr (std::is_same_v<typename ST::dtype, fp8e8m0>) {
                 tile.data[r*ST::cols + c] = fp8e8m0(value);
+#endif
             } else {    
                 tile[{r,c}] = value;
             }
@@ -525,6 +534,7 @@ __device__ inline void fill_identity(ST& tile) {
             } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
                 // printf("%8.3f ", __bfloat162float(tile[{r,c}]));
                 tile[{r,c}] = __float2bfloat16(1.0f);
+#if defined(KITTENS_BLACKWELL)  
             } else if constexpr (std::is_same_v<typename ST::dtype, fp4e2m1>) {
                 if(r == c){
                     // tile[{r,c}] = std::bit_cast<fp4e2m1>(uint8_t(0xFF));
@@ -532,6 +542,7 @@ __device__ inline void fill_identity(ST& tile) {
                 } else {
                     tile.data[r*ST::cols + c] = std::bit_cast<fp4e2m1>(uint8_t(0x00));
                 }
+#endif
             } else {    
                 // printf("%8.3f ", (float)tile[{r,c}]);
             }
@@ -576,6 +587,7 @@ __device__ inline void print_bits(const ST& tile, bool unswizzle = false) {
                 printf("%8.3f ", __bfloat162float(tile[{r,c}]));
             // } else if constexpr (std::is_integral_v<typename ST::dtype>) {
             //     printf("%8d ", (int)tile[{r,c}]);
+#if defined(KITTENS_BLACKWELL)
             } else if constexpr (std::is_same_v<typename ST::dtype, fp4e2m1> || std::is_same_v<typename ST::dtype, fp8e8m0>) {
                 // print as bitfield
 
@@ -593,7 +605,7 @@ __device__ inline void print_bits(const ST& tile, bool unswizzle = false) {
                     if (bit % 4 == 0 && bit > 0) printf("_");
                 }
                 printf(" ");
-
+#endif
             } else {
                 printf("%8.3f ", (float)tile[{r,c}]);
             }
@@ -603,4 +615,4 @@ __device__ inline void print_bits(const ST& tile, bool unswizzle = false) {
     printf("\n");
 }
 
-}
+} // namespace kittens

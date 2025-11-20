@@ -7,7 +7,7 @@
 
 #include "../../../../common/common.cuh"
 #include "../../../../types/types.cuh"
-#include "util.cuh"
+#include "../../util/util.cuh"
 
 // This is a macro that helps us define default cache policy versions of each function.
 #define __KITTENS_TMA_DEFINE_DEFAULT_LOAD_CACHE_VEC__(function_name) \

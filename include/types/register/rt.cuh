@@ -167,14 +167,18 @@ __device__ constexpr const char* get_rt_type_name() {
         return "rt_hf";
     } else if constexpr (std::is_same_v<T, bf16>) {
         return "rt_bf";
+#if defined(KITTENS_BLACKWELL)
     } else if constexpr (std::is_same_v<T, fp4e2m1>) {
-        return "rt_fl4_e2m1";
+        return "rt_fp4_e2m1";
     } else if constexpr (std::is_same_v<T, fp8e8m0>) {
-        return "rt_fl8_e8m0";
+        return "rt_fp8_e8m0";
+#endif
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     } else if constexpr (std::is_same_v<T, fp8e4m3>) {
-        return "rt_fl8_e4m3";
+        return "rt_fp8_e4m3";
     } else if constexpr (std::is_same_v<T, fp8e5m2>) {
-        return "rt_fl8_e5m2";
+        return "rt_fp8_e5m2";
+#endif
     } else {
         return "rt_unknown";
     }
@@ -221,14 +225,22 @@ __device__ inline void print(const RT& tile) {
                                 printf("%.3f ", __half2float(packed_val));
                             } else if constexpr (std::is_same_v<typename RT::T, bf16>) {
                                 printf("%.3f ", __bfloat162float(packed_val));
+#if defined(KITTENS_BLACKWELL)
                             } else if constexpr (std::is_same_v<typename RT::T, fp4e2m1>) {
                                 printf("%.3f ", (float)packed_val);
+#endif
                             } else {
                                 printf("%.3f ", (float)packed_val);
                             }
                         } else {
                             // Packed type - check what type we're dealing with
-                            if constexpr (std::is_same_v<typename RT::T, fp8e8m0>) {
+                            if constexpr (std::is_same_v<typename RT::T, float>) {
+                                printf("[%.3f, %.3f] ", packed_val.x, packed_val.y);
+                            } else if constexpr (std::is_same_v<typename RT::T, bf16>) {
+                                // Handle packed bf16_2 type
+                                printf("[%.3f, %.3f] ", __bfloat162float(packed_val.x), __bfloat162float(packed_val.y));
+#if defined(KITTENS_BLACKWELL)
+                            } else if constexpr (std::is_same_v<typename RT::T, fp8e8m0>) {
                                 // Extract the 4 individual fp8e8m0 values from the packed fp8e8m0_4
                                 __nv_fp8_e8m0 *vals = reinterpret_cast<__nv_fp8_e8m0*>(const_cast<fp8e8m0_4*>(&packed_val));
                                 printf("[%.3f,%.3f,%.3f,%.3f] ", 
@@ -237,11 +249,7 @@ __device__ inline void print(const RT& tile) {
                                 // Handle packed fp4e2m1_4 types (4 fp4 values packed together)
                                 uint8_t *vals = reinterpret_cast<uint8_t*>(const_cast<fp4e2m1_4*>(&packed_val));
                                 printf("[%.3f,%.3f,%.3f,%.3f] ", (float)fp4e2m1(vals[0] & 0xF), (float)fp4e2m1((vals[0] >> 4) & 0xF), (float)fp4e2m1(vals[1] & 0xF), (float)fp4e2m1((vals[1] >> 4) & 0xF));
-                            } else if constexpr (std::is_same_v<typename RT::T, float>) {
-                                printf("[%.3f, %.3f] ", packed_val.x, packed_val.y);
-                            } else if constexpr (std::is_same_v<typename RT::T, bf16>) {
-                                // Handle packed bf16_2 type
-                                printf("[%.3f, %.3f] ", __bfloat162float(packed_val.x), __bfloat162float(packed_val.y));
+#endif
                             } else {
                                 // Other packed types - print the raw packed value
                                 printf("0x%x ", *(uint32_t*)&packed_val);

@@ -5,8 +5,8 @@
 
 #pragma once
 
-#include "../../common/common.cuh"
-#include "../../types/types.cuh"
+#include "../../../common/common.cuh"
+#include "../../../types/types.cuh"
 
 namespace kittens {
 /**

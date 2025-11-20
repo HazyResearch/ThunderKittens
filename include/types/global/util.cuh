@@ -2,6 +2,8 @@
 
 #include <type_traits>
 #include <cstddef>
+#include <iostream>
+#include <sstream>
 
 namespace kittens {
 namespace ducks {

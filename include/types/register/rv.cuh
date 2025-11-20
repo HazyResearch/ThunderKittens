@@ -137,9 +137,13 @@ __device__ void print(const RV &vec) {
                std::is_same_v<typename RV::T, float> ? "float" :
                std::is_same_v<typename RV::T, bf16> ? "bf16" :
                std::is_same_v<typename RV::T, half> ? "half" :
+#if defined(KITTENS_BLACKWELL)
                std::is_same_v<typename RV::T, fp8e8m0> ? "fp8e8m0" :
+#endif
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
                std::is_same_v<typename RV::T, fp8e4m3> ? "fp8e4m3" :
                std::is_same_v<typename RV::T, fp8e5m2> ? "fp8e5m2" : "unknown",
+#endif
                RV::is_naive ? "naive" : "tile");
         printf("Each thread holds %dx%d elements\n", RV::outer_dim, RV::inner_dim);
         printf("\n");
@@ -165,12 +169,16 @@ __device__ void print(const RV &vec) {
                             printf("%.3f ", __half2float(value));
                         } else if constexpr (std::is_same_v<typename RV::T, bf16>) {
                             printf("%.3f ", __bfloat162float(value));
+#if defined(KITTENS_BLACKWELL)
                         } else if constexpr (std::is_same_v<typename RV::T, fp8e8m0>) {
                             printf("%.3f ", (float)value);
+#endif
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
                         } else if constexpr (std::is_same_v<typename RV::T, fp8e4m3>) {
                             printf("%.3f ", (float)value);
                         } else if constexpr (std::is_same_v<typename RV::T, fp8e5m2>) {
                             printf("%.3f ", (float)value);
+#endif  
                         } else {
                             printf("%.3f ", (float)value);
                         }
@@ -184,11 +192,14 @@ __device__ void print(const RV &vec) {
                         } else if constexpr (std::is_same_v<typename RV::T, half>) {
                             // Handle packed half2 type
                             printf("[%.3f, %.3f] ", __half2float(value.x), __half2float(value.y));
+#if defined(KITTENS_BLACKWELL)
                         } else if constexpr (std::is_same_v<typename RV::T, fp8e8m0>) {
                             // Handle packed fp8e8m0_4 types
                             __nv_fp8_e8m0 *vals = reinterpret_cast<__nv_fp8_e8m0*>(const_cast<fp8e8m0_4*>(&value));
                             printf("[%.3f,%.3f,%.3f,%.3f] ", 
                                    (float)vals[0], (float)vals[1], (float)vals[2], (float)vals[3]);
+#endif  
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
                         } else if constexpr (std::is_same_v<typename RV::T, fp8e4m3>) {
                             // Handle packed fp8e4m3_4 types  
                             __nv_fp8_e4m3 *vals = reinterpret_cast<__nv_fp8_e4m3*>(const_cast<fp8e4m3_4*>(&value));
@@ -199,6 +210,7 @@ __device__ void print(const RV &vec) {
                             __nv_fp8_e5m2 *vals = reinterpret_cast<__nv_fp8_e5m2*>(const_cast<fp8e5m2_4*>(&value));
                             printf("[%.3f,%.3f,%.3f,%.3f] ", 
                                    (float)vals[0], (float)vals[1], (float)vals[2], (float)vals[3]);
+#endif
                         } else {
                             // Other packed types - print the raw packed value
                             printf("0x%x ", *(uint32_t*)&value);

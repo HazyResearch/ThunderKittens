@@ -281,7 +281,7 @@ __device__ static inline void wait(
 }
 
 template <int NUM_DEVICES>
-__device__ static inline void barrier(
+__device__ static inline void barrier_all(
     const barrier_t<NUM_DEVICES> &barrier, const coord<ducks::default_type> &idx, const int dev_idx
 ) {
     signal_all(barrier, idx, 1);

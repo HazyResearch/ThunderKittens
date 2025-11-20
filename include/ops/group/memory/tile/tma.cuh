@@ -3,7 +3,7 @@
  * @brief Functions for a group scope to call tile TMA functions.
  */
 
-namespace tma {
+struct tma { // can't declare a namespace since this is under struct group
 
 template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void prefetch(ST &dst, const GL &src, const COORD &idx) {
@@ -135,7 +135,7 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
     }
 }
 
-namespace cluster {
+struct cluster {
 
 #ifdef KITTENS_BLACKWELL
 template<int axis, cache_policy policy, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
@@ -165,5 +165,5 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
 }
 #endif
 
-} // namespace cluster
-} // namespace tma
+}; // struct cluster
+}; // struct tma

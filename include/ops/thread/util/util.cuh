@@ -3,6 +3,8 @@
  * @brief Utilities run by a single thread.
  */
 
+#pragma once
+
 #include "sync.cuh"
 #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 #include "tma.cuh"
