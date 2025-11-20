@@ -21,7 +21,7 @@ ThunderKittens is built for NVIDIA GPUs. For AMD GPUs, check out [HipKittens](ht
 
 ## Recent Updates
 
-**Nov 17, 2025:** **ThunderKittens 3.0** is out!
+**Nov 17, 2025:** **ThunderKittens 2.0** is out!
 
 * This release brings full support for Blackwell GPUs and NVFP4 precision, and merges major contributions from across the industry.
 * We've fixed numerous bugs, improved overall performance, and finally added proper docstrings for most functions.
