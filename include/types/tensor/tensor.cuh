@@ -6,7 +6,6 @@
 #pragma once
 
 #include "tt.cuh"
-#include "../../ops/warp/memory/tile/tensor_to_register.cuh"
 
 // A thin wrapper that allows for certain compile-time checks to be performed when allocating tensor memory.
 namespace kittens {

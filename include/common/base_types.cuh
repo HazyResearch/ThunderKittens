@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <stdint.h>
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
 #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
@@ -94,19 +95,19 @@ namespace base_types {
 
 #if defined(KITTENS_BLACKWELL)
 template<typename T>
-concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2> || std::is_same_v<T, half_2> || std::is_same_v<T, fp8e4m3_4> || std::is_same_v<T, fp8e5m2_4> || std::is_same_v<T, fp8e8m0_4 || std::is_same_v<T, fp4e2m1_4>;
+concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2> || std::is_same_v<T, half_2> || std::is_same_v<T, fp8e4m3_4> || std::is_same_v<T, fp8e5m2_4> || std::is_same_v<T, fp8e8m0_4> || std::is_same_v<T, fp4e2m1_4>;
 template<typename T>
-concept T1 = std::is_same_v<T, float>  || std::is_same_v<T, bf16  > || std::is_same_v<T, half> || std::is_same_v<T, fp8e4m3> || std::is_same_v<T, fp8e5m2> || std::is_same_v<T, fp8e8m0> || std::is_same_v<T, fp4e2m1>;
+concept T1 = std::is_same_v<T, float>  || std::is_same_v<T, bf16  > || std::is_same_v<T, half  > || std::is_same_v<T, fp8e4m3  > || std::is_same_v<T, fp8e5m2  > || std::is_same_v<T, fp8e8m0  > || std::is_same_v<T, fp4e2m1>;
 #elif defined(KITTENS_HOPPER)
 template<typename T>
 concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2> || std::is_same_v<T, half_2> || std::is_same_v<T, fp8e4m3_4> || std::is_same_v<T, fp8e5m2_4>;
 template<typename T>
-concept T1 = std::is_same_v<T, float>  || std::is_same_v<T, bf16  > || std::is_same_v<T, half> || std::is_same_v<T, fp8e4m3> || std::is_same_v<T, fp8e5m2>;
+concept T1 = std::is_same_v<T, float>  || std::is_same_v<T, bf16  > || std::is_same_v<T, half  > || std::is_same_v<T, fp8e4m3  > || std::is_same_v<T, fp8e5m2  >;
 #else
 template<typename T>
 concept T2 = std::is_same_v<T, float2> || std::is_same_v<T, bf16_2> || std::is_same_v<T, half_2>;
 template<typename T>
-concept T1 = std::is_same_v<T, float>  || std::is_same_v<T, bf16  > || std::is_same_v<T, half>;
+concept T1 = std::is_same_v<T, float>  || std::is_same_v<T, bf16  > || std::is_same_v<T, half  >;
 #endif
 
 } // namespace base_types

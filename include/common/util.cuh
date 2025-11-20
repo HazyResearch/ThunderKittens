@@ -338,4 +338,7 @@ __device__ static inline void update_phasebit(uint32_t &bitfield, int ring_id) {
     bitfield ^= (1 << (half*16 + ring_id));
 }
 
+template<int N> __device__ static inline int ring_advance(int ring, int distance=1) { return (ring + distance) % N; }
+template<int N> __device__ static inline int ring_retreat(int ring, int distance=1) { return (ring + 16*N - distance) % N; }
+
 } // namespace kittens

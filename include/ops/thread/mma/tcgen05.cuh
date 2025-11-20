@@ -131,7 +131,7 @@ __device__ static inline constexpr uint32_t instruction_descriptor() {
     desc |= 0b0 << 3; // SBZ
     desc |= scale_factor_id << 4; // Matrix B scale Factor ID (0, 1, 2, 3 for MXFP8; 0, 2 for NVFP4)
     desc |= 0b0 << 6; // SBZ
-    if constexpr (std::is_same_v<AB, fp8e4m3) { // MXFP8
+    if constexpr (std::is_same_v<AB, fp8e4m3>) { // MXFP8
         desc |= (0b000 << 7); // Matrix A is E4M3
         desc |= (0b000 << 10); // Matrix B is E4M3
     } else if constexpr (std::is_same_v<AB, fp4e2m1>) { // NVFP4
@@ -242,14 +242,14 @@ template<typename AB, typename SAB, int acc, int ncta=1, int block_size=16>
 __device__ static inline void st_st(uint32_t d_tt_addr, uint64_t a_desc, uint64_t b_desc, uint32_t sa_tt_addr, uint32_t sb_tt_addr, uint32_t idesc) {
     static_assert(std::is_same_v<AB, fp8e4m3> || std::is_same_v<AB, fp4e2m1>, "AB must be fp8e4m3 for f4e2m1");
     if constexpr (ncta == 1) {
-        if constexpr (std::is_same_v<AB, fp8e4m3) { // Block size is always 32; alias is 1X
+        if constexpr (std::is_same_v<AB, fp8e4m3>) { // Block size is always 32; alias is 1X
             asm volatile(
                 "{.reg .pred p;\n\t" \
                 "setp.eq.u32 p, 1, %6;\n\t" \
                 "tcgen05.mma.cta_group::1.kind::mxf8f6f4.block_scale.scale_vec::1X [%0], %1, %2, %3, [%4], [%5], p;}\n"
             ::  "r"(d_tt_addr), "l"(a_desc), "l"(b_desc), "r"(idesc), "r"(sa_tt_addr), "r"(sb_tt_addr), "n"(acc)
             );
-        } else if constexpr (std::is_same_v<AB, fp4e2m1) {
+        } else if constexpr (std::is_same_v<AB, fp4e2m1>) {
             if constexpr (block_size == 32) { // E8M0 scale only
                 asm volatile(
                     "{.reg .pred p;\n\t" \
@@ -271,14 +271,14 @@ __device__ static inline void st_st(uint32_t d_tt_addr, uint64_t a_desc, uint64_
         }
     }
     else {
-        if constexpr (std::is_same_v<AB, fp8e4m3) { // Block size is always 32; alias is 1X
+        if constexpr (std::is_same_v<AB, fp8e4m3>) { // Block size is always 32; alias is 1X
             asm volatile(
                 "{.reg .pred p;\n\t" \
                 "setp.eq.u32 p, 1, %6;\n\t" \
                 "tcgen05.mma.cta_group::2.kind::mxf8f6f4.block_scale.scale_vec::1X [%0], %1, %2, %3, [%4], [%5], p;}\n"
             ::  "r"(d_tt_addr), "l"(a_desc), "l"(b_desc), "r"(idesc), "r"(sa_tt_addr), "r"(sb_tt_addr), "n"(acc)
             );
-        } else if constexpr (std::is_same_v<AB, fp4e2m1) {
+        } else if constexpr (std::is_same_v<AB, fp4e2m1>) {
             if constexpr (block_size == 32) { // E8M0 scale only
                 asm volatile(
                 "{.reg .pred p;\n\t" \
@@ -308,19 +308,16 @@ __device__ static inline void commit(kittens::semaphore &sem) {
             asm volatile(
                 "tcgen05.commit.cta_group::1.mbarrier::arrive::one.shared::cluster.multicast::cluster.b64 [%0], %1;\n"
             ::  "l"(__cvta_generic_to_shared(&sem)), "h"((uint16_t)(0b11))); // signal both CTAs
-            );
         } else {
             asm volatile(
                 "tcgen05.commit.cta_group::1.mbarrier::arrive::one.b64 [%0];\n"
-            ::  "l"(__cvta_generic_to_shared(&sem))
-            );
+            ::  "l"(__cvta_generic_to_shared(&sem)));
         }
     }
     else {
         asm volatile(
             "tcgen05.commit.cta_group::2.mbarrier::arrive::one.shared::cluster.multicast::cluster.b64 [%0], %1;\n"
-        ::  "l"(__cvta_generic_to_shared(&sem)), "h"((uint16_t)(0b11))
-        );
+        ::  "l"(__cvta_generic_to_shared(&sem)), "h"((uint16_t)(0b11)));
     }
 }
 
@@ -517,9 +514,9 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
 
     asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
 
-    constexpr uint32_t idesc = detail::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 0>();
+    constexpr uint32_t idesc = detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 0>();
 
-    detail::template st_s<T_AB, T_SAB, acc, ncta, block_size>(
+    detail::tcgen05::template st_st<T_AB, T_SAB, acc, ncta, block_size>(
         d.addr,
         a_desc.chunk_descriptor(0),
         b_desc.chunk_descriptor(0),
@@ -534,31 +531,31 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
     if constexpr (std::is_same_v<typename A::T, fp8e4m3>) { // MXFP8 case
         // Pre-calculate instruction descriptors to minimize runtime overhead
         constexpr uint32_t idescs[4] = {
-            detail::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 0>(),
-            detail::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 1>(),
-            detail::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 2>(),
-            detail::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 3>()
-    
-            #pragma unroll
-            for(int i = 1; i < K / red_dim; i++) {
-                detail::template st_st<T_AB, T_SAB, 1, ncta, block_size>(
-                    d.addr,
-                    a_desc.chunk_descriptor(i),
-                    b_desc.chunk_descriptor(i),
-                    sa.addr + (i >> 2) * M_offset, // i / 4
-                    sb.addr + (i >> 2) * N_offset, // i / 4
-                    idescs[i % 4]
-                );
-            }
+            detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 0>(),
+            detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 1>(),
+            detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 2>(),
+            detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 3>()
         };
+
+        #pragma unroll
+        for (int i = 1; i < K / red_dim; i++) {
+            detail::tcgen05::template st_st<T_AB, T_SAB, 1, ncta, block_size>(
+                d.addr,
+                a_desc.chunk_descriptor(i),
+                b_desc.chunk_descriptor(i),
+                sa.addr + (i >> 2) * M_offset, // i / 4
+                sb.addr + (i >> 2) * N_offset, // i / 4
+                idescs[i % 4]
+            );
+        }
 
     } else if constexpr (std::is_same_v<typename A::T, fp4e2m1>) { // NVFP4 case
         // Pre-calculate instruction descriptors to minimize runtime overhead
-        constexpr uint32_t idesc_sf0 = detail::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 0>();
-        constexpr uint32_t idesc_sf2 = detail::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 2>();
+        constexpr uint32_t idesc_sf0 = detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 0>();
+        constexpr uint32_t idesc_sf2 = detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 2>();
     
         #pragma unroll
-        for(int i = 1; i < K / red_dim; i++) {
+        for (int i = 1; i < K / red_dim; i++) {
             uint32_t sa_addr_offset, sb_addr_offset;
             uint32_t current_idesc;
     
@@ -582,7 +579,7 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
                 // tile_num = i >> 1;
             }
     
-            detail::template st_st<T_AB, T_SAB, 1, ncta, block_size>(
+            detail::tcgen05::template st_st<T_AB, T_SAB, 1, ncta, block_size>(
                 d.addr,
                 a_desc.chunk_descriptor(i),
                 b_desc.chunk_descriptor(i),
@@ -592,7 +589,7 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
             );
         }
     } else {
-        static_assert(sizeof(AB) == 999, "Should not reach here.");
+        static_assert(sizeof(T_AB) == 999, "Should not reach here.");
     }
 }
 template<int trans_a, int n_trans_b, ducks::tt::all D, ducks::st_descriptor::input A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB, int acc=1, int ncta=1>
@@ -610,15 +607,15 @@ template<int trans_a, int trans_b, ducks::tt::all D, typename A, ducks::st_descr
 __device__ static inline void mma2(D &d, const A &a, const B &b) {
     mma<trans_a, trans_b, D, A, B, acc, 2>(d, a, b);
 }
-template<int trans_a, int trans_b, ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB, acc=1>
+template<int trans_a, int trans_b, ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB, int acc=1>
 __device__ static inline void mma2(D &d, const A &a, const B &b, const SA &sa, const SB &sb, semaphore &sem) {
     static_assert(!trans_a && trans_b, "Only ABt supported for microscaling formats currently");
     mma<trans_a, trans_b, D, A, B, SA, SB, acc, 2>(d, a, b, sa, sb, sem);
 }
-template<int trans_a, int trans_b, ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB, acc=1>
-__device__ static inline void mma2(D &d, const A &a, const B &b, const SA &sa, const SB &sb, semaphore &sem) {
+template<int trans_a, int trans_b, ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB, int acc=1>
+__device__ static inline void mma2(D &d, const A &a, const B &b, const SA &sa, const SB &sb) {
     static_assert(!trans_a && trans_b, "Only ABt supported for microscaling formats currently");
-    mma<trans_a, trans_b, D, A, B, SA, SB, acc, 2>(d, a, b, sa, sb, sem);
+    mma<trans_a, trans_b, D, A, B, SA, SB, acc, 2>(d, a, b, sa, sb);
 }
 template<int trans_a, int trans_b, ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm(D &d, const A &a, const B &b, semaphore &sem) {
@@ -634,9 +631,9 @@ __device__ static inline void mm(D &d, const A &a, const B &b, const SA &sa, con
     mma<trans_a, trans_b, D, A, B, SA, SB, 0>(d, a, b, sa, sb, sem);
 }
 template<int trans_a, int trans_b, ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
-__device__ static inline void mm(D &d, const A &a, const B &b, const SA &sa, const SB &sb, semaphore &sem) {
+__device__ static inline void mm(D &d, const A &a, const B &b, const SA &sa, const SB &sb) {
     static_assert(!trans_a && trans_b, "Only ABt supported for microscaling formats currently");
-    mma<trans_a, trans_b, D, A, B, SA, SB, 0>(d, a, b, sa, sb, sem);
+    mma<trans_a, trans_b, D, A, B, SA, SB, 0>(d, a, b, sa, sb);
 }
 template<int trans_a, int trans_b, ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm2(D &d, const A &a, const B &b, semaphore &sem) {
@@ -652,9 +649,9 @@ __device__ static inline void mm2(D &d, const A &a, const B &b, const SA &sa, co
     mma2<trans_a, trans_b, D, A, B, SA, SB, 0>(d, a, b, sa, sb, sem);
 }
 template<int trans_a, int trans_b, ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
-__device__ static inline void mm2(D &d, const A &a, const B &b, const SA &sa, const SB &sb, semaphore &sem) {
+__device__ static inline void mm2(D &d, const A &a, const B &b, const SA &sa, const SB &sb) {
     static_assert(!trans_a && trans_b, "Only ABt supported for microscaling formats currently");
-    mma2<trans_a, trans_b, D, A, B, SA, SB, 0>(d, a, b, sa, sb, sem);
+    mma2<trans_a, trans_b, D, A, B, SA, SB, 0>(d, a, b, sa, sb);
 }
 
 // Transpose wrappers
@@ -695,16 +692,16 @@ __device__ static inline void mma_ABt(D &d, const A &a, const B &b, const SA &sa
     mma<transpose::N, transpose::T, D, A, B, SA, SB, 1>(d, a, b, sa, sb, sem);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
-__device__ static inline void mma_ABt(D &d, const A &a, const B &b, const SA &sa, const SB &sb, semaphore &sem) {
-    mma<transpose::N, transpose::T, D, A, B, SA, SB, 1>(d, a, b, sa, sb, sem);
+__device__ static inline void mma_ABt(D &d, const A &a, const B &b, const SA &sa, const SB &sb) {
+    mma<transpose::N, transpose::T, D, A, B, SA, SB, 1>(d, a, b, sa, sb);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
 __device__ static inline void mma2_ABt(D &d, const A &a, const B &b, const SA &sa, const SB &sb, semaphore &sem) {
     mma2<transpose::N, transpose::T, D, A, B, SA, SB, 1>(d, a, b, sa, sb, sem);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
-__device__ static inline void mma2_ABt(D &d, const A &a, const B &b, const SA &sa, const SB &sb, semaphore &sem) {
-    mma2<transpose::N, transpose::T, D, A, B, SA, SB, 1>(d, a, b, sa, sb, sem);
+__device__ static inline void mma2_ABt(D &d, const A &a, const B &b, const SA &sa, const SB &sb) {
+    mma2<transpose::N, transpose::T, D, A, B, SA, SB, 1>(d, a, b, sa, sb);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mma_AtB(D &d, const A &a, const B &b, semaphore &sem) {
@@ -776,16 +773,16 @@ __device__ static inline void mm_ABt(D &d, const A &a, const B &b, const SA &sa,
     mma<transpose::N, transpose::T, D, A, B, SA, SB, 0>(d, a, b, sa, sb, sem);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
-__device__ static inline void mm_ABt(D &d, const A &a, const B &b, const SA &sa, const SB &sb, semaphore &sem) {
-    mma<transpose::N, transpose::T, D, A, B, SA, SB, 0>(d, a, b, sa, sb, sem);
+__device__ static inline void mm_ABt(D &d, const A &a, const B &b, const SA &sa, const SB &sb) {
+    mma<transpose::N, transpose::T, D, A, B, SA, SB, 0>(d, a, b, sa, sb);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
 __device__ static inline void mm2_ABt(D &d, const A &a, const B &b, const SA &sa, const SB &sb, semaphore &sem) {
     mma2<transpose::N, transpose::T, D, A, B, SA, SB, 0>(d, a, b, sa, sb, sem);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
-__device__ static inline void mm2_ABt(D &d, const A &a, const B &b, const SA &sa, const SB &sb, semaphore &sem) {
-    mma2<transpose::N, transpose::T, D, A, B, SA, SB, 0>(d, a, b, sa, sb, sem);
+__device__ static inline void mm2_ABt(D &d, const A &a, const B &b, const SA &sa, const SB &sb) {
+    mma2<transpose::N, transpose::T, D, A, B, SA, SB, 0>(d, a, b, sa, sb);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B>
 __device__ static inline void mm_AtB(D &d, const A &a, const B &b, semaphore &sem) {
