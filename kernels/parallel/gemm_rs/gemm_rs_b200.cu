@@ -1,9 +1,7 @@
 #include <kittens.cuh>
-#include <prototype.cuh>
 #include "pyutils/torchutils.cuh"
 
 using namespace kittens;
-using namespace kittens::prototype;
 
 namespace matmul_reduce_scatter {
 
@@ -122,21 +120,21 @@ __device__ inline void kernel(const globals &G) {
                 int2 rowcol = get_task_idx(G, task_iter, false);
                 if(rowcol.x == -1) {
                     for(int idx = 0; idx < (PIPE_DEPTH); idx++) {
-                        tma::cluster::wait(inputs_finished[input_ring], prototype::get_phasebit<1>(bitfield, input_ring));
-                        input_ring=prototype::ring_advance<PIPE_DEPTH>(input_ring);
+                        tma::cluster::wait(inputs_finished[input_ring], get_phasebit<1>(bitfield, input_ring));
+                        input_ring=ring_advance<PIPE_DEPTH>(input_ring);
                     }
                     if(laneid() == 0) arrive(outputs_arrived); // TODO REVIEW
                     break;
                 }
                 for (int idx = 0; idx < iters_per_task; idx++) {
-                    tma::cluster::wait(inputs_finished[input_ring], prototype::get_phasebit<1>(bitfield, input_ring));
-                    prototype::update_phasebit<1>(bitfield, input_ring);
+                    tma::cluster::wait(inputs_finished[input_ring], get_phasebit<1>(bitfield, input_ring));
+                    update_phasebit<1>(bitfield, input_ring);
                     if(task_iter>0 && idx==PIPE_DEPTH-1 && laneid() == 0) arrive(outputs_arrived); // TODO REVIEW 
                     tma::cluster::expect(inputs_arrived[input_ring], 0, a_smem[0][0], a_smem[0][1], b_smem[0]);
                     tma::cluster::load_async(a_smem[input_ring][0], G.A, {(rowcol.x+0), idx}, inputs_arrived[input_ring], (uint16_t)(1<<ctarank), 0);
                     tma::cluster::load_async(a_smem[input_ring][1], G.A, {(rowcol.x+1), idx}, inputs_arrived[input_ring], (uint16_t)(1<<ctarank), 0);
                     tma::cluster::load_async(b_smem[input_ring],    G.B, { rowcol.y,    idx}, inputs_arrived[input_ring], (uint16_t)(1<<ctarank), 0);
-                    input_ring=prototype::ring_advance<PIPE_DEPTH>(input_ring);
+                    input_ring=ring_advance<PIPE_DEPTH>(input_ring);
                 }
             }
         }
@@ -147,15 +145,15 @@ __device__ inline void kernel(const globals &G) {
                 int2 rowcol = get_task_idx(G, task_iter, false);
                 if(rowcol.x == -1) break;
                 tma::cluster::wait(outputs_finished[warpgroup::warpid()], (task_iter+1)%2); // make sure tensor memory is ready to be written to.
-                tma::cluster::wait(inputs_arrived[input_ring], prototype::get_phasebit<0>(bitfield, input_ring));
-                prototype::update_phasebit<0>(bitfield, input_ring);
+                tma::cluster::wait(inputs_arrived[input_ring], get_phasebit<0>(bitfield, input_ring));
+                update_phasebit<0>(bitfield, input_ring);
                 mm2_ABt(d_tt, a_smem[input_ring][warpgroup::warpid()], b_smem[input_ring], inputs_finished[input_ring]);
-                input_ring=prototype::ring_advance<PIPE_DEPTH>(input_ring);
+                input_ring=ring_advance<PIPE_DEPTH>(input_ring);
                 for(int idx = 1; idx < iters_per_task; idx++) {
-                    tma::cluster::wait(inputs_arrived[input_ring], prototype::get_phasebit<0>(bitfield, input_ring));
-                    prototype::update_phasebit<0>(bitfield, input_ring);
+                    tma::cluster::wait(inputs_arrived[input_ring], get_phasebit<0>(bitfield, input_ring));
+                    update_phasebit<0>(bitfield, input_ring);
                     mma2_ABt(d_tt, a_smem[input_ring][warpgroup::warpid()], b_smem[input_ring], inputs_finished[input_ring]);
-                    input_ring=prototype::ring_advance<PIPE_DEPTH>(input_ring);
+                    input_ring=ring_advance<PIPE_DEPTH>(input_ring);
                 }
             }
         }
@@ -237,7 +235,7 @@ void entrypoint(
     };
 
     matmul_reduce_scatter_barrier::globals barrier_G {
-        .barrier = kittens::py::parallel_tensor_to_pgl<device<matmul_reduce_scatter_barrier::globals::NUM_DEVICES>::barrier_t>(barrier),
+        .barrier = kittens::py::parallel_tensor_to_pgl<barrier_t<matmul_reduce_scatter_barrier::globals::NUM_DEVICES>>(barrier),
         .dev_idx = barrier.local_rank_
     };
 
