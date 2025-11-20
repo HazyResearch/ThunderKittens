@@ -5,8 +5,7 @@
 
 #include "conversions.cuh"
 #include "maps.cuh"
-// no group vector reductions as they would require additional shared memory and synchronization, and those side effects just aren't worth it.
-// warp vector reductions should be plenty fast in 99.9% of situations.
+#include "reductions.cuh"
 
 template<ducks::sv::all SV>
 __device__ static inline bool hasnan(const SV &src) {

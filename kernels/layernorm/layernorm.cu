@@ -49,7 +49,7 @@ __device__ void dropout_mask(T &dst, float keep_prob) {
             dst[cur] = base_types::constants<bf16>::zero();
         }
     }
-    mul(dst, dst, __float2bfloat16(1/(1-keep_prob)));
+    warp::mul(dst, dst, __float2bfloat16(1/(1-keep_prob)));
 }
 
 template<int _d_model> struct norm_globals {
@@ -109,15 +109,15 @@ void layernorm_tk(const __grid_constant__ norm_globals<D> g, int n_per_tile) {
 
     // global loads
     if (warpid == 0) { 
-        load(norm_bias_s, g.norm_bias, {0,0,0,0});
-        load(norm_weight_s, g.norm_weight, {0,0,0,0});
+        warp::load(norm_bias_s, g.norm_bias, {0,0,0,0});
+        warp::load(norm_weight_s, g.norm_weight, {0,0,0,0});
     }
  
     bf16 mean = __float2bfloat16(0.0f);
     bf16 var  = __float2bfloat16(0.0f);      
 
-    load_async(       x_s[warpid][tic], g.x,        {batch, 0, seq_start+warpid, 0});
-    load_async(residual_s[warpid][tic], g.residual, {batch, 0, seq_start+warpid, 0});
+    warp::load_async(       x_s[warpid][tic], g.x,        {batch, 0, seq_start+warpid, 0});
+    warp::load_async(residual_s[warpid][tic], g.residual, {batch, 0, seq_start+warpid, 0});
     __syncthreads();
     
     int n_blocks = g.n_per_tile/NUM_WORKERS; 
@@ -127,33 +127,33 @@ void layernorm_tk(const __grid_constant__ norm_globals<D> g, int n_per_tile) {
 
         // kick off load for the next block
         if( block < n_blocks - 1 ) {
-            load_async(       x_s[warpid][toc], g.x,        {batch, 0, seq_start+next_idx, 0});
-            load_async(residual_s[warpid][toc], g.residual, {batch, 0, seq_start+next_idx, 0});
+            warp::load_async(       x_s[warpid][toc], g.x,        {batch, 0, seq_start+next_idx, 0});
+            warp::load_async(residual_s[warpid][toc], g.residual, {batch, 0, seq_start+next_idx, 0});
         }
         load_async_wait();
         __syncwarp(); 
 
         dropout_mask(x_s[warpid][tic], g.dropout_p); 
-        add(residual_s[warpid][tic], residual_s[warpid][tic], x_s[warpid][tic]);         
-        store(g.o_resid, residual_s[warpid][tic], {batch, 0, seq_start+cur_idx, 0});
+        warp::add(residual_s[warpid][tic], residual_s[warpid][tic], x_s[warpid][tic]);         
+        warp::store(g.o_resid, residual_s[warpid][tic], {batch, 0, seq_start+cur_idx, 0});
         __syncwarp();
 
-        sum(mean, residual_s[warpid][tic]);
+        warp::sum(mean, residual_s[warpid][tic]);
         mean = mean / __float2bfloat16(d_model);
-        sub(residual_s[warpid][tic], residual_s[warpid][tic], mean);  
-        mul(x_s[warpid][tic], residual_s[warpid][tic], residual_s[warpid][tic]);
-        sum(var, x_s[warpid][tic]);
+        warp::sub(residual_s[warpid][tic], residual_s[warpid][tic], mean);  
+        warp::mul(x_s[warpid][tic], residual_s[warpid][tic], residual_s[warpid][tic]);
+        warp::sum(var, x_s[warpid][tic]);
         var = var / __float2bfloat16(d_model);
         var = __float2bfloat16(sqrt(__bfloat162float(var + __float2bfloat16(1e-05f))));
 
         // compute norm
-        div(residual_s[warpid][tic], residual_s[warpid][tic], var);
-        mul(residual_s[warpid][tic], residual_s[warpid][tic], norm_weight_s); 
-        add(residual_s[warpid][tic], residual_s[warpid][tic], norm_bias_s);
+        warp::div(residual_s[warpid][tic], residual_s[warpid][tic], var);
+        warp::mul(residual_s[warpid][tic], residual_s[warpid][tic], norm_weight_s); 
+        warp::add(residual_s[warpid][tic], residual_s[warpid][tic], norm_bias_s);
         __syncwarp();
 
         // save output
-        store(g.o, residual_s[warpid][tic], {batch, 0, seq_start+cur_idx, 0});
+        warp::store(g.o, residual_s[warpid][tic], {batch, 0, seq_start+cur_idx, 0});
     }
 }
 
@@ -165,7 +165,8 @@ void dispatch_layernorm(
     bf16 *d_o,
     bf16 *d_o_resid,
     float dropout_p,
-    int B, int N
+    size_t B, 
+    size_t N
 ) {
     constexpr size_t D = 1024;
 
@@ -258,7 +259,7 @@ std::tuple<torch::Tensor, torch::Tensor> fused_layernorm(
         d_x_bf, d_residual_bf, 
         d_norm_weight_bf, d_norm_bias_bf, 
         d_o, d_o_resid, dropout_p,
-        b, n
+        (size_t)b, (size_t)n
     );
     CHECK_CUDA_ERROR(cudaGetLastError());
 
