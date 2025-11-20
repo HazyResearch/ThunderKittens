@@ -63,7 +63,7 @@ void check_result(float* h_C, float* h_C_ref, int M, int N) {
     // Same tolerance and error reporting as your code
     for (int i = 0; i < M * N; ++i) {
         float error = std::abs(h_C[i] - h_C_ref[i]);
-        if(1) { // large tolerance because of fp8 vs fp32 numerics
+        if(error > 1.5) { // large tolerance because of fp8 vs fp32 numerics
             if(error_count < 25) {
                 std::cout << "Error at row " << i / N << " col " << i % N 
                          << ": " << h_C[i] << " != " << h_C_ref[i] 
@@ -124,7 +124,7 @@ void benchmark(int m, int n, int k) {
     // Create matrix descriptors
     cublasLtMatrixLayout_t matA, matB, matC, matD;
    CHECK_CUBLAS(cublasLtMatrixLayoutCreate(&matA, CUDA_R_8F_E4M3, k, m, k));  // A[K,M]
-    CHECK_CUBLAS(cublasLtMatrixLayoutCreate(&matB, CUDA_R_8F_E4M3, k, n, k));  // B[K,N]
+    CHECK_CUBLAS(cublasLtMatrixLayoutCreate(&matB, CUDA_R_8F_E4M3, n, k, n));  // B[N,K] view for row-major B[K,N]
     CHECK_CUBLAS(cublasLtMatrixLayoutCreate(&matC, CUDA_R_16BF, m, n, m));     // C[M,N] in BF16
     CHECK_CUBLAS(cublasLtMatrixLayoutCreate(&matD, CUDA_R_8F_E4M3, m, n, m));  // D[M,N] in FP8
 
@@ -133,9 +133,9 @@ void benchmark(int m, int n, int k) {
     cublasLtMatmulDesc_t operationDesc;
     CHECK_CUBLAS(cublasLtMatmulDescCreate(&operationDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
     
-    // Set operation attributes - "TN" format required for FP8
+    // Set operation attributes
     const int32_t transa = CUBLAS_OP_T;
-    const int32_t transb = CUBLAS_OP_N;
+    const int32_t transb = CUBLAS_OP_T;
     CHECK_CUBLAS(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSA, &transa, sizeof(int32_t)));
     CHECK_CUBLAS(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSB, &transb, sizeof(int32_t)));
 
@@ -227,9 +227,13 @@ void benchmark(int m, int n, int k) {
     std::vector<__nv_fp8_e4m3> h_D_fp8(m * n);
     CHECK_CUDA(cudaMemcpy(h_D_fp8.data(), d_D, m * n * sizeof(__nv_fp8_e4m3), cudaMemcpyDeviceToHost));
 
-    // Convert FP8 to float for comparison
-    for (int i = 0; i < m * n; i++) {
-        h_D[i] = float(h_D_fp8[i]);  // Convert FP8 to float
+    // Convert FP8 to float and reorder from column-major (ld = m) to row-major for comparison
+    for (int i = 0; i < m; ++i) {
+        for (int j = 0; j < n; ++j) {
+            int col_major_idx = i + j * m;
+            int row_major_idx = i * n + j;
+            h_D[row_major_idx] = float(h_D_fp8[col_major_idx]);
+        }
     }
 
     // Now compare the float values
