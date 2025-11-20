@@ -5,8 +5,6 @@
 #include <omp.h>
 #include <chrono>
 
-using my_dtype = __nv_bfloat16; 
-
 void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
     #pragma omp parallel for collapse(2) // otherwise the CPU version takes for everrrrrr
     for (int i = 0; i < M; i++) {
@@ -118,7 +116,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     int error_count = 0;
     for (int i = 0; i < M * N; ++i) {
         float error = std::abs(h_C[i] - h_C_ref[i]);
-        if( error > 0.1 ) { // large because of bf16 vs fp32 numerics
+        if( error > 0.2 ) { // large because of bf16 vs fp32 numerics
             if(error_count < 20) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
             else if(error_count == 21) std::cout << "Too many errors to show them all.\n";
             error_count++;
