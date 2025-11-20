@@ -1,5 +1,3 @@
-
-
 #include <iostream>
 #include <random>
 #include <cuda_bf16.h>
@@ -10,8 +8,8 @@
 #include "kittens.cuh"
 using namespace kittens;
 
-constexpr int BLOCK_SIZE = 64;
-#define NUM_WORKERS  (4)
+constexpr int BLOCK_SIZE = 32;
+#define NUM_WORKERS  (1)
 #define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
 
 struct matmul_globals { 
@@ -30,28 +28,28 @@ __global__ void kernel(const __grid_constant__ matmul_globals g) {
     st_bf<BLOCK_SIZE,BLOCK_SIZE> &As = al.allocate<st_bf<BLOCK_SIZE,BLOCK_SIZE>>(); 
     st_bf<BLOCK_SIZE,BLOCK_SIZE> &Bs = al.allocate<st_bf<BLOCK_SIZE,BLOCK_SIZE>>(); 
     
-    rt_fl<16,BLOCK_SIZE> C_accum;
-    rt_fl<16,BLOCK_SIZE> C_accum_cpy;
+    rt_bf<BLOCK_SIZE,BLOCK_SIZE> A_reg;
+    rt_bf<BLOCK_SIZE,BLOCK_SIZE> B_reg;
+    rt_bf<BLOCK_SIZE,BLOCK_SIZE,ducks::rt_layout::col> B_reg_col;
+    rt_fl<BLOCK_SIZE,BLOCK_SIZE> C_accum;
 
-    int bx = blockIdx.x; 
-    int by = blockIdx.y; 
-    int row = by; 
-    int col = bx; 
+    int col = blockIdx.x; 
+    int row = blockIdx.y; 
 
-    // int condition = (threadIdx.x == 0 && threadIdx.y == 0 & blockIdx.x == 0);
-
-    kittens::warp::zero(C_accum_cpy);
+    kittens::warp::zero(C_accum);
     int num_tiles = (g.N + BLOCK_SIZE - 1) / BLOCK_SIZE;
     for (int tile = 0; tile < num_tiles; ++tile) {
-        warpgroup::load(As, g.A, {0, 0, row, tile});
-        warpgroup::load(Bs, g.B, {0, 0, tile, col});
+        kittens::warp::load(As, g.A, {0, 0, row, tile});
+        kittens::warp::load(Bs, g.B, {0, 0, tile, col});
         __syncthreads();
-        warpgroup::mma_AB(C_accum, As, Bs);
-        warpgroup::mma_async_wait();
-        kittens::warp::add(C_accum_cpy, C_accum_cpy, C_accum);
-        kittens::warp::zero(C_accum);
+        kittens::warp::load(A_reg, As);
+        kittens::warp::load(B_reg, Bs);
+        kittens::warp::swap_layout(B_reg_col, B_reg);
+        __syncthreads();
+        kittens::warp::mma_AB(C_accum, A_reg, B_reg_col, C_accum);
+        __syncthreads(); 
     }
-    warpgroup::store(g.C, C_accum_cpy, {0, 0, row, col});
+    kittens::warp::store(g.C, C_accum, {0, 0, row, col});
 }
 
 // launch kernel
@@ -67,7 +65,7 @@ void matmul(bf16* A, bf16* B, bf16* C, size_t N) {
     matmul_globals g{a_arg, b_arg, c_arg, (int)N}; 
 
     // launch
-    dim3 blocks((N + BLOCK_SIZE - 1) / BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    dim3 blocks((N + BLOCK_SIZE - 1) / BLOCK_SIZE, (N + BLOCK_SIZE - 1) / BLOCK_SIZE);  // Watch out for requesting too many!
     unsigned long mem_size = 100000;
     cudaDeviceSynchronize();
     cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);

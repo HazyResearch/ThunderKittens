@@ -60,7 +60,7 @@ struct matmul_template {
             warpgroup::decrease_registers<40>(); // decrease registers for producers
         }
         __device__ static void load(producer_load_args<layout> args) {
-            if(warpgroup::warpid() == 0) {
+            if(warpgroup::laneid() == 0) {
                 tma::expect(args.inputs_arrived, args.input);
                 for(int i = 0; i < 2; i++) {
                     tma::load_async(args.input.a[i], args.globals.A,
@@ -75,7 +75,7 @@ struct matmul_template {
     struct consumer {
         __device__ static void setup(consumer_setup_args<layout> args) {
             warpgroup::increase_registers<232>(); // increase registers for consumers
-            kittens::warp::zero(args.state.accum);
+            warp::zero(args.state.accum);
         }
         __device__ static void compute(consumer_compute_args<layout> args) {
             warpgroup::mma_ABt(
@@ -84,19 +84,19 @@ struct matmul_template {
                 args.input.b
             );
             warpgroup::mma_async_wait();
-            if(laneid() == 0) arrive(args.inputs_finished); // TODO REVIEW
+            if(warp::laneid() == 0) arrive(args.inputs_finished); // TODO REVIEW
         }
         __device__ static void finish(consumer_finish_args<layout> args) {
             kittens::warp::copy(args.state.accum_fp8, args.state.accum);
             warpgroup::store(args.finish.c[warpgroup::groupid()], args.state.accum_fp8);
             warpgroup::sync(warpgroup::groupid()+4);
-            if(warpgroup::warpid() == 0) {
+            if(warpgroup::laneid() == 0) {
                 tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()],
                                  {args.common.coord.x, args.common.coord.y});
                 tma::store_async_read_wait();
             }
-            kittens::warp::zero(args.state.accum);
-            if(laneid() == 0) arrive(args.finish_finished); // TODO REVIEW
+            warp::zero(args.state.accum);
+            if(warp::laneid() == 0) arrive(args.finish_finished); // TODO REVIEW
         }
     };
 };
@@ -288,7 +288,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     int error_count = 0;
     for (int i = 0; i < M * N; ++i) {
         float error = std::abs(h_C[i] - h_C_ref[i]);
-        if(1) { // large because of fp8 vs fp32 numerics
+        if(error > 0.2f) { // large because of fp8 vs fp32 numerics
             if(error_count < 100) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
             else if(error_count == 700) std::cout << "Too many errors to show them all.\n";
             error_count++;

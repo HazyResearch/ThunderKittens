@@ -1,35 +1,11 @@
-
-
-#include <cuda_runtime.h> 
 #include <iostream>
 #include <random>
 #include <cuda_bf16.h>
+#include <cuda_runtime.h>
 #include <omp.h>
 #include <chrono>
 
-using my_dtype = float;
-
-__global__ void kernel(my_dtype* A, my_dtype* B, my_dtype* C, int N) {
-   int row = blockIdx.y * blockDim.y + threadIdx.y;
-   int col = blockIdx.x * blockDim.x + threadIdx.x;
-  
-   if (row < N && col < N) {
-       my_dtype sum = 0.0f;
-       for (int k = 0; k < N; k++) {
-           sum += A[row * N + k] * B[k * N + col];
-       }
-       C[row * N + col] = sum;
-   }
-}
-
-// launch kernel
-int BLOCK_SIZE = 32;
-void matmul(my_dtype* A, my_dtype* B, my_dtype* C, int N) {
-    dim3 threads(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 blocks((N + (BLOCK_SIZE-1)) / BLOCK_SIZE, (N + (BLOCK_SIZE-1)) / BLOCK_SIZE);
-    kernel<<<blocks, threads>>>(A, B, C, N);
-}
-
+using my_dtype = __nv_bfloat16; 
 
 void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
     #pragma omp parallel for collapse(2) // otherwise the CPU version takes for everrrrrr
@@ -37,7 +13,8 @@ void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
         for (int j = 0; j < N; j++) {
             float sum = 0.0f;
             for (int k = 0; k < K; k++) {
-                sum += a[i * K + k] * b[k * N + j];
+                sum += a[i * K + k] * b[k * N + j]; // mma_AB
+                // sum += a[i * K + k] * b[j * K + k]; // mma_ABt
             }
             c[i * N + j] = sum;
         }
@@ -70,10 +47,10 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     std::cout << "Performed CPU matrix multiplication" << std::endl;
 
     // Allocate device memory
-    float *d_A, *d_B, *d_C;
-    cudaMalloc(&d_A, M*K*sizeof(float));
-    cudaMalloc(&d_B, K*N*sizeof(float));
-    cudaMalloc(&d_C, M*N*sizeof(float));
+    __nv_bfloat16 *d_A, *d_B, *d_C;
+    cudaMalloc(&d_A, M*K*sizeof(__nv_bfloat16));
+    cudaMalloc(&d_B, K*N*sizeof(__nv_bfloat16));
+    cudaMalloc(&d_C, M*N*sizeof(__nv_bfloat16));
     // Check for CUDA errors
     cudaStatus = cudaGetLastError();
     if (cudaStatus != cudaSuccess) {
@@ -83,10 +60,15 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     }
     std::cout << "Allocated device memory" << std::endl;
 
-    // Copy to device (float)
-    cudaMemcpy(d_A, h_A, M*K*4, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_B, h_B, K*N*4, cudaMemcpyHostToDevice);
+    // Convert to __nv_bfloat16 and copy to device
+    __nv_bfloat16 *h_A_bf16 = new __nv_bfloat16[M * K];
+    __nv_bfloat16 *h_B_bf16 = new __nv_bfloat16[K * N];
+    for (int i = 0; i < M * K; ++i) h_A_bf16[i] = __float2bfloat16(h_A[i]);
+    for (int i = 0; i < K * N; ++i) h_B_bf16[i] = __float2bfloat16(h_B[i]);
+    cudaMemcpy(d_A, h_A_bf16, M*K*2, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B, h_B_bf16, K*N*2, cudaMemcpyHostToDevice);
     std::cout << "Copied matrices to device" << std::endl;
+    printf("\n");
 
     // Launch kernel
     for(int i = 0; i < 2; i++) { // warmup
@@ -95,7 +77,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     // Start timing
     cudaDeviceSynchronize();
     auto start = std::chrono::high_resolution_clock::now();
-    constexpr int ITERS = 10;
+    constexpr int ITERS = 1;
     for(int i = 0; i < ITERS; i++) {
         matmul(d_A, d_B, d_C, M);
     }
@@ -123,30 +105,39 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     }
 
     // Copy result back to host
-    cudaMemcpy(h_C, d_C, M*N*4, cudaMemcpyDeviceToHost);
+    __nv_bfloat16 *h_C_bf16 = new __nv_bfloat16[M * N];
+    cudaMemcpy(h_C_bf16, d_C, M*N*2, cudaMemcpyDeviceToHost);
     std::cout << "Copied result back to host" << std::endl;
+
+    // Convert result back to float for comparison
+    for (int i = 0; i < M * N; ++i) h_C[i] = __bfloat162float(h_C_bf16[i]);
+    std::cout << "Converted result back to float" << std::endl;
 
     // Check result
     float max_error = 0.0f;
     int error_count = 0;
     for (int i = 0; i < M * N; ++i) {
         float error = std::abs(h_C[i] - h_C_ref[i]);
-        // if(error > 1.0) { 
+        if( error > 0.1 ) { // large because of bf16 vs fp32 numerics
             if(error_count < 20) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
             else if(error_count == 21) std::cout << "Too many errors to show them all.\n";
             error_count++;
-        // }
+        }
         max_error = std::max(max_error, error);
     }
 
     std::cout << "Max error: " << max_error << std::endl;
     std::cout << "Error count: " << error_count << std::endl;
+    std::cout << "Total count: " << int(N * N) << std::endl;
 
     // Clean up
     delete[] h_A;
     delete[] h_B;
     delete[] h_C;
     delete[] h_C_ref;
+    delete[] h_A_bf16;
+    delete[] h_B_bf16;
+    delete[] h_C_bf16;
     cudaFree(d_A);
     cudaFree(d_B);
     cudaFree(d_C);
@@ -160,5 +151,3 @@ int main() {
     run_benchmark(N, N, N);
     return 0;
 }
-
-

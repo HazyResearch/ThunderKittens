@@ -1,5 +1,3 @@
-
-
 #include <iostream>
 #include <random>
 #include <cuda_bf16.h>
