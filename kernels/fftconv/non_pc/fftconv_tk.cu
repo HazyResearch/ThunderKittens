@@ -4,9 +4,9 @@
 
 using namespace kittens;
 
-#define NUM_WORKERS 1
-#define NUM_WARPS (NUM_WORKERS) // SA: make it type 4
-#define NUM_THREADS (NUM_WARPS * kittens::WARP_THREADS)
+static constexpr int NUM_WORKERS = 1;
+static constexpr int NUM_WARPS = (NUM_WORKERS); // SA: make it type 4
+static constexpr int NUM_THREADS = (NUM_WARPS * kittens::WARP_THREADS);
 
 // shared patterns
 #define SQRT_N 32

@@ -5,9 +5,9 @@
 #define TK_COMPILE_HEDGEHOG
 #endif
 
-#define NUM_WORKERS (8)
-#define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
-#define NUM_WARPGROUPS (NUM_WORKERS/kittens::WARPGROUP_WARPS)
+static constexpr int NUM_WORKERS = (8);
+static constexpr int NUM_THREADS = (NUM_WORKERS*kittens::WARP_THREADS);
+static constexpr int NUM_WARPGROUPS = (NUM_WORKERS/kittens::WARPGROUP_WARPS);
 
 using namespace kittens;
 

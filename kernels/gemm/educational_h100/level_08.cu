@@ -12,9 +12,9 @@ constexpr int BLOCK_SIZE = 64;
 constexpr int M_BLOCK = 2;  // Number of consumer warp groups
 constexpr int N_BLOCK = 4;  // Number of output tiles per row
 
-#define NUM_PRODUCER_WORKERS  (4)
-#define NUM_CONSUMER_WORKERS  (M_BLOCK*4)
-#define NUM_THREADS ((NUM_PRODUCER_WORKERS+NUM_CONSUMER_WORKERS)*kittens::WARP_THREADS)
+static constexpr int NUM_PRODUCER_WORKERS = (4);
+static constexpr int NUM_CONSUMER_WORKERS = (M_BLOCK*4);
+static constexpr int NUM_THREADS = ((NUM_PRODUCER_WORKERS+NUM_CONSUMER_WORKERS)*kittens::WARP_THREADS);
 
 struct matmul_globals { 
     using sub_tile = st_bf<BLOCK_SIZE,BLOCK_SIZE>;

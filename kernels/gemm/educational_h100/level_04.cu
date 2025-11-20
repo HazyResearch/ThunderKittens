@@ -8,9 +8,9 @@
 #include "kittens.cuh"
 using namespace kittens;
 
-constexpr int BLOCK_SIZE = 32;
-#define NUM_WORKERS  (1)
-#define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
+static constexpr int BLOCK_SIZE = 32;
+static constexpr int NUM_WORKERS =  (1);
+static constexpr int NUM_THREADS = (NUM_WORKERS*kittens::WARP_THREADS);
 
 struct matmul_globals { 
     using sub_tile = st_bf<BLOCK_SIZE,BLOCK_SIZE>;
