@@ -4,5 +4,5 @@
 SRC := all_reduce_educational.cu
 OUT := all_reduce_educational.out
 CMD := ./all_reduce_educational.out
-CONFIG := pytorch
+CONFIG := standalone
 include ../../common.mk
