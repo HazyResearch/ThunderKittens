@@ -1,4 +1,3 @@
-# H100 and B200 are both supported
 $(warning Warning: Linear attention kernel is currently broken. A new, better algorithm is coming soon!)
 GPU := H100
 SRC := linear_attn.cu
