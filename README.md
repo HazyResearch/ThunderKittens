@@ -346,7 +346,6 @@ If you use TK to build any demos, please reach out / make a PR! We'd love to fea
 
 ThunderKittens has fairly comprehensive unit testing suite. Simply run `make -j` in the `tests/` folder. Be warned: this may nuke your computer for a minute or two while it compiles thousands of kernels.
 
-
 #### Compilation Options
 
 The `tests/Makefile` provides several options to customize the test:

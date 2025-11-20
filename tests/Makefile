@@ -2,13 +2,13 @@
 # If you want to run lots of tests without parallel compilation, be prepared
 # to spend a *long* time compiling. (like, HOURS single-threaded.)
 
-# GPU Selection: Set to either 4090, H100, B200
+# GPU Selection: Set to either H100 or B200
 GPU_TARGET=H100
 COMP_LEVEL=fast
 
 # Compiler
 NVCC?=nvcc
-NVCCFLAGS=-std=c++20 --expt-relaxed-constexpr -Itesting_commons -I../../include --extended-lambda
+NVCCFLAGS=-std=c++20 --expt-relaxed-constexpr -Itesting_commons -I../include --extended-lambda
 
 # At what level to run tests?
 # Level 1 takes 15 seconds to compile 1,000 tests.
