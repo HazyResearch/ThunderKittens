@@ -1,19 +1,31 @@
-# GPU Selection: 4090, A100, H100
-GPU_TARGET=H100
+GPU := H100
 
-# Compiler
-NVCC?=nvcc
+# Flux gate + PyTorch extension mode
+SRC := flux_gate.cu
+OUT := _C$(shell python3 -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))")
+CMD := python benchmark.py
+NVCCFLAGS := -DTORCH_COMPILE
+CONFIG := pytorch
 
-NVCCFLAGS=-DNDEBUG -Xcompiler=-fPIE -Xcompiler -fopenmp --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -forward-unknown-to-host-compiler -O3  -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -arch=sm_90a -lcuda -lcudadevrt -lcudart_static -lcublas -lgomp -I${THUNDERKITTENS_ROOT}/include -I${THUNDERKITTENS_ROOT}/prototype # H100
-TARGET=flux_gate
-SRC=flux_gate.cu
+# Flux gate + standalone mode
+# SRC := flux_gate.cu
+# OUT := flux_gate.out
+# CMD := ./flux_gate.out
+# NVCCFLAGS := -fopenmp -lgomp
+# CONFIG := standalone
 
-# Default target
-all: $(TARGET)
+# Flux gelu + PyTorch extension mode
+# SRC := flux_gelu.cu
+# OUT := _C$(shell python3 -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))")
+# CMD := python benchmark.py
+# NVCCFLAGS := -DTORCH_COMPILE
+# CONFIG := pytorch
 
-$(TARGET): $(SRC)
-	$(NVCC) $(SRC) $(NVCCFLAGS) -o $(TARGET)
+# Flux gelu + standalone mode
+# SRC := flux_gelu.cu
+# OUT := flux_gelu.out
+# CMD := ./flux_gelu.out
+# NVCCFLAGS := -fopenmp -lgomp
+# CONFIG := standalone
 
-# Clean target
-clean:
-	rm -f $(TARGET)
+include ../common.mk
