@@ -6,6 +6,5 @@
 #include "shared_to_register.cuh"
 #include "global_to_register.cuh"
 #include "global_to_shared.cuh"
-#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
-#include "tma.cuh"
-#endif
+
+// tma.cuh and tma_cluster.cuh are included in group.cuh

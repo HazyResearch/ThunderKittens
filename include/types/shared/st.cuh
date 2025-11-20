@@ -479,7 +479,6 @@ __device__ inline void print(const st_subtile<ST, subtile_rows, subtile_cols>& s
     }
     printf("\n");
 }
-}
 
 /**
  * @brief Fill a shared tile with ones.

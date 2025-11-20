@@ -62,6 +62,22 @@ template<int n_reg> __device__ static inline void decrease_registers() {
 __device__ static inline void producer_registers() { decrease_registers<24>(); }
 template<int NCWG> __device__ static inline void consumer_registers() { increase_registers<480/NCWG - 8*(NCWG>3) - 224*(NCWG==1)>(); }
 
+// ---- TMA operations ----
+// These must be included here because
+//   1. We want parallel scope with single-thread ops (i.e., tma:: and tma::cluster)
+//   1. We can't use namespaces as this is under struct group
+//   2. Struct can't be declared in multiple places
+struct tma {
+#include "memory/tile/tma.cuh"
+#include "memory/vec/tma.cuh"
+#include "util/tma.cuh"
+struct cluster {
+#include "memory/tile/tma_cluster.cuh"
+#include "memory/vec/tma_cluster.cuh"
+#include "util/tma_cluster.cuh"
+};
+};
+
 #endif
 
 };

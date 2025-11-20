@@ -562,8 +562,8 @@ __device__ static inline void tril(RT &dst, const RT &src, const int diagonal, c
 }
 template<ducks::rt::col_layout RT>
 __device__ static inline void tril(RT &dst, const RT &src, const int diagonal, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
-    #pragma unroll
     KITTENS_CHECK_WARP
+    #pragma unroll
     for(int i = 0; i < dst.height; i++) {
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
