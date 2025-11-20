@@ -5,6 +5,7 @@
 #include <functional> // for std::hash
 #include "../../common/common.cuh"
 #include "../shared/shared.cuh"
+#include "util.cuh"
 
 namespace kittens {
 namespace detail {

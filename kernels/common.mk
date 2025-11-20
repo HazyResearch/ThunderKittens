@@ -95,13 +95,13 @@ endif
 all: $(OUT)
 
 run: $(OUT)
-	$(RUN_CMD)
+	$(CMD)
 
 ncu: $(OUT)
 	ncu \
 		--replay-mode kernel \
 		--set full -f --export ./$(OUT).ncu-rep \
-		$(RUN_CMD)
+		$(CMD)
 
 nsys: $(OUT)
 	nsys profile \
@@ -111,7 +111,7 @@ nsys: $(OUT)
 		--cuda-memory-usage true \
 		--force-overwrite=true \
 		-o ./$(OUT).nsys-rep \
-		$(RUN_CMD)
+		$(CMD)
 
 $(OUT): $(SRC)
 	$(NVCC) $(SRC) $(NVCCFLAGS) -o $(OUT)
@@ -122,4 +122,4 @@ ptx: $(SRC)
 clean:
 	rm -f $(OUT) $(OUT).ptx
 
-.PHONY: all run bench clean
+.PHONY: all run ncu nsys clean
