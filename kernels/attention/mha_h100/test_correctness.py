@@ -1,6 +1,6 @@
 import torch
 from flash_attn_interface import flash_attn_func
-import thunderkittens as tk
+from _C import 
 import random
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -68,6 +68,7 @@ def fa3_test(Q, K, V, dO, causal):
     
     return output, qg_, kg_, vg_
 
+
 def h100_fwd_kernel_test(Q, K, V, dO, causal, mode): 
     if mode == 'backward':
         o = torch.nn.functional.scaled_dot_product_attention(Q, K, V, is_causal=causal)
@@ -123,6 +124,8 @@ def h100_fwd_kernel_test(Q, K, V, dO, causal, mode):
         qg, kg, vg = tk.mha_backward(Q, K, V, o, l_vec, dO, causal)
         
         return o, qg, kg, vg
+
+
 
 def generate_tensor(shape, mean, std, dtype, device):
     tensor = torch.randn(shape, dtype=dtype, device=device)
@@ -233,13 +236,18 @@ def generate_error_graphs(b, h, d, causal, mean, std, error_mode='all'):
     plt.savefig(f'max_error_graph_b{b}_h{h}_d{d}_causal{causal}_mean{mean}_std{std}_mode{error_mode}.png')
     plt.close()
 
-# Example usage
-b, h, d = 12, 12, 64
-causal = True
-mean = 1e-1
-std = 10
+def test_correctness():
+    # Example usage
+    b, h, d = 12, 12, 64
+    causal = True
+    mean = 1e-1
+    std = 10
 
-for mode in ['output', 'backward', 'all']:
-    generate_error_graphs(b, h, d, causal, mean, std, error_mode=mode)
+    for mode in ['output', 'backward', 'all']:
+        generate_error_graphs(b, h, d, causal, mean, std, error_mode=mode)
 
-print("Error graphs generated and saved for all modes.")
+    print("Error graphs generated and saved for all modes.")
+
+if __name__ == '__main__':
+    test_correctness()
+

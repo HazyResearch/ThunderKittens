@@ -1,5 +1,5 @@
 import torch
-import thunderkittens as tk
+from _C import 
 import numpy as np
 from tqdm import tqdm
 

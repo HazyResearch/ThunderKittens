@@ -1,5 +1,5 @@
 import torch
-import thunderkittens as tk
+from _C import 
 import random
 from tqdm import tqdm
 from flash_attn_interface import flash_attn_func

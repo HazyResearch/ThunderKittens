@@ -1,5 +1,5 @@
 import torch
-import thunderkittens as tk
+from _C import 
 from tqdm import tqdm
 
 def generate_tensor(shape, mean, std, dtype, device):

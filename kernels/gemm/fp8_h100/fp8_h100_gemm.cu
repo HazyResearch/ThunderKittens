@@ -122,10 +122,11 @@ void inner_run(fp8e4m3 *d_A, fp8e4m3 *d_B, fp8e4m3 *d_C, size_t M, size_t N, siz
 
 #ifdef TK_COMPILE_FP8_GEMM
 #include <ATen/cuda/CUDAContext.h> 
+#include <ATen/Functions.h>
 #include "pyutils/torchutils.cuh"
 #include <iostream>
 
-torch::Tensor fp8_gemm(torch::Tensor A, torch::Tensor B) {
+at::Tensor fp8_gemm(at::Tensor A, at::Tensor B) {
     CHECK_INPUT(A);
     CHECK_INPUT(B);
 
@@ -133,7 +134,7 @@ torch::Tensor fp8_gemm(torch::Tensor A, torch::Tensor B) {
     auto N = B.size(0);
     auto K = A.size(1);
     printf("M=%d N=%d K=%d\n", M, N, K);
-    torch::Tensor C = torch::empty({M, N}, A.options());
+    at::Tensor C = at::empty({M, N}, A.options());
 
     // convert to bf16
     c10::Float8_e4m3fn *A_fp8 = A.data_ptr<c10::Float8_e4m3fn>();

@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-import thunderkittens as tk
+from _C import 
 import matplotlib.pyplot as plt
 from collections import defaultdict
 import os

@@ -650,8 +650,8 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
 #include <ATen/cuda/CUDAContext.h>
 #include <iostream>
 
-std::vector<torch::Tensor> 
-attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal)
+std::vector<at::Tensor> 
+attention_forward(at::Tensor q, at::Tensor k, at::Tensor v, bool causal)
 {
     CHECK_INPUT(q);
     CHECK_INPUT(k);
@@ -694,12 +694,12 @@ attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal
     bf16*  d_v = reinterpret_cast<bf16*>(v_ptr);
     
     // for the returned outputs
-    torch::Tensor o     = torch::empty({static_cast<const uint>(batch), 
+    at::Tensor o     = at::empty({static_cast<const uint>(batch), 
                                         static_cast<const uint>(qo_heads), 
                                         static_cast<const uint>(seq_len), 
                                         static_cast<const uint>(head_dim)}, v.options());
     
-    torch::Tensor l_vec = torch::empty({static_cast<const uint>(batch), 
+    at::Tensor l_vec = at::empty({static_cast<const uint>(batch), 
                                         static_cast<const uint>(qo_heads), 
                                         static_cast<const uint>(seq_len), 
                                         static_cast<const uint>(1)}, 
@@ -822,13 +822,13 @@ attention_forward(torch::Tensor q, torch::Tensor k, torch::Tensor v, bool causal
     cudaDeviceSynchronize();
 }
 
-std::vector<torch::Tensor> 
-attention_backward(torch::Tensor q, 
-                   torch::Tensor k, 
-                   torch::Tensor v, 
-                   torch::Tensor o, 
-                   torch::Tensor l_vec,
-                   torch::Tensor og,
+std::vector<at::Tensor> 
+attention_backward(at::Tensor q, 
+                   at::Tensor k, 
+                   at::Tensor v, 
+                   at::Tensor o, 
+                   at::Tensor l_vec,
+                   at::Tensor og,
                    bool causal)
 {
     CHECK_INPUT(q);
@@ -888,20 +888,20 @@ attention_backward(torch::Tensor q,
     c10::BFloat16* og_ptr = og.data_ptr<c10::BFloat16>();
     float*         l_ptr  = l_vec.data_ptr<float>();
 
-    torch::Tensor qg = torch::zeros({static_cast<const uint>(batch), 
+    at::Tensor qg = torch::zeros({static_cast<const uint>(batch), 
                                      static_cast<const uint>(qo_heads), 
                                      static_cast<const uint>(seq_len), 
                                      static_cast<const uint>(head_dim)},   l_vec.options());
-    torch::Tensor kg = torch::zeros({static_cast<const uint>(batch), 
+    at::Tensor kg = torch::zeros({static_cast<const uint>(batch), 
                                      static_cast<const uint>(kv_heads), 
                                      static_cast<const uint>(seq_len), 
                                      static_cast<const uint>(head_dim)},   l_vec.options());
-    torch::Tensor vg = torch::zeros({static_cast<const uint>(batch), 
+    at::Tensor vg = torch::zeros({static_cast<const uint>(batch), 
                                      static_cast<const uint>(kv_heads), 
                                      static_cast<const uint>(seq_len), 
                                      static_cast<const uint>(head_dim)},   l_vec.options());
     
-    torch::Tensor d_vec = torch::empty({static_cast<const uint>(batch), 
+    at::Tensor d_vec = at::empty({static_cast<const uint>(batch), 
                                         static_cast<const uint>(qo_heads), 
                                         static_cast<const uint>(seq_len), 
                                         static_cast<const uint>(1)},       l_vec.options());
@@ -1164,6 +1164,11 @@ attention_backward(torch::Tensor q,
 
     return {qg, kg, vg};
     cudaDeviceSynchronize();
+}
+
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("mha_forward",  torch::wrap_pybind_function(attention_forward), "Bidirectional forward MHA. Takes Q,K,V,O in (B,H,N,D) where D must be 64 or 128, and N must be a multiple of 64. Additionally writes out norm vector L of shape (B,H,N), used in backward pass.");
+    m.def("mha_backward", torch::wrap_pybind_function(attention_backward), "Bidirectional backward MHA. Takes Q,K,V,O,Og,Qg,Kg,Vg in (B,H,N,D) where D must be 64 or 128, and N must be a multiple of 64. Additionally requres norm vec l_vec, and (TODO) d_vec memory.");
 }
 
 #else
