@@ -1,3 +1,11 @@
+/*
+    This kernel is a hedgehog modified for speed. It implements:
+    - Fused MLPs to produce the Q, K featurizations
+    - Fused block sliding window attention
+    - Block linear attention
+    - Normalization across both sliding window attention and linear attention components
+    - K, KV state writeouts
+*/
 #include "kittens.cuh"
 #include <tuple>
 
@@ -30,11 +38,11 @@ __device__ inline void cumulative_add(SV &dst, const ST &src) {
 template<ducks::rt::all RT>
 __device__ inline void softmax_featuremap_inplace(RT &tile) {
     col_vec<RT> max_vec, sum_vec;
-    row_max(max_vec, tile);
-    sub_row(tile, tile, max_vec); // now in range (-infty, 0) for numerical stability
-    exp2(tile, tile);
-    row_sum(sum_vec, tile);
-    div_row(tile, tile, sum_vec);
+    warp::row_max(max_vec, tile);
+    warp::sub_row(tile, tile, max_vec); // now in range (-infty, 0) for numerical stability
+    warp::exp2(tile, tile);
+    warp::row_sum(sum_vec, tile);
+    warp::div_row(tile, tile, sum_vec);
 }
 
 #define CHUNK_SIZE 64
@@ -122,7 +130,7 @@ void hedgehog_linear_attention_smd (
     int ring_id = 0;
 
     __shared__ semaphore qkv_semaphore;
-    if (warpid == 0) {
+    if (warpid == 0 && laneid() == 0) {
         init_semaphore(qkv_semaphore, 0, 1);
         tma::expect_bytes(qkv_semaphore, 
             size_bytes<typeof(q_smem[0])> + 
@@ -143,7 +151,7 @@ void hedgehog_linear_attention_smd (
 
     rt_fl<1*16, 8*16> local_kv; // this is going to be split across the two warpgroups involved.
 
-    zero(local_kv);
+    warp::zero(local_kv);
     warpgroup::zero(v_smem[ring_id]);
     warpgroup::zero(cumsum_k_smem[warpgroupid]);
 
@@ -154,7 +162,7 @@ void hedgehog_linear_attention_smd (
         wait(qkv_semaphore, tic);  // ding! memory arrived
         __syncthreads();
 
-        if (warpid == 0 && block < blocks-1) {
+        if (warpid == 0 && laneid() == 0 && block < blocks-1) {
             tma::expect_bytes(qkv_semaphore,
                 size_bytes<typeof(q_smem[0])> + 
                 size_bytes<typeof(k_smem[0])> + 
@@ -171,8 +179,8 @@ void hedgehog_linear_attention_smd (
 
         rt_fl<1*16, 8*16> sliding_o;
         rt_fl<1*16, 4*16>::col_vec sliding_norm_vec;
-        zero(sliding_o);
-        zero(sliding_norm_vec);
+        warp::zero(sliding_o);
+        warp::zero(sliding_norm_vec);
         if(warpgroupid == 0) {
 
             // ******* sliding window attn ******* // 
@@ -180,7 +188,7 @@ void hedgehog_linear_attention_smd (
             rt_bf<1*16, 4*16> att_block_bf[2];
             rt_fl<1*16, 4*16>::col_vec max_vec;
 
-            neg_infty(max_vec); // zero registers for the Q chunk
+            warp::neg_infty(max_vec); // zero registers for the Q chunk
 
             for(int subtile = 0; subtile < 2; subtile++) {
                 if (block + subtile >= 1) { // ensure tile has been loaded by now.
@@ -188,33 +196,33 @@ void hedgehog_linear_attention_smd (
                     warpgroup::mma_async_wait();
                 }
                 else {
-                    neg_infty(att_block[subtile]); // initial blocks must be zero
+                    warp::neg_infty(att_block[subtile]); // initial blocks must be zero
                 }
             }
             // make last block causal
             #pragma unroll
             for(int j = 0; j < 4; j++) {
                 auto &attn_subtile = reinterpret_cast<rt_fl<1*16,1*16>&>(att_block[1].tiles[0][j]);
-                if (j>warpid) neg_infty(attn_subtile);
-                else if (j==warpid) make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty());
+                if (j>warpid) warp::neg_infty(attn_subtile);
+                else if (j==warpid) warp::make_causal(attn_subtile, attn_subtile, kittens::base_types::constants<float>::neg_infty());
             }
             // now do the softmax. first we subtract max for numerical stability. then exp.
             #pragma unroll
             for(int subtile = 0; subtile < 2; subtile++) {
-                mul(att_block[subtile], att_block[subtile], 0.08838834764 * 1.44269504089); // temperature adjustment, with lg(e) so we can use exp2
-                row_max(max_vec, att_block[subtile], max_vec); // accumulate onto the max_vec
+                warp::mul(att_block[subtile], att_block[subtile], 0.08838834764 * 1.44269504089); // temperature adjustment, with lg(e) so we can use exp2
+                warp::row_max(max_vec, att_block[subtile], max_vec); // accumulate onto the max_vec
             }
             #pragma unroll
             for(int subtile = 0; subtile < 2; subtile++) {
-                sub_row(att_block[subtile], att_block[subtile], max_vec);
-                exp2(att_block[subtile], att_block[subtile]);
-                mul(att_block[subtile], att_block[subtile], beta);
+                warp::sub_row(att_block[subtile], att_block[subtile], max_vec);
+                warp::exp2(att_block[subtile], att_block[subtile]);
+                warp::mul(att_block[subtile], att_block[subtile], beta);
             }
             // now we sum so that we can divide (normalize) later
             #pragma unroll
             for(int subtile = 0; subtile < 2; subtile++) {
-                row_sum(sliding_norm_vec, att_block[subtile], sliding_norm_vec); // incorporates beta
-                copy(att_block_bf[subtile], att_block[subtile]); // cast to bf16 for next matmul
+                warp::row_sum(sliding_norm_vec, att_block[subtile], sliding_norm_vec); // incorporates beta
+                warp::copy(att_block_bf[subtile], att_block[subtile]); // cast to bf16 for next matmul
             }
             for(int subtile = 0; subtile < 2; subtile++) {
                 warpgroup::mma_AB(sliding_o, att_block_bf[subtile], v_smem[(ring_id+subtile)%3]);
@@ -225,9 +233,9 @@ void hedgehog_linear_attention_smd (
 
         rt_fl<1*16, 8*16> linear_o; // this is partitioned across the two warpgroups.
         rt_fl<1*16, 4*16>::col_vec linear_norm_vec;
-        zero(linear_norm_vec);
+        warp::zero(linear_norm_vec);
         if(block == 0) {
-            zero(linear_o);
+            warp::zero(linear_o);
         }
         else { // if not in at least the second block, no need for linear attention.
             // ******* linear attn ******** // 
@@ -238,12 +246,12 @@ void hedgehog_linear_attention_smd (
 
             warpgroup::mm_AB(linear_q, q_smem[tic], qf_map); // reset
             warpgroup::mma_async_wait(); // q is now projected
-            if(warpgroupid) mul(linear_q, linear_q, -1.44269504089f);
-            else            mul(linear_q, linear_q,  1.44269504089f);
+            if(warpgroupid) warp::mul(linear_q, linear_q, -1.44269504089f);
+            else            warp::mul(linear_q, linear_q,  1.44269504089f);
             // now we need to run q through a local softmax to featurize
             softmax_featuremap_inplace(linear_q);
-            mul(linear_q, linear_q, alpha);
-            copy(linear_q_bf, linear_q); // now to bf16
+            warp::mul(linear_q, linear_q, alpha);
+            warp::copy(linear_q_bf, linear_q); // now to bf16
 
             // copy the local KV cache into shared memory to shared memory and do matmul
             warpgroup::store(kv_smem[warpgroupid], local_kv);
@@ -254,16 +262,16 @@ void hedgehog_linear_attention_smd (
             // next we need to go figure out the norm.
             // first we load sum(k) from smem to registers.
             row_vec<rt_bf<1*16,4*16>> cumsum_k_reg;
-            load(cumsum_k_reg, cumsum_k_smem[warpgroupid]);
+            warp::load(cumsum_k_reg, cumsum_k_smem[warpgroupid]);
             // now we can project this up into a register tile
             // we're broadcasting along the column axis (filling all rows with the same value)
             rt_bf<1*16,4*16> cumsum_k_reg_tile;
-            broadcast_col(cumsum_k_reg_tile, cumsum_k_reg);
+            warp::broadcast_col(cumsum_k_reg_tile, cumsum_k_reg);
             // next we matmul! this gives us a tile.
             rt_fl<1*16,1*16> norm_tile;
-            zero(norm_tile);
-            mma_ABt(norm_tile, linear_q_bf, cumsum_k_reg_tile, norm_tile);
-            row_max(linear_norm_vec, norm_tile); // technically any column slice would work but this is EZ
+            warp::zero(norm_tile);
+            warp::mma_ABt(norm_tile, linear_q_bf, cumsum_k_reg_tile, norm_tile);
+            warp::row_max(linear_norm_vec, norm_tile); // technically any column slice would work but this is EZ
             // ^ note this incorporates alpha since it was premultiplied onto linear_q!
             
             // now accumulate KV onto the matmul for the future.
@@ -272,8 +280,8 @@ void hedgehog_linear_attention_smd (
             // matmul to generate linear_k before softmax
             warpgroup::mm_AB(linear_k, k_smem[ring_id], kf_map); // reset
             warpgroup::mma_async_wait(); // k is now projected
-            if(warpgroupid) mul(linear_k, linear_k, -1.44269504089f);
-            else            mul(linear_k, linear_k,  1.44269504089f);
+            if(warpgroupid) warp::mul(linear_k, linear_k, -1.44269504089f);
+            else            warp::mul(linear_k, linear_k,  1.44269504089f);
             // now we need to run q through a local softmax to featurize
             softmax_featuremap_inplace(linear_k);
 
@@ -292,21 +300,21 @@ void hedgehog_linear_attention_smd (
             warpgroup::store(norm_exchange[0], linear_norm_vec);
         }
         else {
-            add(sliding_norm_vec, sliding_norm_vec, linear_norm_vec);
-            add(sliding_o, sliding_o, linear_o);
+            warp::add(sliding_norm_vec, sliding_norm_vec, linear_norm_vec);
+            warp::add(sliding_o, sliding_o, linear_o);
         }
         __syncthreads();
         if(warpgroupid == 0) {
             warpgroup::load(linear_o, o_smem);
             warpgroup::load(linear_norm_vec, norm_exchange[0]);
-            add(sliding_o, sliding_o, linear_o);
-            add(sliding_norm_vec, sliding_norm_vec, linear_norm_vec);
-            div_row(sliding_o, sliding_o, sliding_norm_vec); // this half is now normalized
+            warp::add(sliding_o, sliding_o, linear_o);
+            warp::add(sliding_norm_vec, sliding_norm_vec, linear_norm_vec);
+            warp::div_row(sliding_o, sliding_o, sliding_norm_vec); // this half is now normalized
             warpgroup::store(o_smem, sliding_o);
         }
         __syncthreads();
 
-        if(warpid == 0) {
+        if(warpid == 0 && laneid() == 0) {
             tma::store_async(g.o, o_smem, {batch, head, block, 0});
         }
     }
@@ -375,6 +383,7 @@ hedgehog_globals hedgehog_init(
 
 #ifdef TK_COMPILE_HEDGEHOG
 #include "pyutils/torchutils.cuh"
+#include <ATen/Functions.h>
 #include <iostream>
 void dispatch_hedgehog( 
     bf16 *d_q, bf16 *d_k, bf16 *d_v, bf16 *d_o,
@@ -403,14 +412,14 @@ void dispatch_hedgehog(
     CHECK_CUDA_ERROR(cudaGetLastError());
 }
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> hedgehog(
-    const torch::Tensor q, 
-    const torch::Tensor k,
-    const torch::Tensor v,
-    const torch::Tensor qmap,
-    const torch::Tensor kmap,
-    const torch::Tensor d_alphas,
-    const torch::Tensor d_betas
+std::tuple<at::Tensor, at::Tensor, at::Tensor> hedgehog(
+    const at::Tensor q, 
+    const at::Tensor k,
+    const at::Tensor v,
+    const at::Tensor qmap,
+    const at::Tensor kmap,
+    const at::Tensor d_alphas,
+    const at::Tensor d_betas
 ) {
     CHECK_INPUT(q);
     CHECK_INPUT(k);
@@ -447,9 +456,9 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> hedgehog(
     TORCH_CHECK(d_betas.size(0) == H, "betas heads?");
 
     // allocate outputs
-    torch::Tensor out = torch::empty({B, H, N, DV}, v.options());
-    torch::Tensor kv_state = torch::empty({B, H, FD, DV}, torch::dtype(torch::kFloat32).device(v.device()));
-    torch::Tensor k_state = torch::empty({B, H, 1, DV}, torch::dtype(torch::kFloat32).device(v.device()));
+    at::Tensor out = at::empty({B, H, N, DV}, v.options());
+    at::Tensor kv_state = at::empty({B, H, FD, DV}, at::dtype(at::ScalarType::Float).device(v.device()));
+    at::Tensor k_state = at::empty({B, H, 1, DV}, at::dtype(at::ScalarType::Float).device(v.device()));
 
     // convert to bf16
     c10::BFloat16 *q_bf16 = q.data_ptr<c10::BFloat16>();
@@ -481,7 +490,9 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> hedgehog(
     CHECK_CUDA_ERROR(cudaGetLastError());
     return std::make_tuple(out, kv_state, k_state);
 }
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("hedgehog", hedgehog, "Hedgehog forward. Takes tensors (q, k, v, q_map, k_map, alphas, betas). q, k, v are bf16 (B,H,N,64), q_map and k_map are bf16 (H,E,64,64), alphas and betas are fp32 (H,E). Returns (B,H,N,64) in bf16.");
+}
 #else
 #include "harness.impl"
 #endif
-
