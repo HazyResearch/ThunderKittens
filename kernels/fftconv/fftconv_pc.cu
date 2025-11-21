@@ -54,7 +54,7 @@ struct fft_1024_template {
                 for(int b = batch; b < batch+(NUM_CONSUMER_WARPGROUPS*4) && b < args.globals.x.batch(); b++) {
                     int diff = b-batch;
                     auto st = args.input.x[diff/4].template subtile<32,32>({(diff%4)/2, diff%2});
-                    load_async(st, args.globals.x, { b, head, 0, 0 });
+                    warp::load_async(st, args.globals.x, { b, head, 0, 0 });
                 }
                 load_async_wait();
                 if(laneid() == 0) arrive(args.inputs_arrived, 4); // extra arrivals needed
@@ -69,7 +69,7 @@ struct fft_1024_template {
                 for(int b = batch; b < batch+(NUM_CONSUMER_WARPGROUPS*4) && b < args.globals.x.batch(); b++) {
                     int diff = b-batch;
                     auto st = args.output.o[diff/4].subtile<32,32>({(diff%4)/2, diff%2});
-                    kittens::store(args.globals.o, st, { b, head, 0, 0 });
+                    warp::store(args.globals.o, st, { b, head, 0, 0 });
                 }
                 __syncwarp(); // memory must arrive before arrival
                 if(laneid() == 0) arrive(args.outputs_finished, 4);
@@ -100,25 +100,25 @@ struct fft_1024_template {
             warpgroup::mm_AB(mma_reg.real, args.scratch.f.real, args.input.x[warpgroup::groupid()]);
             warpgroup::mm_AB(mma_reg.imag, args.scratch.f.imag, args.input.x[warpgroup::groupid()]);
             warpgroup::mma_async_wait();
-            copy(accum, mma_reg);
+            warp::copy(accum, mma_reg);
 
             warpgroup::load(tmp, args.scratch.tw); // for twiddle first
-            mul(accum, accum, tmp);
+            warp::mul(accum, accum, tmp);
 
             group<NUM_CONSUMER_WARPS>::sync(2);  // FLAG: This is important
             warpgroup::mm_AB(mma_reg, accum, args.scratch.f);
             warpgroup::mma_async_wait();
-            copy(accum, mma_reg);
+            warp::copy(accum, mma_reg);
 
             warpgroup::load(tmp, args.scratch.kf); // for filter second
-            mul(accum, accum, tmp);
+            warp::mul(accum, accum, tmp);
 
             warpgroup::mm_AB(mma_reg, accum, args.scratch.finv);
             warpgroup::mma_async_wait();
-            copy(accum, mma_reg);
+            warp::copy(accum, mma_reg);
 
             warpgroup::load(tmp, args.scratch.twinv_t); // twiddle inverse is pre-transposed
-            mul(accum, accum, tmp);
+            warp::mul(accum, accum, tmp);
 
             warpgroup::store(args.scratch.tmp[warpgroup::groupid()], accum); // must store for AtB
             warpgroup::sync(default_barrer_id); // FLAG: This is important
@@ -190,9 +190,9 @@ struct fft_4096_template {
             int head  = (args.iter / iters_per_head)*132 + blockIdx.x;
             int batch = (args.iter % iters_per_head) * NUM_CONSUMER_WARPGROUPS;
             if(warpgroup::warpid() == args.iter%4) {
-                tma::expect_bytes(args.inputs_arrived, sizeof(args.input.x[0]) * min((int)NUM_CONSUMER_WARPGROUPS, (int)(args.globals.x.batch() - batch)));
+                warp::tma::expect_bytes(args.inputs_arrived, sizeof(args.input.x[0]) * min((int)NUM_CONSUMER_WARPGROUPS, (int)(args.globals.x.batch() - batch)));
                 for(int b = batch; b < batch+NUM_CONSUMER_WARPGROUPS && b < args.globals.x.batch(); b++) {
-                    tma::load_async(args.input.x[b-batch], args.globals.x, { b, head, 0, 0 }, args.inputs_arrived);
+                    warp::tma::load_async(args.input.x[b-batch], args.globals.x, { b, head, 0, 0 }, args.inputs_arrived);
                 }
                 if(laneid() == 0) arrive(args.inputs_arrived, 3); // extra arrivals needed
                 __syncwarp();
@@ -204,9 +204,9 @@ struct fft_4096_template {
             int batch = (args.iter % iters_per_head) * NUM_CONSUMER_WARPGROUPS;
             if(warpgroup::warpid() == args.iter%4) {
                 for(int b = batch; b < batch+NUM_CONSUMER_WARPGROUPS && b < args.globals.x.batch(); b++) {
-                    tma::store_async(args.globals.o, args.output.o[b-batch], { b, head, 0, 0 });
+                    warp::tma::store_async(args.globals.o, args.output.o[b-batch], { b, head, 0, 0 });
                 }
-                tma::store_async_read_wait();
+                warp::tma::store_async_read_wait();
                 if(laneid() == 0) arrive(args.outputs_finished, 4);
                 __syncwarp();
             }
@@ -235,25 +235,25 @@ struct fft_4096_template {
             warpgroup::mm_AB(mma_reg.real, args.scratch.f.real, args.input.x[warpgroup::groupid()]);
             warpgroup::mm_AB(mma_reg.imag, args.scratch.f.imag, args.input.x[warpgroup::groupid()]);
             warpgroup::mma_async_wait();
-            copy(accum, mma_reg);
+            warp::copy(accum, mma_reg);
 
             warpgroup::load(tmp, args.scratch.tw); // for twiddle first
-            mul(accum, accum, tmp);
+            warp::mul(accum, accum, tmp);
 
             group<NUM_CONSUMER_WARPS>::sync(2);
             warpgroup::mm_AB(mma_reg, accum, args.scratch.f);
             warpgroup::mma_async_wait();
-            copy(accum, mma_reg);
+            warp::copy(accum, mma_reg);
 
             warpgroup::load(tmp, args.scratch.kf); // for filter second
-            mul(accum, accum, tmp);
+            warp::mul(accum, accum, tmp);
 
             warpgroup::mm_AB(mma_reg, accum, args.scratch.finv);
             warpgroup::mma_async_wait();
-            copy(accum, mma_reg);
+            warp::copy(accum, mma_reg);
 
             warpgroup::load(tmp, args.scratch.twinv_t); // twiddle inverse is pre-transposed
-            mul(accum, accum, tmp);
+            warp::mul(accum, accum, tmp);
 
             warpgroup::store(args.scratch.tmp[warpgroup::groupid()], accum); // must store for AtB
             warpgroup::sync(default_barrer_id);
@@ -365,6 +365,7 @@ void launch(typename fft_template<SEQ>::layout::globals G) {
 
 #ifdef TK_COMPILE_FFTCONV
 #include "pyutils/torchutils.cuh"
+#include <ATen/Functions.h>
 #include <iostream>
 void dispatch_fft_conv( 
     bf16 *u, 
@@ -405,18 +406,18 @@ void dispatch_fft_conv(
 }
 
 
-torch::Tensor fftconv(
-    const torch::Tensor u_real,
-    const torch::Tensor kf_real,
-    const torch::Tensor kf_imag,
-    const torch::Tensor f_real,
-    const torch::Tensor f_imag,
-    const torch::Tensor finv_real,
-    const torch::Tensor finv_imag,
-    const torch::Tensor tw_real,
-    const torch::Tensor tw_imag,
-    const torch::Tensor twinv_real,
-    const torch::Tensor twinv_imag,
+at::Tensor fftconv(
+    const at::Tensor u_real,
+    const at::Tensor kf_real,
+    const at::Tensor kf_imag,
+    const at::Tensor f_real,
+    const at::Tensor f_imag,
+    const at::Tensor finv_real,
+    const at::Tensor finv_imag,
+    const at::Tensor tw_real,
+    const at::Tensor tw_imag,
+    const at::Tensor twinv_real,
+    const at::Tensor twinv_imag,
     int B,
     int H,
     int N,
@@ -457,7 +458,7 @@ torch::Tensor fftconv(
     TORCH_CHECK(tw_imag.size(0) == 64, "tw_imag has incompatible dim");
     TORCH_CHECK(tw_imag.size(1) == 64, "tw_imag has incompatible dim");
 
-    torch::Tensor out = torch::empty({B, H, N1, N1}, u_real.options());
+    at::Tensor out = at::empty({B, H, N1, N1}, u_real.options());
 
     // convert to bf16
     c10::BFloat16 *u_real_bf16 = u_real.data_ptr<c10::BFloat16>();
@@ -496,6 +497,9 @@ torch::Tensor fftconv(
     CHECK_CUDA_ERROR(cudaGetLastError());
     return out;
 }
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("fftconv", fftconv, "FFTConv TK. Takes tensors (u_real, kf_real, kf_imag, f_real, f_imag, finv_real, finv_imag, tw_real, tw_imag, twinv_real, twinv_imag, B, H, N, N1). All tensors are bf16 except B, H, N, N1 which are ints. Returns (B, H, N, N1) in bf16.");
+}
 #else
-#include "harness_async.impl"
+#include "harness.impl"
 #endif

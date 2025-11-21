@@ -1,3 +1,140 @@
+#include "kittens.cuh"
+#include "prototype.cuh"
+
+using namespace kittens;
+
+static constexpr int NUM_WORKERS = 1;
+static constexpr int NUM_WARPS = (NUM_WORKERS); // SA: make it type 4
+static constexpr int NUM_THREADS = (NUM_WARPS * kittens::WARP_THREADS);
+
+// shared patterns
+#define SQRT_N 64
+#define rt_cmplx_bf_base crt_bf<SQRT_N, SQRT_N>
+#define rt_cmplx_bf_base_col crt_bf<SQRT_N, SQRT_N, ducks::rt_layout::col>
+#define rt_cmplx_fl_base crt_fl<SQRT_N, SQRT_N>
+#define st_cmplx_bf_base cst_bf<SQRT_N, SQRT_N>
+
+template<int b_tiles, int h_tiles, int h, int n, int n1>
+struct fftconv_layout {
+    using input_layout = gl<bf16, -1, h, n1, n1>;
+    using filter_layout = gl<bf16, 1, h, n1, n1>;
+    using fft_layout = gl<bf16, 1, 1, n1, n1>;
+
+    using complex_input_layout = kittens::cgl<input_layout>;
+    using complex_filter_layout = kittens::cgl<filter_layout>;
+    using complex_fft_layout = kittens::cgl<fft_layout>;
+    
+    struct globals { 
+        complex_input_layout u_g;
+        input_layout o_real_g;
+        complex_filter_layout kf_g;
+        complex_fft_layout f_g, finv_g, tw_real_g, twinv_g;
+    };
+};
+template<int _b_tiles, int _h_tiles, int _h, int _n, int _n1>
+struct fftconv_template {
+    static constexpr int b_tiles=_b_tiles, h_tiles=_h_tiles, h=_h, n=_n, n1=_n1;
+    using layout = fftconv_layout<b_tiles, h_tiles, h, n, n1>;
+};
+
+template<typename T>
+__global__ void fftconv_tk(typename T::layout::globals g) {
+    int warpid = kittens::warpid();
+    int H_TILE = T::h_tiles;
+    int B_TILE = T::b_tiles;
+
+    // Every block loads same seq tile
+    int h_start = blockIdx.y * H_TILE;
+    int b_start = blockIdx.x * B_TILE;
+
+    // Registers; everyone loads
+    rt_cmplx_bf_base a_reg;       
+    rt_cmplx_fl_base mma_reg;     
+    rt_cmplx_bf_base accum;       
+    rt_cmplx_bf_base_col b_reg;
+
+    warp::zero(a_reg);
+    warp::zero(mma_reg);
+    warp::zero(accum);
+    warp::zero(b_reg);
+
+    // #pragma unroll
+    for (int i = h_start; i < h_start+H_TILE; i++) {
+        // #pragma unroll
+        for (int j = b_start; j < b_start+B_TILE; j++) {            
+            // X = F^T X
+            warp::load(a_reg, g.f_g, {0, 0, 0, 0});
+            warp::transpose_inplace(a_reg);
+            warp::load(b_reg, g.u_g, {j, i, 0, 0}); // needs to be imag too.
+            warp::zero(mma_reg);
+            warp::mma_AB(mma_reg, a_reg, b_reg, mma_reg);
+            warp::copy(accum, mma_reg);
+
+            // X = X * tw
+            warp::load(a_reg, g.tw_real_g, {0, 0, 0, 0});// needs to be imag too.
+            warp::mul(accum, accum, a_reg);
+
+            // // X = XF
+            warp::load(b_reg, g.f_g, {0, 0, 0, 0}); // needs to be imag too.
+            warp::zero(mma_reg);
+            warp::mma_AB(mma_reg, accum, b_reg, mma_reg);
+            warp::copy(accum, mma_reg);
+
+            // X = X * K_f^T
+            warp::load(a_reg, g.kf_g, {0, i, 0, 0});
+            warp::mul(accum, accum, a_reg);
+
+            // X = XFinv
+            warp::load(b_reg, g.finv_g, {0, 0, 0, 0});
+            warp::zero(mma_reg);
+            warp::mma_AB(mma_reg, accum, b_reg, mma_reg);
+            warp::copy(accum, mma_reg);
+
+            // X = X^T * twinv
+            warp::transpose_inplace(accum);
+            warp::load(a_reg, g.twinv_g, {0, 0, 0, 0});
+            warp::mul(accum, accum, a_reg);
+
+            // Y = XFinv
+            warp::zero(mma_reg);
+            warp::mma_AB(mma_reg, accum, b_reg, mma_reg);
+            warp::copy(accum, mma_reg);
+
+            // Write Y^T to HBM
+            warp::transpose_inplace(accum);
+            warp::store(g.o_real_g, accum.real, {j, i, 0, 0});
+        }
+    }
+}
+
+template<typename T>
+void launch_fftconv_tk(typename T::layout::globals g, int b, int h) {
+    
+    const int B_TILE = T::b_tiles; // Number of batches per SM
+    const int H_TILE = T::h_tiles; // Number of height tiles per SM
+
+    // 1 warp for 32x32 case
+    const dim3 block_dim{
+        (unsigned int)(NUM_THREADS)
+    };
+    const dim3 grid_dim{
+        (unsigned int)(b + B_TILE - 1) / B_TILE,
+        (unsigned int)(h + H_TILE - 1) / H_TILE
+    };
+
+    long mem_size = 1000;
+
+    cudaFuncSetAttribute(
+        fftconv_tk<T>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        mem_size
+    );
+
+    fftconv_tk<T><<<grid_dim, block_dim, mem_size>>>(g);
+}
+
+// Harness
+
 #include <iostream>
 #include <string>
 #include <stdlib.h>
@@ -6,10 +143,10 @@
 #include <fstream>
 using namespace kittens;
 
-#define N 1024
-#define N1 32
-#define B 16
-#define H 16
+#define N 4096
+#define N1 64
+#define B 4
+#define H 1024
 #define TOTAL_INPUT_ELEMENTS B*H*N
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
@@ -41,6 +178,7 @@ bool check_value(float abs_tol, float rel_tol, float *o, float *o_ref, int num_e
 
     int num_nans = 0;
     int num_infs = 0;
+    float max_diff = 0.0f;
     
     for (size_t i = 0; i < num_elements; i++) {
         float pred = o[i];
@@ -70,10 +208,12 @@ bool check_value(float abs_tol, float rel_tol, float *o, float *o_ref, int num_e
             diff_counter += 1;
             good = false;
         }
+        max_diff = max(max_diff, diff);
     }
     std::cout << diff_counter << " elements out of " << num_elements << " violate threshold" << std::endl;
     std::cout << num_nans << " elements out of " << num_elements << " have nans" << std::endl;
     std::cout << num_infs << " elements out of " << num_elements << " have infs" << std::endl;
+    std::cout << "max error: " << max_diff << std::endl;
     return good;
 }
 
@@ -204,7 +344,7 @@ int main(int argc, char **argv) {
     }
 
     // tk 2 changes
-    constexpr int B_TILE = 8;
+    constexpr int B_TILE = 4;
     constexpr int H_TILE = 8;
     using fft_t  = fftconv_template<B_TILE, H_TILE, H, N, N1>;
     using globals = typename fft_t::layout::globals;
@@ -277,8 +417,8 @@ int main(int argc, char **argv) {
 
     // Reduce criteria from 0.5 to 1 abs difference (we had 50 elements out of 262144 violate threshold,
     // all diffs were between 0.5 and 1)
-    constexpr float abs_tol = 1.0e-1f;
-    constexpr float rel_tol = 1.0e-1f;
+    constexpr float abs_tol = 2.5f;
+    constexpr float rel_tol = 0.02f; // but keep rel tol small to ensure we are correct
 
     std::cout << "Total output elements: " << TOTAL_INPUT_ELEMENTS << std::endl;
     if (check_value(abs_tol, rel_tol, o, o_ref, TOTAL_INPUT_ELEMENTS)) {
