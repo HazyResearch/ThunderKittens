@@ -44,9 +44,9 @@ template<int _headdim> struct rotary_template {
                                        args.iter%args.globals.x.depth(),
                                        blockIdx.x*NUM_CONSUMER_WARPS,
                                        0 };
-                tma::expect_bytes(args.inputs_arrived, sizeof(layout::seq_tile)*args.state.active_warps);
+                warp::tma::expect_bytes(args.inputs_arrived, sizeof(layout::seq_tile)*args.state.active_warps);
                 for(int i = 0; i < args.state.active_warps; i++) {
-                    tma::load_async(args.input.x[i], args.globals.x, {idx.b,idx.d,idx.r+i,idx.c}, args.inputs_arrived);
+                    warp::tma::load_async(args.input.x[i], args.globals.x, {idx.b,idx.d,idx.r+i,idx.c}, args.inputs_arrived);
                 }
                 if(laneid() == 0) arrive(args.inputs_arrived, 3);
                 __syncwarp();
@@ -59,9 +59,9 @@ template<int _headdim> struct rotary_template {
                                        blockIdx.x*NUM_CONSUMER_WARPS,
                                        0 };
                 for(int i = 0; i < args.state.active_warps; i++) {
-                    tma::store_async(args.globals.o, args.output.o[i], {idx.b,idx.d,idx.r+i,idx.c});
+                    warp::tma::store_async(args.globals.o, args.output.o[i], {idx.b,idx.d,idx.r+i,idx.c});
                 }
-                tma::store_async_read_wait();
+                warp::tma::store_async_read_wait();
                 if(laneid() == 0) arrive(args.outputs_finished, 4);
                 __syncwarp();
             }
@@ -71,13 +71,13 @@ template<int _headdim> struct rotary_template {
         __device__ static void setup(consumer_setup_args<layout> args) {
             warpgroup::consumer_registers<NUM_CONSUMER_WARPS/4>();
             kittens::coord idx = { blockIdx.x*NUM_CONSUMER_WARPS + warpid(), 0 };
-            load(args.state.sin, args.globals.sin, idx); // could be better coalesced but doing just once
-            load(args.state.cos, args.globals.cos, idx);
+            warp::load(args.state.sin, args.globals.sin, idx); // could be better coalesced but doing just once
+            warp::load(args.state.cos, args.globals.cos, idx);
         }
         __device__ static void compute(consumer_compute_args<layout> args) {
             rt_fl<16, headdim> x;
             rt_fl<16, headdim/2> x1, x2, temp1, temp2;
-            load(x, args.input.x[warpid()]);
+            warp::load(x, args.input.x[warpid()]);
             if(laneid() == 0) arrive(args.inputs_finished);
             __syncwarp();
             for(int i = 0; i < headdim/32; i++) {
@@ -87,13 +87,13 @@ template<int _headdim> struct rotary_template {
                     x2.tiles[0][i].data[j] = x.tiles[0][i+headdim/32].data[j];
                 }
             }
-            mul(temp1, x1, args.state.cos);
-            mul(temp2, x2, args.state.cos);
-            mul(x2, x2, -1.f);
-            mul(x1, x1, args.state.sin);
-            mul(x2, x2, args.state.sin);
-            add(temp1, temp1, x2);
-            add(temp2, temp2, x1);
+            warp::mul(temp1, x1, args.state.cos);
+            warp::mul(temp2, x2, args.state.cos);
+            warp::mul(x2, x2, -1.f);
+            warp::mul(x1, x1, args.state.sin);
+            warp::mul(x2, x2, args.state.sin);
+            warp::add(temp1, temp1, x2);
+            warp::add(temp2, temp2, x1);
             for(int i = 0; i < headdim/32; i++) {
                 #pragma unroll
                 for(int j = 0; j < 4; j++) {
@@ -101,7 +101,7 @@ template<int _headdim> struct rotary_template {
                     x.tiles[0][i+headdim/32].data[j] = temp2.tiles[0][i].data[j];
                 }
             }
-            store(args.output.o[warpid()], x);
+            warp::store(args.output.o[warpid()], x);
             __syncwarp();
             if(laneid() == 0) arrive(args.outputs_arrived);
         }
@@ -114,6 +114,7 @@ template<int _headdim> struct rotary_template {
 #ifdef TK_COMPILE_FUSED_ROTARY
 #include "pyutils/torchutils.cuh"
 #include <iostream>
+#include <ATen/Functions.h>
 template<int ATTN_D>
 void dispatch_fused_rotary(
     bf16 * d_o,
@@ -144,10 +145,10 @@ void dispatch_fused_rotary(
     kittens::prototype::lcsf::kernel<rope_t><<<grid, block, mem_size>>>(g); 
 }
 
-torch::Tensor fused_rotary(
-    const torch::Tensor x,
-    const torch::Tensor cos_in,
-    const torch::Tensor sin_in
+at::Tensor fused_rotary(
+    const at::Tensor x,
+    const at::Tensor cos_in,
+    const at::Tensor sin_in
 ) {
     CHECK_INPUT(x);
     CHECK_INPUT(sin_in);
@@ -166,7 +167,7 @@ torch::Tensor fused_rotary(
     TORCH_CHECK(cos_in.size(0) % 16 == 0, "Sequence length must be multiple of 16");
     TORCH_CHECK(sin_in.size(0) % 16 == 0, "Sequence length must be multiple of 16");
 
-    torch::Tensor out = torch::empty({B, H, N, x.size(3)}, x.options());
+    at::Tensor out = at::empty({B, H, N, x.size(3)}, x.options());
 
     // convert to bf16
     c10::BFloat16 *x_bf16 = x.data_ptr<c10::BFloat16>();
@@ -201,7 +202,9 @@ torch::Tensor fused_rotary(
     CHECK_CUDA_ERROR(cudaGetLastError());
     return out;
 }
-
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("fused_rotary", fused_rotary, "Rotary TK. Takes tensors (x, cos_in, sin_in). All tensors are bf16. Returns (B, H, N, 128) in bf16.");
+}
 #else
 #include "harness.impl"
 #endif
