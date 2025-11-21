@@ -7,10 +7,11 @@
 #define TK_COMPILE_BASED
 #endif
 
-#define NUM_WORKERS (4) // hardcoded, don't change
-#define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
 #define D_QK (16) // hardcoded, don't change
 #define D_VO (64) // hardcoded but can be changed with some effort
+
+static constexpr int NUM_WORKERS = (4); // hardcoded, don't change
+static constexpr int NUM_THREADS = (NUM_WORKERS*kittens::WARP_THREADS);
 
 using namespace kittens;
 
@@ -222,7 +223,9 @@ void based_linear_attention(const __grid_constant__ based_globals g) {
         for(int j = 0; j < 4; j++) {
             auto &attn_subtile = reinterpret_cast<rt_bf<1*16,1*16>&>(local_attn_bf.tiles[0][j]);
             if (j>warpid) kittens::warp::zero(attn_subtile);
-            else if (j==warpid) kittens::warp::apply(attn_subtile, attn_subtile, [](int row, int col, float val) { return row >= col ? val : 0.0f; });
+            else if (j==warpid) kittens::warp::apply(attn_subtile, attn_subtile, [] __device__ (int row, int col, auto val) {
+                return row >= col ? val : __float2bfloat16(0.0f);
+            });
         }
 
         warpgroup::mma_AB(o, local_attn_bf, v_s[tic]); // reset o here, and do local chunk.
@@ -338,6 +341,7 @@ based_globals based_init(
 
 #ifdef TK_COMPILE_BASED
 #include "pyutils/torchutils.cuh"
+#include <ATen/Functions.h>
 #include <iostream>
 void dispatch_based( 
     bf16 *d_q, bf16 *d_k, bf16 *d_v, bf16 *d_o,
@@ -364,10 +368,10 @@ void dispatch_based(
     cudaDeviceSynchronize();
 }
 
-std::tuple<torch::Tensor, torch::Tensor> based(
-    const torch::Tensor q, 
-    const torch::Tensor k,
-    const torch::Tensor v
+std::tuple<at::Tensor, at::Tensor> based(
+    const at::Tensor q, 
+    const at::Tensor k,
+    const at::Tensor v
 ) {
     CHECK_INPUT(q);
     CHECK_INPUT(k);
@@ -389,10 +393,10 @@ std::tuple<torch::Tensor, torch::Tensor> based(
     TORCH_CHECK(v.size(2) == N, "v length?");
 
     // allocate output
-    torch::Tensor out = torch::empty({B, H, N, DV}, v.options());
-    torch::Tensor kv_a0 = torch::empty({B, H, 1,  DV}, v.options());
-    torch::Tensor kv_a1 = torch::empty({B, H, DV, FD}, v.options());
-    torch::Tensor kv_a2 = torch::empty({B, H, FD*FD, DV}, v.options());
+    at::Tensor out = at::empty({B, H, N, DV}, v.options());
+    at::Tensor kv_a0 = at::empty({B, H, 1,  DV}, v.options());
+    at::Tensor kv_a1 = at::empty({B, H, DV, FD}, v.options());
+    at::Tensor kv_a2 = at::empty({B, H, FD*FD, DV}, v.options());
 
     // convert to bf16
     c10::BFloat16 *q_bf16 = q.data_ptr<c10::BFloat16>();
@@ -414,14 +418,15 @@ std::tuple<torch::Tensor, torch::Tensor> based(
     );
 
     kv_a1 = kv_a1.transpose(2, 3);
-    torch::Tensor kv_concat = torch::cat({kv_a0, kv_a1, kv_a2}, /*dim=*/2);
+    at::Tensor kv_concat = at::cat({kv_a0, kv_a1, kv_a2}, /*dim=*/2);
 
     CHECK_CUDA_ERROR(cudaGetLastError());
     return std::make_tuple(out, kv_concat);
     cudaDeviceSynchronize();
 }
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("based", based, "Based forward. Takes tensors (q, k, v). q, k, v are bf16 (B,H,N,64). Returns (B,H,N,64) in bf16.");
+}
 #else
-#include "harness_h100.impl"
+#include "harness.impl"
 #endif
-
-

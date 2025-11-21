@@ -273,6 +273,8 @@ We've provided a number of ThunderKittens kernels in the `kernels/` folder, whic
 
 The correctness tests and benchmarks for these kernels are located alongside their source files. Note that the top-level `tests/` directory is irrelevant to this and only contains tests for the ThunderKittens primitives.
 
+We intentionally keep each kernel self-contained rather than using a shared harness or setup, to make it easy for anyone to add new kernels. For production environments, we recommend wrapping the kernels into your own Python package.
+
 ## Demos
 
 <div align="center" >
