@@ -186,34 +186,6 @@ python -c "import torch; print(torch.file)"
 export LD_LIBRARY_PATH=<PRINTED_PATH>/lib:$LD_LIBRARY_PATH
 ```
 
-#### Using pre-implemented kernels
-
-We've provided a number of ThunderKittens kernels in the `kernels/` folder, which can be easily called from your PyTorch code. To use these kernels:
-
-1. Make sure the currently activated Python environment has PyTorch 2.8+ and PyBind11 installed. Ensure your PyTorch version meets the CUDA version (follow the [official instructions](https://pytorch.org/get-started/locally/)).
-2. (Optional) Set environment variables. Our build system sets this for you, but it's quite slow to set it every time. So it is recommended to set them first.
-
-    ```bash
-    # Make sure the Python environment you want to use is active and called by python3.
-    export PYTHON_VERSION=$(python3 -c "import sysconfig; print(sysconfig.get_config_var('LDVERSION'))")
-    export PYTHON_INCLUDES=$(python3 -c "import sysconfig; print('-I', sysconfig.get_path('include'), sep='')")
-    export PYBIND_INCLUDES=$(python3 -m pybind11 --includes)
-    export PYTORCH_INCLUDES=$(python3 -c "from torch.utils.cpp_extension import include_paths; print(' '.join(['-I' + p for p in include_paths()]))")
-    export PYTHON_LIBDIR=$(python3 -c "import sysconfig; print('-L', sysconfig.get_config_var('LIBDIR'), sep='')")
-    export PYTORCH_LIBDIR=$(python3 -c "from torch.utils.cpp_extension import library_paths; print(' '.join(['-L' + p for p in library_paths()]))")
-    ```
-
-3. `cd` into the kernel directory you want to build (e.g., `kernels/gemm/B200`).
-4. Build:
-
-    ```bash
-    make
-    ```
-
-5. Import the resulting shared library file in your Python code and call the kernel!
-
-The tests and benchmarks for these kernels are located alongside their source files. Note that the top-level `tests/` directory contains tests for the ThunderKittens primitives, not for the kernels built using ThunderKittens!
-
 ## ThunderKittens Manual
 
 ThunderKittens is actually a pretty small library, in terms of what it gives you.
@@ -267,6 +239,39 @@ Most operations in ThunderKittens are pure functional. However, some operations 
 #### Onboarding document
 
 We have a slightly outdated and incomplete [onboarding document](https://docs.google.com/document/d/15-Zvf6e0NLX1si4ml4sUOWCDlXNMtOWKiuo6CKZMEYA/edit?usp=sharing). Please contribute to this if you've run into issues and feel the broader community can benefit from explanations. Please leave comments if any aspect of this is unclear. 
+
+## Pre-implemented Kernels
+
+We've provided a number of ThunderKittens kernels in the `kernels/` folder, which can be easily called from your PyTorch code. To use these kernels:
+
+1. Make sure the currently activated Python environment has PyTorch 2.8+ and PyBind11 installed. Ensure your PyTorch version meets the CUDA version (follow the [official instructions from PyTorch](https://pytorch.org/get-started/locally/)).
+2. (Optional) Set environment variables. Our build system sets this for you, but it's quite slow to set it every time. So it is recommended to set them first.
+
+    ```bash
+    # Make sure the Python environment you want to use is active and is called by `python3`.
+    export PYTHON_VERSION=$(python3 -c "import sysconfig; print(sysconfig.get_config_var('LDVERSION'))")
+    export PYTHON_INCLUDES=$(python3 -c "import sysconfig; print('-I', sysconfig.get_path('include'), sep='')")
+    export PYBIND_INCLUDES=$(python3 -m pybind11 --includes)
+    export PYTORCH_INCLUDES=$(python3 -c "from torch.utils.cpp_extension import include_paths; print(' '.join(['-I' + p for p in include_paths()]))")
+    export PYTHON_LIBDIR=$(python3 -c "import sysconfig; print('-L', sysconfig.get_config_var('LIBDIR'), sep='')")
+    export PYTORCH_LIBDIR=$(python3 -c "from torch.utils.cpp_extension import library_paths; print(' '.join(['-L' + p for p in library_paths()]))")
+    ```
+
+3. `cd` into the kernel directory you are interested in (e.g., `kernels/gemm/bf16_h100`).
+4. Open the `Makefile` and change the configuration to your needs. This depends on each kernel and most of them should work out of the box.
+5. Build:
+
+    ```bash
+    make
+    ```
+
+6. Run:
+
+    ```bash
+    make run
+    ```
+
+The correctness tests and benchmarks for these kernels are located alongside their source files. Note that the top-level `tests/` directory is irrelevant to this and only contains tests for the ThunderKittens primitives.
 
 ## Demos
 
