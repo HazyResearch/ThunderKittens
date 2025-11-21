@@ -260,4 +260,3 @@ if __name__ == "__main__":
         # print table
         df = pd.DataFrame(method2tflops).replace(np.nan, 'OOM', regex=True)
         print(df)
-
