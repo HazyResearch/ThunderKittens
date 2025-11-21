@@ -1,21 +1,16 @@
-# GPU Selection: 4090, A100, H100
-GPU_TARGET=H100
+GPU := H100
 
-# Compiler
-NVCC?=nvcc
+# PyTorch extension mode
+# SRC := mha_h100.cu
+# OUT := _C$(shell python3 -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))")
+# CMD := python benchmark.py
+# NVCCFLAGS := -DTORCH_COMPILE
+# CONFIG := pytorch
 
-# Conditional setup based on the target GPU
-NVCCFLAGS=-DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -I../../../include -forward-unknown-to-host-compiler -O3 -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -arch=sm_90a -lcuda -lcudadevrt -lcudart_static # H100
+# Standalone mode
+SRC := mha_h100.cu
+OUT := mha_h100.out
+CMD := python gentests.py 3072 16 16 16; ./mha_h100.out randn_3072N_16D_16QO_16KV.txt
+CONFIG := standalone
 
-TARGET=attn # H100
-SRC=h100.cu # H100
-
-# Default target
-all: $(TARGET)
-
-$(TARGET): $(SRC)
-	$(NVCC) $(SRC) $(NVCCFLAGS) -o $(TARGET)
-
-# Clean target
-clean:
-	rm -f $(TARGET)
+include ../../common.mk
