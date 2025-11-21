@@ -66,13 +66,13 @@ struct mamba2_fwd_template {
 		}
 		__device__ static void load(producer_load_args<layout> args) {
 			if(warpgroup::warpid() == args.iter%4) {
-                tma::expect(args.inputs_arrived, args.input.q, args.input.k, args.input.v[0], args.input.a[0], args.input.v[1], args.input.a[1]);
-                tma::load_async(args.input.q, args.globals.Q, {args.common.batch, 0, args.iter, 0}, args.inputs_arrived);
-                tma::load_async(args.input.k, args.globals.K, {args.common.batch, 0, args.iter, 0}, args.inputs_arrived);
+                warp::tma::expect(args.inputs_arrived, args.input.q, args.input.k, args.input.v[0], args.input.a[0], args.input.v[1], args.input.a[1]);
+                warp::tma::load_async(args.input.q, args.globals.Q, {args.common.batch, 0, args.iter, 0}, args.inputs_arrived);
+                warp::tma::load_async(args.input.k, args.globals.K, {args.common.batch, 0, args.iter, 0}, args.inputs_arrived);
                 #pragma unroll
                 for(int i = 0; i < NUM_CONSUMER_WARPS/4; i++) {
-                    tma::load_async(args.input.v[i], args.globals.V, {args.common.batch,  args.common.head+i, args.iter, 0}, args.inputs_arrived);
-                    tma::load_async(args.input.a[i], args.globals.A, {args.common.batch,  args.common.head+i, 0, args.iter}, args.inputs_arrived);
+                    warp::tma::load_async(args.input.v[i], args.globals.V, {args.common.batch,  args.common.head+i, args.iter, 0}, args.inputs_arrived);
+                    warp::tma::load_async(args.input.a[i], args.globals.A, {args.common.batch,  args.common.head+i, 0, args.iter}, args.inputs_arrived);
                 }
                 __syncwarp();
             }
@@ -81,9 +81,9 @@ struct mamba2_fwd_template {
             if(warpgroup::warpid() == args.iter%4) {
                 #pragma unroll
                 for(int i = 0; i < NUM_CONSUMER_WARPS/4; i++) {
-                    tma::store_async(args.globals.O, args.output.o[i], {args.common.batch, args.common.head+i, args.iter, 0});
+                    warp::tma::store_async(args.globals.O, args.output.o[i], {args.common.batch, args.common.head+i, args.iter, 0});
                 }
-                tma::store_async_read_wait();
+                warp::tma::store_async_read_wait();
                 __syncwarp();
                 if(laneid() == 0) arrive(args.outputs_finished);
                 __syncwarp();
@@ -93,7 +93,7 @@ struct mamba2_fwd_template {
 	struct consumer {
 		__device__ static void setup(consumer_setup_args<layout> args) {
 			warpgroup::consumer_registers<NUM_CONSUMER_WARPS/WARPGROUP_WARPS>();
-            zero(args.state.kv);
+            warp::zero(args.state.kv);
 		}
 		__device__ static bool compute(consumer_compute_args<layout> args) {
             int warpgroupid = warpgroup::groupid();
@@ -126,20 +126,20 @@ struct mamba2_fwd_template {
                 args.state.local_decay.tiles[0][i].data[3].x = args.scratch.a_cumsum[warpgroupid][base_row + 8] - args.scratch.a_cumsum[warpgroupid][base_col + 8];
                 args.state.local_decay.tiles[0][i].data[3].y = args.scratch.a_cumsum[warpgroupid][base_row + 8] - args.scratch.a_cumsum[warpgroupid][base_col + 9];
             }
-            exp(args.state.local_decay, args.state.local_decay);
+            warp::exp(args.state.local_decay, args.state.local_decay);
             // causal mask
             #pragma unroll
             for(int i = 0; i < 4; i++) { // causal mask
                 auto &decay_subtile = reinterpret_cast<rt_fl<16,16>&>(args.state.local_decay.tiles[0][i]);
-                if      (i >  warpgroup::warpid()) { zero       (decay_subtile); }
-                else if (i == warpgroup::warpid()) { make_causal(decay_subtile, decay_subtile, kittens::base_types::constants<float>::zero()); }
+                if      (i >  warpgroup::warpid()) { warp::zero       (decay_subtile); }
+                else if (i == warpgroup::warpid()) { warp::make_causal(decay_subtile, decay_subtile, kittens::base_types::constants<float>::zero()); }
             }
       		// A = Q @ K.T
             warpgroup::load(args.state.q_reg, args.input.q); // we need this later, anyways
 			warpgroup::mm_ABt(args.state.att_block, args.state.q_reg, args.input.k);
 			warpgroup::mma_async_wait();
-            mul(args.state.att_block, args.state.att_block, args.state.local_decay);
-            copy(args.state.att_block_mma, args.state.att_block);
+            warp::mul(args.state.att_block, args.state.att_block, args.state.local_decay);
+            warp::copy(args.state.att_block_mma, args.state.att_block);
             warpgroup::mm_AB(args.state.o_reg, args.state.att_block_mma, args.input.v[warpgroupid]);
             warpgroup::mma_async_wait();
             // // multiply q by decays
@@ -167,7 +167,7 @@ struct mamba2_fwd_template {
             warpgroup::sync(warpgroupid);
             float last_decay = args.scratch.a_cumsum[warpgroupid][args.scratch.a_cumsum[warpgroupid].length-1]; // last element
             float total_decay = expf(last_decay);
-            mul(args.state.kv, args.state.kv, total_decay); // decay kv
+            warp::mul(args.state.kv, args.state.kv, total_decay); // decay kv
             warpgroup::load(args.state.k_reg, args.input.k); // multiply k's by decays
             {
                 int base_row = warpgroup::warpid()*16 + laneid()/4;
@@ -207,6 +207,7 @@ struct mamba2_fwd_template {
 #include "pyutils/torchutils.cuh"
 #include <iostream>
 #include <ATen/cuda/CUDAContext.h> 
+#include <ATen/Functions.h>
 
 void dispatch_mamba2(
     bf16 *d_q, bf16 *d_k, bf16 *d_v, 
@@ -268,11 +269,11 @@ void dispatch_mamba2(
     }
 }
 
-torch::Tensor mamba2(
-    const torch::Tensor q,
-    const torch::Tensor k,
-    const torch::Tensor v,
-    const torch::Tensor a
+at::Tensor mamba2(
+    const at::Tensor q,
+    const at::Tensor k,
+    const at::Tensor v,
+    const at::Tensor a
 ) {
     CHECK_INPUT(q);
     CHECK_INPUT(k);
@@ -311,11 +312,11 @@ torch::Tensor mamba2(
     TORCH_CHECK(a.size(1) == H, "a has incompatible heads");
 
     // Create output tensor
-    auto options = torch::TensorOptions()
+    auto options = at::TensorOptions()
         .dtype(q.dtype())
         .device(q.device())
         .requires_grad(q.requires_grad());
-    torch::Tensor out = torch::empty({B, H, N, D}, options);
+    at::Tensor out = at::empty({B, H, N, D}, options);
 
     // Verify output tensor
     TORCH_CHECK(out.is_contiguous(), "Output tensor must be contiguous");
@@ -352,6 +353,9 @@ torch::Tensor mamba2(
     
     return out;
 }
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("mamba2", mamba2, "Mamba2 TK. Takes tensors (q, k, v, a). q, k, v tensors are bf16 and a is float.");
+}
 #else
-#include "harness3.impl"
+#include "harness.impl"
 #endif
