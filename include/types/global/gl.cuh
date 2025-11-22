@@ -40,16 +40,15 @@ template<typename T> concept all = requires {
 namespace detail {
 namespace tma {
 template<typename T> struct descriptor_copy_helper {};
-template<kittens::ducks::tma::descriptor::all _T> struct descriptor_copy_helper<_T> { static constexpr int value = _T::axis; using T = _T::T; static constexpr bool swizzle_flag = _T::swizzle_flag; };
-template<kittens::ducks::st::all _T> struct descriptor_copy_helper<_T> { static constexpr int value = 2; using T = _T; static constexpr bool swizzle_flag = true; };
-template<kittens::ducks::sv::all _T> struct descriptor_copy_helper<_T> { static constexpr int value = -1; using T = _T; static constexpr bool swizzle_flag = true; };
+template<kittens::ducks::tma::descriptor::all _T> struct descriptor_copy_helper<_T> { static constexpr int value = _T::axis; using T = _T::T; };
+template<kittens::ducks::st::all _T> struct descriptor_copy_helper<_T> { static constexpr int value = 2; using T = _T; };
+template<kittens::ducks::sv::all _T> struct descriptor_copy_helper<_T> { static constexpr int value = -1; using T = _T; };
 template<typename T> using descriptor_copy_helper_t = descriptor_copy_helper<T>::T;
 template<typename T> static constexpr int descriptor_copy_helper_v = descriptor_copy_helper<T>::value;
-template<typename T> static constexpr bool descriptor_copy_helper_swizzle_flag = descriptor_copy_helper<T>::swizzle_flag;
 } // namespace tma
 } // namespace detail
 namespace tma {
-template<typename _T, int _axis=-9999, bool _swizzle_flag=true> struct descriptor {
+template<typename _T, int _axis=-9999> struct descriptor {
     using identifier = ducks::tma::descriptor::identifier;
     using T = detail::tma::descriptor_copy_helper_t<_T>;
     static_assert(ducks::st::all<T> || ducks::sv::all<T> || ducks::tma::descriptor::all<T>, "Must be a shared TK type to generate a TMA descriptor.");
@@ -57,7 +56,6 @@ template<typename _T, int _axis=-9999, bool _swizzle_flag=true> struct descripto
         ducks::tma::descriptor::all<_T> ? detail::tma::descriptor_copy_helper_v<_T> : // if a copy, inherit the axis from the original descriptor. 
         (_axis != -9999) ? _axis : detail::tma::descriptor_copy_helper_v<_T>); // if a default value was provided, use it.
     static_assert((kittens::ducks::st::all<T> && axis >= 0 && axis <= 2) || (kittens::ducks::sv::all<T> && axis == -1), "Internal template error detected.");
-    static constexpr bool swizzle_flag = ducks::tma::descriptor::all<_T> ? detail::tma::descriptor_copy_helper_swizzle_flag<_T> : _swizzle_flag;
 };
 } // namespace tma
 #endif
@@ -87,7 +85,7 @@ struct descriptor_dict<_T, Args...> {
     descriptor_dict<Args...> other_descs;
     __host__ descriptor_dict() {}
     __host__ descriptor_dict(typename DESC::T::dtype *data, int b, int d, int r, int c): other_descs(data, b, d, r, c) {
-        kittens::detail::tma::create_tensor_map<typename DESC::T, DESC::axis, DESC::swizzle_flag>(&tma_desc, data, b, d, r, c);
+        kittens::detail::tma::create_tensor_map<typename DESC::T, DESC::axis>(&tma_desc, data, b, d, r, c);
     }
     __host__ __device__ inline descriptor_dict(const descriptor_dict &other) :
         tma_desc(other.tma_desc), other_descs(other.other_descs) {}

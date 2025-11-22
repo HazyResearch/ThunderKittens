@@ -22,11 +22,10 @@ namespace tma {
 *
 * @tparam ST The source tensor type, which must be TMA-compatible.
 * @tparam axis The first axis (0, 1, or 2; default is 2)
-* @tparam enable_swizzle Whether to swizzle load
 * @param tma_map Pointer to the CUtensorMap object to be initialized.
 * @param src Pointer to the source tensor data in global memory.
 */
-template<ducks::st::all ST, int axis, bool enable_swizzle = true>
+template<ducks::st::all ST, int axis>
 __host__ static inline void create_tensor_map(
     CUtensorMap *tma_map, const typename ST::dtype *src, int batch, int depth, int rows, int cols
 ) {
@@ -36,7 +35,7 @@ __host__ static inline void create_tensor_map(
     static_assert(!(std::is_same_v<dtype, fp4e2m1> && axis != 2), "Axes 0 and 1 are not yet supported for FP4 type");
 #endif
 
-    constexpr uint32_t  tma_dim = enable_swizzle ? 5 : 4;
+    constexpr uint32_t  tma_dim = ST::swizzle ? 5 : 4;
     void *global_addr = (void*)(src);
 
     constexpr CUtensorMapDataType     tma_format      = (
@@ -57,7 +56,7 @@ __host__ static inline void create_tensor_map(
     constexpr CUtensorMapInterleave   tma_interleave  = CU_TENSOR_MAP_INTERLEAVE_NONE;
     constexpr CUtensorMapL2promotion  tma_l2Promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
     constexpr CUtensorMapFloatOOBfill tma_oobFill     = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
-    constexpr CUtensorMapSwizzle      tma_swizzle     = enable_swizzle ? (
+    constexpr CUtensorMapSwizzle      tma_swizzle     = ST::swizzle ? (
         ST::swizzle_bytes == 32  ? CU_TENSOR_MAP_SWIZZLE_32B  :
         ST::swizzle_bytes == 64  ? CU_TENSOR_MAP_SWIZZLE_64B  :
         ST::swizzle_bytes == 128 ? CU_TENSOR_MAP_SWIZZLE_128B : 
@@ -84,7 +83,7 @@ __host__ static inline void create_tensor_map(
     constexpr int swizzle_elements = ST::swizzle_bytes / sizeof(dtype);
 #endif
 
-    if constexpr (enable_swizzle) {
+    if constexpr (ST::swizzle) {
         if constexpr (axis == 2) {
             gmem_shape[0] = swizzle_elements;
             gmem_shape[1] = (uint64_t)rows;
@@ -259,18 +258,16 @@ template<typename SV> constexpr int sv_tma_dim2 = (SV::length / sv_tma_dim1<SV>)
 *
 * @tparam SV The source tensor type, which must be TMA-compatible.
 * @tparam axis The first axis (0, 1, or 2; default is 2)
-* @tparam enable_swizzle Whether to not swizzle load
 * @param tma_map Pointer to the CUtensorMap object to be initialized.
 * @param src Pointer to the source tensor data in global memory.
 */
-template<ducks::sv::all SV, int axis, bool disable_swizzle = true>
+template<ducks::sv::all SV, int axis>
 __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typename SV::dtype *src, int batch, int depth, int rows, int cols) {
     using dtype = typename SV::dtype;
     static_assert(axis == -1, "for vector TMA, row axis must be -1 as it's unused");
     static_assert(SV::length <= 256 || (SV::length*sizeof(dtype)) % 128 == 0);
     // There is technically a way around ^ that involves instantiating two separate TMA descriptors, one of size 256
     // and the other of size %256, but this is a fairly mild restriction and the other approach is a real PITA and incurs other costs.
-    static_assert(disable_swizzle, "for vector TMA, swizzle should be disabled");
     
     constexpr uint32_t  tma_dim     = 4;
     void               *global_addr = (void*)(src);

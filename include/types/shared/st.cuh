@@ -55,12 +55,14 @@ struct st_subtile;
  * @tparam _rows The height of the tile.
  * @tparam _cols The width of the tile.
  */
-template<typename _T, int _rows, int _cols>
+template<typename _T, int _rows, int _cols, bool _swizzle=true>
 struct KITTENS_DEFAULT_ALIGN st {
     using identifier = ducks::st::identifier; ///< Type identifier for shared memory tile.
     using T = base_types::packing<_T>::unpacked_type;
     using T2 = base_types::packing<_T>::packed_type;
     using dtype = T; ///< Data type of the elements in the tile.
+    
+    static constexpr bool swizzle = _swizzle;
 
     // define underlying data as same as that projected, to make clear that this is *not* a subtile.
     static constexpr int underlying_rows          = _rows;
@@ -134,7 +136,7 @@ struct KITTENS_DEFAULT_ALIGN st {
     }
 
     template<int subtile_rows, int subtile_cols>
-    __device__ inline st_subtile<st<_T, _rows, _cols>, subtile_rows, subtile_cols> subtile(int2 rowcol);
+    __device__ inline st_subtile<st<_T, _rows, _cols, _swizzle>, subtile_rows, subtile_cols> subtile(int2 rowcol);
 
     // vector types
     using col_vec = sv<dtype, rows>; ///< Column vector type for this tile
@@ -164,6 +166,8 @@ struct st_subtile {
     using T = ST::T;
     using T2 = ST::T2;
     using dtype = T; ///< Data type of the elements in the tile.
+
+    static constexpr bool swizzle = ST::swizzle;
 
     static constexpr int underlying_rows          = ST::underlying_rows;
     static_assert(underlying_rows % kittens::TILE_ROW_DIM<T> == 0, "Underlying rows must be divisible by the tile dimension");
@@ -238,10 +242,10 @@ struct st_subtile {
     }
 };
 
-template <typename _T, int _rows, int _cols> // Class template parameters
+template <typename _T, int _rows, int _cols, bool _swizzle> // Class template parameters
 template <int subtile_rows, int subtile_cols> // Function template parameters
-__device__ inline st_subtile<st<_T, _rows, _cols>, subtile_rows, subtile_cols> // Return type
-st<_T, _rows, _cols>::subtile(int2 rowcol) // Qualified function name and parameters
+__device__ inline st_subtile<st<_T, _rows, _cols, _swizzle>, subtile_rows, subtile_cols> // Return type
+st<_T, _rows, _cols, _swizzle>::subtile(int2 rowcol) // Qualified function name and parameters
 {
     // Type aliases for convenience within the function body
     using ST_t = st<_T, _rows, _cols>; // Alias for the parent tile type
