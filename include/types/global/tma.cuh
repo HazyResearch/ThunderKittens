@@ -131,6 +131,8 @@ __host__ static inline void create_tensor_map(
         smem_shape[3] = 1;
         smem_shape[4] = 1;
     } else {
+        static_assert(axis == 2, "For non-swizzled tiles, only axis 2 is supported.");
+
         gmem_shape[0] = (uint64_t)cols;
         gmem_shape[1] = (uint64_t)rows;
         gmem_shape[2] = (uint64_t)depth;
