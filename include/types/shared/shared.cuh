@@ -11,4 +11,4 @@
 #include "csv.cuh"
 #include "cst.cuh"
 
-#include "st_descriptor.cuh"
+#include "descriptor.cuh"

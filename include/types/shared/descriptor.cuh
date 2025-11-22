@@ -1,6 +1,6 @@
 /**
  * @file
- * @brief The ThunderKittens shared tile descriptors, used for Hopper and Blackwell tensor cores.
+ * @brief The ThunderKittens shared memory descriptors, used for Hopper and Blackwell tensor cores.
  */
 
 #pragma once
@@ -24,7 +24,7 @@ namespace detail {
 __device__ static inline uint64_t matrix_descriptor_encode(uint64_t x) { return (((x) & 0x3FFFF) >> 0x4); }
 
 template<int width, int height, bool transpose, bool swizzle>
-__device__ static inline uint64_t st_descriptor_raw(uint64_t addr) {
+__device__ static inline uint64_t matrix_descriptor_raw(uint64_t addr) {
 #ifdef KITTENS_BLACKWELL
     // see https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#tcgen05-shared-memory-descriptor
     uint64_t desc = matrix_descriptor_encode(addr) | (1llu<<46); // needed for blackwell shared memory descriptors
@@ -86,7 +86,7 @@ struct st_descriptor {
     static constexpr int width  = ST::width;
     using T = ST::T;
     uint64_t base_desc;
-    __device__ inline st_descriptor(const ST &tile) : base_desc(detail::st_descriptor_raw<ST::width, ST::height, transpose, ST::swizzle>((uint64_t)(&tile.data[0]))) {}
+    __device__ inline st_descriptor(const ST &tile) : base_desc(detail::matrix_descriptor_raw<ST::width, ST::height, transpose, ST::swizzle>((uint64_t)(&tile.data[0]))) {}
     __device__ inline st_descriptor(const st_descriptor<ST, transpose> &other) : base_desc(other.base_desc) {} // copy constructor
     __device__ inline uint64_t chunk_descriptor(int chunk_idx) {
         if constexpr (transpose) { // transpose mode
