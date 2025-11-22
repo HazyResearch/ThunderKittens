@@ -32,6 +32,7 @@ struct st_descriptor {
     using T = ST::T;
     uint64_t base_desc;
     __device__ inline st_descriptor(const ST &tile) {
+        static_assert(ST::swizzle, "Non-swizzled MMA shard descriptors are not supported yet.");
 #ifdef KITTENS_BLACKWELL
         base_desc = detail::matrix_descriptor_encode((uint64_t)(&tile.data[0])) | (1llu<<46); // needed for blackwell shared memory descriptors.
 #else
@@ -72,8 +73,11 @@ struct st_descriptor {
             }
         }
     }
-    __device__ inline st_descriptor(const st_descriptor<ST, transpose> &other) : base_desc(other.base_desc) {} // copy constructor
+    __device__ inline st_descriptor(const st_descriptor<ST, transpose> &other) : base_desc(other.base_desc) {
+        static_assert(ST::swizzle, "Non-swizzled MMA shard descriptors are not supported yet.");
+    } // copy constructor
     __device__ inline uint64_t chunk_descriptor(int chunk_idx) {
+        static_assert(ST::swizzle, "Non-swizzled MMA shard descriptors are not supported yet.");
         if constexpr (transpose) { // transpose mode
             if constexpr (ST::width%4 == 0) {
                 return base_desc + detail::matrix_descriptor_encode(chunk_idx*2048);
