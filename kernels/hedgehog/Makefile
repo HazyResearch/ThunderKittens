@@ -1,3 +1,5 @@
+$(error Hedgehog kernel is currently broken and is in the process of being rewritten!)
+
 GPU := H100
 
 # PyTorch extension mode

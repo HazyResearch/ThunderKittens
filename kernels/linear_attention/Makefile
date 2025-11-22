@@ -1,4 +1,4 @@
-$(warning Warning: Linear attention kernel is currently broken. A new, better algorithm is coming soon!)
+$(error Linear attention kernel is currently broken and is in the process of being rewritten!)
 GPU := H100
 SRC := linear_attention.cu
 OUT := linear_attention.out
