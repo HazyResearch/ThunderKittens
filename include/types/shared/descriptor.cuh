@@ -89,7 +89,7 @@ struct st_descriptor {
     static constexpr int cols = ST::cols;
     static constexpr int height = ST::height;
     static constexpr int width  = ST::width;
-    using swizzle = ST::swizzle;
+    static constexpr bool swizzle = ST::swizzle;
     uint64_t base_desc;
     __device__ inline st_descriptor(const ST &tile) : base_desc(detail::matrix_descriptor_raw<T, rows, cols, MN_major, swizzle>((uint64_t)(&tile.data[0]))) {}
     __device__ inline st_descriptor(const st_descriptor<ST, MN_major> &other) : base_desc(other.base_desc) {} // copy constructor
@@ -101,7 +101,7 @@ struct st_descriptor {
         // So for MN-major, this is same as asking "how to forward 32 bytes worth of elements (=K elements) in the stride dimension?"
         // And for K-major, "how to forward K elements in the leading dimension?"
         if constexpr (MN_major) { // MN major mode (i.e., K x M for A matrix, K x N for B matrix)
-            if constexpr (!ST::swizzle) {
+            if constexpr (!swizzle) {
                 // For no swizzle mode, this is just moving along the row dimension; easy!
                 return base_desc + detail::matrix_descriptor_encode(chunk_idx*cols*(32/sizeof(T)));
             } else if constexpr (ST::width%4 == 0) { // 128B swizzle: 
@@ -115,7 +115,7 @@ struct st_descriptor {
             }
         }
         else { // K major mode (i.e., M x K for A matrix, N x K for B matrix)
-            if constexpr (!ST::swizzle) {
+            if constexpr (!swizzle) {
                 // For no swizzle mode, this is just moving along the column dimension; easy!
                 return base_desc + detail::matrix_descriptor_encode(chunk_idx*32);
             } else if constexpr (ST::width%4 == 0) {
