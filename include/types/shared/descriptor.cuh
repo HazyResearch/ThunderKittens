@@ -25,6 +25,7 @@ __device__ static inline uint64_t matrix_descriptor_encode(uint64_t x) { return 
 
 template<typename T, int rows, int cols, bool MN_major, bool swizzle>
 __device__ static inline uint64_t matrix_descriptor_raw(uint64_t addr) {
+    static_assert(swizzle, "Non-swizzled mode is not supported yet.");
     static constexpr int height = rows / kittens::TILE_ROW_DIM<T>;
     static constexpr int width = cols / kittens::TILE_COL_DIM<T>;
 #ifdef KITTENS_BLACKWELL
@@ -34,11 +35,7 @@ __device__ static inline uint64_t matrix_descriptor_raw(uint64_t addr) {
     uint64_t desc = matrix_descriptor_encode(addr);
 #endif
     if constexpr (MN_major) { // MN major mode (i.e., K x M for A matrix, K x N for B matrix)
-        if constexpr (!swizzle) {
-            desc |= matrix_descriptor_encode(1) << 16; // not used
-            desc |= matrix_descriptor_encode(1) << 32; // not used
-            desc |= 0llu << 62; // set no swizzle mode
-        } else if constexpr (width%4 == 0) {
+        if constexpr (width%4 == 0) {
             desc |= matrix_descriptor_encode((uint64_t)2048*height) << 16;
             desc |= matrix_descriptor_encode((uint64_t)1024) << 32;
             desc |= 1llu << 62; // set wgmma_swizzle mode
@@ -55,11 +52,7 @@ __device__ static inline uint64_t matrix_descriptor_raw(uint64_t addr) {
         }
     }
     else { // K major mode (i.e., M x K for A matrix, N x K for B matrix)
-        if constexpr (!swizzle) {
-            desc |= matrix_descriptor_encode(sizeof(T)) << 16; // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#asynchronous-warpgroup-level-leading-dimension-byte-offset
-            desc |= matrix_descriptor_encode(sizeof(T) * cols * 8) << 32; // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#asynchronous-warpgroup-level-stride-dimension-byte-offset
-            desc |= 0llu << 62; // set no swizzle mode
-        } else if constexpr (width%4 == 0) {
+        if constexpr (width%4 == 0) {
             desc |= matrix_descriptor_encode((uint64_t)16) << 16;   // this line doesn't matter
             desc |= matrix_descriptor_encode((uint64_t)1024) << 32; // 128 byte swizzle x 8 for core matrix rows
             desc |= 1llu << 62; // set wgmma_swizzle mode
@@ -94,6 +87,7 @@ struct st_descriptor {
     __device__ inline st_descriptor(const ST &tile) : base_desc(detail::matrix_descriptor_raw<T, rows, cols, MN_major, swizzle>((uint64_t)(&tile.data[0]))) {}
     __device__ inline st_descriptor(const st_descriptor<ST, MN_major> &other) : base_desc(other.base_desc) {} // copy constructor
     __device__ inline uint64_t chunk_descriptor(int chunk_idx) {
+        static_assert(swizzle, "Non-swizzled mode is not supported yet.");
         // Return the n-th chunk along the K dimension.
         // In MMA instructions, K per tensor core call is always 32 bytes
         //   ex. Hopper: K=32 for FP8, K=16 for BF16/FP16, K=8 for TF32)
@@ -101,10 +95,7 @@ struct st_descriptor {
         // So for MN-major, this is same as asking "how to forward 32 bytes worth of elements (=K elements) in the stride dimension?"
         // And for K-major, "how to forward K elements in the leading dimension?"
         if constexpr (MN_major) { // MN major mode (i.e., K x M for A matrix, K x N for B matrix)
-            if constexpr (!swizzle) {
-                // For no swizzle mode, this is just moving along the row dimension; easy!
-                return base_desc + detail::matrix_descriptor_encode(chunk_idx*cols*(32/sizeof(T)));
-            } else if constexpr (ST::width%4 == 0) { // 128B swizzle: 
+            if constexpr (ST::width%4 == 0) { // 128B swizzle: 
                 return base_desc + detail::matrix_descriptor_encode(chunk_idx*2048);
             }
             else if constexpr (ST::width%2 == 0) {
@@ -115,10 +106,7 @@ struct st_descriptor {
             }
         }
         else { // K major mode (i.e., M x K for A matrix, N x K for B matrix)
-            if constexpr (!swizzle) {
-                // For no swizzle mode, this is just moving along the column dimension; easy!
-                return base_desc + detail::matrix_descriptor_encode(chunk_idx*32);
-            } else if constexpr (ST::width%4 == 0) {
+            if constexpr (ST::width%4 == 0) {
                 // 128B swizzle: 4 chunks fit within swizzle bytes; move on to next every 4 chunks (rows * 128B swizzle bytes)
                 return base_desc + detail::matrix_descriptor_encode((chunk_idx%4)*32 + (chunk_idx/4)*ST::height*2048);
             }
