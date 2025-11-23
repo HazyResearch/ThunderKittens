@@ -286,16 +286,16 @@ st<_T, _rows, _cols, _swizzle>::subtile(int2 rowcol) // Qualified function name 
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
-template<int _height, int _width> using st_bf = st<bf16,  _height, _width>;
-template<int _height, int _width> using st_hf = st<half,  _height, _width>;
-template<int _height, int _width> using st_fl = st<float, _height, _width>;
+template<int _height, int _width, bool _swizzle=true> using st_bf = st<bf16,  _height, _width, _swizzle>;
+template<int _height, int _width, bool _swizzle=true> using st_hf = st<half,  _height, _width, _swizzle>;
+template<int _height, int _width, bool _swizzle=true> using st_fl = st<float, _height, _width, _swizzle>;
 #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
-template<int _height, int _width> using st_fp8e4m3 = st<fp8e4m3, _height, _width>;
-template<int _height, int _width> using st_fp8e5m2 = st<fp8e5m2, _height, _width>;
+template<int _height, int _width, bool _swizzle=true> using st_fp8e4m3 = st<fp8e4m3, _height, _width, _swizzle>;
+template<int _height, int _width, bool _swizzle=true> using st_fp8e5m2 = st<fp8e5m2, _height, _width, _swizzle>;
 #endif
 #if defined(KITTENS_BLACKWELL)
-template<int _height, int _width> using st_fp8e8m0 = st<fp8e8m0, _height, _width>;
-template<int _height, int _width> using st_fp4e2m1 = st<fp4e2m1, _height, _width>;
+template<int _height, int _width, bool _swizzle=true> using st_fp8e8m0 = st<fp8e8m0, _height, _width, _swizzle>;
+template<int _height, int _width, bool _swizzle=true> using st_fp4e2m1 = st<fp4e2m1, _height, _width, _swizzle>;
 #endif
 
 /* ----------  PRINTOUTS  ---------- */
