@@ -179,7 +179,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
 }
 
 
-constexpr bool NCU = true;
+constexpr bool NCU = false;
 #include <iostream>
 #include <random>
 #include <cuda_bf16.h>
@@ -364,7 +364,7 @@ int main() {
     // run_benchmark(N, N, N);
     N = 8192;
     run_benchmark(N, N, N);
-    N = 16384;
-    run_benchmark(N, N, N);
+    // N = 16384;
+    // run_benchmark(N, N, N);
     return 0;
 }
