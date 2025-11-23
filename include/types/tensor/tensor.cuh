@@ -34,6 +34,9 @@ template<typename T> concept all = requires {
 } // namespace ducks
 
 template<int _nblocks_per_sm, int _ncta> struct tensor_allocator {
+    static_assert(_nblocks_per_sm == 1 || _nblocks_per_sm == 2, "nblocks_per_sm must be 1 or 2");
+    static_assert(_ncta == 1 || _ncta == 2, "ncta must be 1 or 2");
+
     using identifier = ducks::tensor_allocator::identifier;
 
     static constexpr int nblocks_per_sm = _nblocks_per_sm;
@@ -77,6 +80,10 @@ template<int _nblocks_per_sm, int _ncta> struct tensor_allocator {
         return addr + ((superlane*16) << 16) + col_offset; 
     }
 
+    __device__ inline uint32_t get_addr(int col_offset) const { 
+        return addr + col_offset; 
+    }
+
     template<ducks::tt::half TT> __device__ inline auto allocate(int superlane, int col_offset) {
 #ifndef NDEBUG
         int allocate_cols = std::is_same_v<typename TT::dtype, fp8e8m0> ? TT::cols/4 : TT::cols; // for fp8e8m0 and fp8e4m3, we need to divide by 4 to get the correct number of columns
@@ -104,16 +111,21 @@ template<int _nblocks_per_sm, int _ncta> struct tensor_allocator {
     }
 
     __device__ inline ~tensor_allocator() {
-        // Note that this must be called after all threads are done with that tensor memory,
-        // likely after a syncthreads / cluster::sync()!
+        if constexpr (ncta == 1)
+            __syncthreads();
+        else if constexpr (ncta == 2) {
+            // Sync all threads in the cluster
+            asm volatile ("barrier.cluster.arrive.release.aligned;\n");
+            asm volatile ("barrier.cluster.wait.acquire.aligned;\n");
+        }
+
         if constexpr (ncta == 1) {
             if(warpid() == 0) {
                 asm volatile("tcgen05.dealloc.cta_group::1.sync.aligned.b32  %0, %1;\n"
                 ::  "r"(addr), "n"(cols)
                 );
             }
-        }
-        else {
+        } else {
             if(warpid() == 0) {
                 asm volatile("tcgen05.dealloc.cta_group::2.sync.aligned.b32  %0, %1;\n"
                 ::  "r"(addr), "n"(cols)
