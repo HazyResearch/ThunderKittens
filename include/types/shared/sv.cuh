@@ -104,6 +104,14 @@ struct KITTENS_DEFAULT_ALIGN sv {
 template<size_t _length> using sv_bf = sv<bf16,  _length>;
 template<size_t _length> using sv_hf = sv<half,  _length>;
 template<size_t _length> using sv_fl = sv<float, _length>;
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
+template<int _length> using sv_fp8e4m3 = sv<fp8e4m3, _length>;
+template<int _length> using sv_fp8e5m2 = sv<fp8e5m2, _length>;
+#endif
+#if defined(KITTENS_BLACKWELL)
+template<int _length> using sv_fp8e8m0 = sv<fp8e8m0, _length>;
+template<int _length> using sv_fp4e2m1 = sv<fp4e2m1, _length>;
+#endif
 
 /* ----------  PRINTOUTS  ---------- */
 
