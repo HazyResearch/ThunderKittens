@@ -94,4 +94,14 @@ struct tt {
 
 };
 
+/* ----------  WRAPPERS FOR PRETTINESS  ---------- */
+
+template<int _height, int _width> using tt_bf = tt<bf16,  _height, _width>;
+template<int _height, int _width> using tt_hf = tt<half,  _height, _width>;
+template<int _height, int _width> using tt_fl = tt<float, _height, _width>;
+template<int _height, int _width> using tt_fp8e4m3 = tt<fp8e4m3, _height, _width>;
+template<int _height, int _width> using tt_fp8e5m2 = tt<fp8e5m2, _height, _width>;
+template<int _height, int _width> using tt_fp8e8m0 = tt<fp8e8m0, _height, _width>;
+template<int _height, int _width> using tt_fp4e2m1 = tt<fp4e2m1, _height, _width>;
+
 } // namespace kittens
