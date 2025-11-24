@@ -175,7 +175,6 @@ void matmul(const __grid_constant__ matmul_globals g) {
             group<8>::sync(15); // All consumers sync here.
         }
     }
-    everyone::tma::cluster::sync();
 }
 
 
