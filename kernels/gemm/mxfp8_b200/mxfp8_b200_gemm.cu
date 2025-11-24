@@ -9,9 +9,6 @@
 #include "kittens.cuh"
 #include "pyutils/torchutils.cuh"
 
-#include "ATen/Functions.h"
-#include "torch/csrc/utils/pybind.h"
-
 using namespace kittens;
 
 namespace mxfp8_gemm {
