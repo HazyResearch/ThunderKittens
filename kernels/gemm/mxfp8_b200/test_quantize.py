@@ -1,3 +1,4 @@
+import numpy as np
 import sys
 import torch
 torch.random.manual_seed(42)
@@ -116,8 +117,8 @@ def check_diff(
 
 if __name__ == '__main__':
     # Matrix dimensions
-    M = int(sys.argv[1]) if len(sys.argv) > 1 else 4096
-    N = int(sys.argv[2]) if len(sys.argv) > 2 else 4096
+    M = int(sys.argv[1]) if len(sys.argv) > 1 else 16384
+    N = int(sys.argv[2]) if len(sys.argv) > 2 else 16384
     print(f"{M=}, {N=}")
 
     # Generate reference outputs and input matrix
@@ -140,35 +141,32 @@ if __name__ == '__main__':
     check_diff("TK-FP8", A_fp8_tk, A_fp8_ref)
     check_diff("TK-SC", A_sc_tk, A_sc_ref)
 
+    # Benchmark
+    NUM_WARMUPS = 5
+    NUM_ITERS = 10
 
-    # # Benchmark
-    # NUM_WARMUPS = 5
-    # NUM_ITERS = 10
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(NUM_ITERS)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(NUM_ITERS)]
 
-    # start_events = [torch.cuda.Event(enable_timing=True) for _ in range(NUM_ITERS)]
-    # end_events = [torch.cuda.Event(enable_timing=True) for _ in range(NUM_ITERS)]
+    for i in range(NUM_WARMUPS):
+        mxfp8_quantize(A_bf16, A_fp8_tk, A_sc_tk)
 
-    # for i in range(NUM_WARMUPS):
-    #     mxfp8_quantize(A, A_fp8, A_sc)
+    l2_cache_size = 1024 * 1024 * 128 # ~128MB for Blackwell
+    l2_cache = torch.randn(l2_cache_size // 2, dtype=torch.bfloat16)
+    cache_clear = lambda: l2_cache.random_(0, 1)
 
-    # l2_cache_size = 1024 * 1024 * 128 # ~128MB for Blackwell
-    # l2_cache = torch.randn(l2_cache_size // 2, dtype=torch.bfloat16)
-    # cache_clear = lambda: l2_cache.random_(0, 1)
+    for i in range(NUM_ITERS):
+        cache_clear()
+        start_events[i].record()
+        mxfp8_quantize(A_bf16, A_fp8_tk, A_sc_tk)
+        end_events[i].record()
+    torch.cuda.synchronize()
 
-    # for i in range(NUM_ITERS):
-    #     cache_clear()
-    #     start_events[i].record()
-    #     mxfp8_quantize(A, A_fp8, A_sc)
-    #     end_events[i].record()
-    # torch.cuda.synchronize()
+    times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
+    avg_time = np.mean(times) * 1e-3
+    std_time = np.std(times) * 1e-3
+    gb = M * N * (2 + 1 + 1 / 32) * 1e-9
+    gbps = gb / avg_time
 
-    # times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
-    # avg_time = np.mean(times) * 1e-3
-    # std_time = np.std(times) * 1e-3
-    # gb = M * N * (2 + 1 + 1 / 32) * 1e-9
-    # gbps = gb / avg_time
-    # tflop = M * N * 5 * 1e-12
-
-    # print(f"Average time: {avg_time * 1e6:.2f} ± {std_time * 1e6:.2f} us")
-    # print(f"Average throughput: {gbps:.2f} GB/s")
-    # print(f"Average TFLOPS: {tflop / avg_time:.2f} TFLOP/s")
+    print(f"Average time: {avg_time * 1e6:.2f} ± {std_time * 1e6:.2f} us")
+    print(f"Average throughput: {gbps:.2f} GB/s")
