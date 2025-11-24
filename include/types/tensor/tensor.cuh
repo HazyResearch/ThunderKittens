@@ -40,7 +40,7 @@ template<int _nblocks_per_sm, int _ncta> struct tensor_allocator {
     using identifier = ducks::tensor_allocator::identifier;
 
     static constexpr int nblocks_per_sm = _nblocks_per_sm;
-    static constexpr int cols =((512/nblocks_per_sm) / 32) * 32;
+    static constexpr int cols =((MAX_TENSOR_COLS/nblocks_per_sm) / 32) * 32;
     static constexpr int ncta = _ncta;
 
     uint32_t addr;

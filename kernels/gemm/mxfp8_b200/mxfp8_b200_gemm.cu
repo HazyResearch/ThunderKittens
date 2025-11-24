@@ -88,21 +88,9 @@ __device__ inline void kernel(const globals &G) {
 
     // Allocate tensor memory
     tensor_allocator<1, config::CLUSTER_SIZE> tm_allocator;
-    auto out_tm = tm_allocator.allocate<tt_fl<globals::ROW_BLOCK / 2, globals::COL_BLOCK>>(0); // columns 000-255
-    tt_mxfp8_sfa A_sc_tm[globals::PIPELINE_STAGES] = {
-        tm_allocator.allocate<tt_mxfp8_sfa>(256 + 4 * 0),
-        tm_allocator.allocate<tt_mxfp8_sfa>(256 + 4 * 1),
-        tm_allocator.allocate<tt_mxfp8_sfa>(256 + 4 * 2),
-        tm_allocator.allocate<tt_mxfp8_sfa>(256 + 4 * 3),
-        tm_allocator.allocate<tt_mxfp8_sfa>(256 + 4 * 4)
-    };
-    tt_mxfp8_sfb B_sc_tm[globals::PIPELINE_STAGES] = {
-        tm_allocator.allocate<tt_mxfp8_sfb>(384 + 8 * 0),
-        tm_allocator.allocate<tt_mxfp8_sfb>(384 + 8 * 1),
-        tm_allocator.allocate<tt_mxfp8_sfb>(384 + 8 * 2),
-        tm_allocator.allocate<tt_mxfp8_sfb>(384 + 8 * 3),
-        tm_allocator.allocate<tt_mxfp8_sfb>(384 + 8 * 4)
-    };
+    auto out_tm = tm_allocator.allocate<tt_fl<globals::ROW_BLOCK/2, globals::COL_BLOCK>>(0); // columns 000-255
+    auto A_sc_tm = tm_allocator.allocate<full_tt_fp8e8m0<16*globals::PIPELINE_STAGES>>(256); // columns 256-383
+    auto B_sc_tm = tm_allocator.allocate<full_tt_fp8e8m0<32*globals::PIPELINE_STAGES>>(384); // columns 384-511
 
     // Set up mbarriers
     __shared__ semaphore inputs_arrived[globals::PIPELINE_STAGES];
@@ -202,11 +190,11 @@ __device__ inline void kernel(const globals &G) {
                                              detail::matrix_descriptor_raw(&input_scales[stage].B[1], 128, 128, 0)};
 
                     asm volatile("{tcgen05.cp.cta_group::2.32x128b.warpx4 [%0], %1;}"
-                        :: "r"(A_sc_tm[stage].addr), "l"(A_sc_desc));
+                        :: "r"(A_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 16).addr), "l"(A_sc_desc));
                     asm volatile("{tcgen05.cp.cta_group::2.32x128b.warpx4 [%0], %1;}"
-                        :: "r"(B_sc_tm[stage].addr), "l"(B_sc_desc[0]));
+                        :: "r"(B_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 32).addr), "l"(B_sc_desc[0]));
                     asm volatile("{tcgen05.cp.cta_group::2.32x128b.warpx4 [%0], %1;}"
-                        :: "r"(B_sc_tm[stage].addr + 4), "l"(B_sc_desc[1]));
+                        :: "r"(B_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 32 + 16).addr), "l"(B_sc_desc[1]));
                     detail::tcgen05::commit<config::CLUSTER_SIZE>(scales_tm_arrived[stage]);
                     tensor_before_thread_sync();
                     stage = (stage + 1) % globals::PIPELINE_STAGES;
@@ -236,17 +224,32 @@ __device__ inline void kernel(const globals &G) {
                     asm volatile("{fence.proxy.async.shared::cta;}" ::: "memory");
                     if (i == 0)
                         detail::tcgen05::st_st<fp8e4m3, fp8e8m0, 0, config::CLUSTER_SIZE>(
-                            out_tm.addr, A_desc.chunk_descriptor(0), B_desc.chunk_descriptor(0),
-                            A_sc_tm[stage].addr, B_sc_tm[stage].addr, I_descs[0]);
+                            out_tm.addr, 
+                            A_desc.chunk_descriptor(0), 
+                            B_desc.chunk_descriptor(0),
+                            A_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 16).addr, 
+                            B_sc_tm.subtile<full_tt_fp8e8m0<32>>(stage * 32).addr, 
+                            I_descs[0]
+                        );
                     else
                         detail::tcgen05::st_st<fp8e4m3, fp8e8m0, 1, config::CLUSTER_SIZE>(
-                            out_tm.addr, A_desc.chunk_descriptor(0), B_desc.chunk_descriptor(0),
-                            A_sc_tm[stage].addr, B_sc_tm[stage].addr, I_descs[0]);
+                            out_tm.addr, 
+                            A_desc.chunk_descriptor(0), 
+                            B_desc.chunk_descriptor(0),
+                            A_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 16).addr, 
+                            B_sc_tm.subtile<full_tt_fp8e8m0<32>>(stage * 32).addr, 
+                            I_descs[0]
+                        );
                     #pragma unroll
                     for (int i = 1; i < K / 32; i++) {
                         detail::tcgen05::st_st<fp8e4m3, fp8e8m0, 1, config::CLUSTER_SIZE>(
-                            out_tm.addr, A_desc.chunk_descriptor(i), B_desc.chunk_descriptor(i),
-                            A_sc_tm[stage].addr, B_sc_tm[stage].addr, I_descs[i]);
+                            out_tm.addr, 
+                            A_desc.chunk_descriptor(i), 
+                            B_desc.chunk_descriptor(i),
+                            A_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 16).addr, 
+                            B_sc_tm.subtile<full_tt_fp8e8m0<32>>(stage * 32).addr, 
+                            I_descs[i]
+                        );
                     }
                     detail::tcgen05::commit<config::CLUSTER_SIZE>(matmul_finished[stage]);
                     stage = (stage + 1) % globals::PIPELINE_STAGES;

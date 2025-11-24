@@ -11,6 +11,10 @@
 
 // these are helper structs for type inference
 namespace kittens {
+
+constexpr int MAX_TENSOR_ROWS = 128;
+constexpr int MAX_TENSOR_COLS = 512;
+
 namespace ducks {
 /**
  * @namespace tt
@@ -32,8 +36,8 @@ struct identifier {};
 template<typename T> concept all = requires {
     typename T::identifier; // Checks if T::identifier exists
 } && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::tt::identifier
-template<typename T> concept half = all<T> && T::rows ==  64;
-template<typename T> concept full = all<T> && T::rows == 128;
+template<typename T> concept half = all<T> && T::rows == MAX_TENSOR_ROWS / 2;
+template<typename T> concept full = all<T> && T::rows == MAX_TENSOR_ROWS;
 } // namespace tt
 } // namespace ducks
 
@@ -50,6 +54,9 @@ struct tt {
     using T = base_types::packing<_T>::unpacked_type;
     using T2 = base_types::packing<_T>::packed_type;
     using dtype = T; ///< Data type of the elements in the tile.
+
+    static_assert(_rows <= MAX_TENSOR_ROWS, "Row dimension must be less than or equal to MAX_TENSOR_ROWS");
+    static_assert(_cols <= MAX_TENSOR_COLS, "Column dimension must be less than or equal to MAX_TENSOR_COLS");
 
     static constexpr int rows    = _rows;
     static constexpr int cols    = _cols;
@@ -98,14 +105,26 @@ struct tt {
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
-template<int _height, int _width> using tt_bf = tt<bf16,  _height, _width>;
-template<int _height, int _width> using tt_hf = tt<half,  _height, _width>;
+template<int _height, int _width> using tt_bf = tt<bf16, _height, _width>;
+template<int _height, int _width> using tt_hf = tt<half, _height, _width>;
 template<int _height, int _width> using tt_fl = tt<float, _height, _width>;
 template<int _height, int _width> using tt_fp8e4m3 = tt<fp8e4m3, _height, _width>;
 template<int _height, int _width> using tt_fp8e5m2 = tt<fp8e5m2, _height, _width>;
 template<int _height, int _width> using tt_fp8e8m0 = tt<fp8e8m0, _height, _width>;
 template<int _height, int _width> using tt_fp4e2m1 = tt<fp4e2m1, _height, _width>;
-using tt_mxfp8_sfa = tt_fp8e8m0<128, 16>;
-using tt_mxfp8_sfb = tt_fp8e8m0<128, 32>;
+template<int _width> using half_tt_bf = tt<bf16, MAX_TENSOR_ROWS / 2, _width>;
+template<int _width> using half_tt_hf = tt<half, MAX_TENSOR_ROWS / 2, _width>;
+template<int _width> using half_tt_fl = tt<float, MAX_TENSOR_ROWS / 2, _width>;
+template<int _width> using half_tt_fp8e4m3 = tt<fp8e4m3, MAX_TENSOR_ROWS / 2, _width>;
+template<int _width> using half_tt_fp8e5m2 = tt<fp8e5m2, MAX_TENSOR_ROWS / 2, _width>;
+template<int _width> using half_tt_fp8e8m0 = tt<fp8e8m0, MAX_TENSOR_ROWS / 2, _width>;
+template<int _width> using half_tt_fp4e2m1 = tt<fp4e2m1, MAX_TENSOR_ROWS / 2, _width>;
+template<int _width> using full_tt_bf = tt<bf16, MAX_TENSOR_ROWS, _width>;
+template<int _width> using full_tt_hf = tt<half, MAX_TENSOR_ROWS, _width>;
+template<int _width> using full_tt_fl = tt<float, MAX_TENSOR_ROWS, _width>;
+template<int _width> using full_tt_fp8e4m3 = tt<fp8e4m3, MAX_TENSOR_ROWS, _width>;
+template<int _width> using full_tt_fp8e5m2 = tt<fp8e5m2, MAX_TENSOR_ROWS, _width>;
+template<int _width> using full_tt_fp8e8m0 = tt<fp8e8m0, MAX_TENSOR_ROWS, _width>;
+template<int _width> using full_tt_fp4e2m1 = tt<fp4e2m1, MAX_TENSOR_ROWS, _width>;
 
 } // namespace kittens
