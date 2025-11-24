@@ -508,6 +508,8 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, trans_a> a_desc(a);
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, trans_b> b_desc(b);
 
+    // Memory consistency
+    kittens::tensor_after_thread_sync();
     asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
 
     constexpr uint32_t idesc = detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 0>();

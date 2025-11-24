@@ -88,7 +88,7 @@ __device__ inline void kernel(const globals &G) {
 
     // Allocate tensor memory
     tensor_allocator<1, config::CLUSTER_SIZE> tm_allocator;
-    auto out_tm = tm_allocator.allocate<tt_fl<globals::ROW_BLOCK/2, globals::COL_BLOCK>>(0); // columns 000-255
+    auto out_tm = tm_allocator.allocate<full_tt_fl<globals::COL_BLOCK>>(0); // columns 000-255
     auto A_sc_tm = tm_allocator.allocate<full_tt_fp8e8m0<16*globals::PIPELINE_STAGES>>(256); // columns 256-383
     auto B_sc_tm = tm_allocator.allocate<full_tt_fp8e8m0<32*globals::PIPELINE_STAGES>>(384); // columns 384-511
 
@@ -207,51 +207,14 @@ __device__ inline void kernel(const globals &G) {
                     tma::cluster::wait(inputs_arrived[stage], get_phasebit<0>(phasebits, stage));
                     tma::cluster::wait(scales_tm_arrived[stage], get_phasebit<0>(phasebits, stage));
                     update_phasebit<0>(phasebits, stage);
-
-                    constexpr uint64_t M = globals::ROW_BLOCK;
-                    constexpr uint64_t N = globals::COL_BLOCK;
-                    constexpr uint64_t K = globals::REDUCTION_BLOCK;
-                    constexpr uint32_t I_descs[4] = {
-                        detail::tcgen05::instruction_descriptor<bf16, fp8e4m3, fp8e8m0, M, N, 0, 0>(),
-                        detail::tcgen05::instruction_descriptor<bf16, fp8e4m3, fp8e8m0, M, N, 0, 1>(),
-                        detail::tcgen05::instruction_descriptor<bf16, fp8e4m3, fp8e8m0, M, N, 0, 2>(),
-                        detail::tcgen05::instruction_descriptor<bf16, fp8e4m3, fp8e8m0, M, N, 0, 3>()
-                    };
-                    st_descriptor<globals::A_fp8_tile, 0> A_desc(input_tiles[stage].A);
-                    st_descriptor<globals::B_fp8_tile, 0> B_desc(input_tiles[stage].B);
-
-                    tensor_after_thread_sync();
-                    asm volatile("{fence.proxy.async.shared::cta;}" ::: "memory");
-                    if (i == 0)
-                        detail::tcgen05::st_st<fp8e4m3, fp8e8m0, 0, config::CLUSTER_SIZE>(
-                            out_tm.addr, 
-                            A_desc.chunk_descriptor(0), 
-                            B_desc.chunk_descriptor(0),
-                            A_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 16).addr, 
-                            B_sc_tm.subtile<full_tt_fp8e8m0<32>>(stage * 32).addr, 
-                            I_descs[0]
-                        );
-                    else
-                        detail::tcgen05::st_st<fp8e4m3, fp8e8m0, 1, config::CLUSTER_SIZE>(
-                            out_tm.addr, 
-                            A_desc.chunk_descriptor(0), 
-                            B_desc.chunk_descriptor(0),
-                            A_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 16).addr, 
-                            B_sc_tm.subtile<full_tt_fp8e8m0<32>>(stage * 32).addr, 
-                            I_descs[0]
-                        );
-                    #pragma unroll
-                    for (int i = 1; i < K / 32; i++) {
-                        detail::tcgen05::st_st<fp8e4m3, fp8e8m0, 1, config::CLUSTER_SIZE>(
-                            out_tm.addr, 
-                            A_desc.chunk_descriptor(i), 
-                            B_desc.chunk_descriptor(i),
-                            A_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 16).addr, 
-                            B_sc_tm.subtile<full_tt_fp8e8m0<32>>(stage * 32).addr, 
-                            I_descs[i]
-                        );
-                    }
-                    detail::tcgen05::commit<config::CLUSTER_SIZE>(matmul_finished[stage]);
+                    if (i == 0) mm2_ABt(out_tm, input_tiles[stage].A, input_tiles[stage].B,
+                                        A_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 16), 
+                                        B_sc_tm.subtile<full_tt_fp8e8m0<32>>(stage * 32),
+                                        matmul_finished[stage]);
+                    else mma2_ABt(out_tm, input_tiles[stage].A, input_tiles[stage].B,
+                                  A_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 16), 
+                                  B_sc_tm.subtile<full_tt_fp8e8m0<32>>(stage * 32),
+                                  matmul_finished[stage]);
                     stage = (stage + 1) % globals::PIPELINE_STAGES;
                 }
             }
