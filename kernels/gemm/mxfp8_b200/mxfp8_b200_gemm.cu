@@ -8,6 +8,8 @@
 
 #include "kittens.cuh"
 #include "pyutils/torchutils.cuh"
+
+#include "ATen/Functions.h"
 #include "torch/csrc/utils/pybind.h"
 
 using namespace kittens;
@@ -197,7 +199,7 @@ __device__ inline void kernel(const globals &G) {
                     asm volatile("{tcgen05.cp.cta_group::2.32x128b.warpx4 [%0], %1;}"
                         :: "r"(B_sc_tm_addr + stage * 16 + 4 * 1), "l"(B_sc_desc[1]));
                     detail::tcgen05::commit<config::CLUSTER_SIZE>(scales_tm_arrived[stage]);
-                    asm volatile("{tcgen05.fence::before_thread_sync;}");
+                    tensor_before_thread_sync();
                     stage = (stage + 1) % globals::PIPELINE_STAGES;
                 }
             } else if (cta_id == 0 && warp_id == 0 && lane_id == 0) {
@@ -221,7 +223,7 @@ __device__ inline void kernel(const globals &G) {
                     st_descriptor<globals::A_fp8_tile, 0> A_desc(input_tiles[stage].A);
                     st_descriptor<globals::B_fp8_tile, 0> B_desc(input_tiles[stage].B);
 
-                    asm volatile("{tcgen05.fence::after_thread_sync;}");
+                    tensor_after_thread_sync();
                     asm volatile("{fence.proxy.async.shared::cta;}" ::: "memory");
                     asm volatile("{.reg .pred P1; \t\n"
                                     "setp.eq.u32 P1, 1, %6; \t\n"
@@ -319,8 +321,225 @@ void entrypoint(
 
 namespace mxfp8_quantize {
 
+// These should not change
+static constexpr int TILE_SIZE = 128;
+static constexpr int K_BLOCK_SIZE = 32;
+
+// Kernel implementation
+__global__ __launch_bounds__(TILE_SIZE)
+static void kernel(
+    const __grid_constant__ CUtensorMap A_bf16_tmap,
+    const __grid_constant__ CUtensorMap A_fp8_tmap,
+    const __grid_constant__ CUtensorMap A_sc_tmap
+) {
+    // Allocate shared memory
+    extern __shared__ int __shm[];
+    uint64_t __shm_base = reinterpret_cast<uint64_t>(&__shm[0]);
+    bf16 *A_bf16_smem = reinterpret_cast<bf16*>(((__shm_base + 1023) / 1024) * 1024); // with this aligned, everything is aligned
+    fp8e4m3 *A_fp8_smem;
+    fp8e8m0 *A_sc_smem;
+    A_fp8_smem = reinterpret_cast<fp8e4m3*>(A_bf16_smem);
+    A_sc_smem = reinterpret_cast<fp8e8m0*>(A_fp8_smem + TILE_SIZE * TILE_SIZE);
+
+    // Calculate indices
+    int row = blockIdx.y * TILE_SIZE;
+    int col = blockIdx.x * TILE_SIZE;
+    int tid = threadIdx.x;
+
+    // Initialize mbarrier and initiate TMA load
+    __shared__ semaphore inputs_arrived;
+    if (tid == 0) {
+        init_semaphore(inputs_arrived, 0, 1);
+        tma::expect_bytes(inputs_arrived, TILE_SIZE * TILE_SIZE * sizeof(bf16));
+        asm volatile("{cp.async.bulk.tensor.2d.shared::cta.global.tile.mbarrier::complete_tx::bytes.cta_group::1 [%0], [%1, {%2, %3}], [%4];}"
+            :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(A_bf16_smem))), "l"(&A_bf16_tmap), "r"(col), "r"(row),
+            "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&inputs_arrived)))
+            : "memory");
+    }
+    __syncthreads();
+
+    // Wait for the TMA load to complete
+    asm volatile("{fence.proxy.async.shared::cta;}" ::: "memory"); // make writes to smem visible
+    wait(inputs_arrived, 0);
+
+    // We have 128 threads per block. Each thread handles a row of 128 elements
+    constexpr int NUM_Q_BLOCKS = TILE_SIZE / K_BLOCK_SIZE; // 4
+    constexpr int N_PER_Q_BLOCK = TILE_SIZE / 2 / NUM_Q_BLOCKS; // 16
+
+    bf16_2 A_bf16_reg[NUM_Q_BLOCKS][N_PER_Q_BLOCK];
+    fp8e8m0 A_sc_reg[NUM_Q_BLOCKS];
+
+    // Destination tile row this thread will handle
+    int tile_row = tid;
+
+    // Load input matrix from shared memory (swizzled)
+    #pragma unroll
+    for (int i = 0; i < NUM_Q_BLOCKS; i++) {
+        int q_block_idx = (i + tid / 8) % NUM_Q_BLOCKS;
+        #pragma unroll
+        for (int j = 0; j < N_PER_Q_BLOCK; j++) {
+            int tile_col = q_block_idx * K_BLOCK_SIZE + ((tid + j) * 2) % K_BLOCK_SIZE;
+            int offset = (tile_row * TILE_SIZE + tile_col) * sizeof(bf16);
+            asm volatile("{ld.shared.b32 %0, [%1];}"
+                : "=r"(*reinterpret_cast<uint32_t *>(&A_bf16_reg[i][j]))
+                : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(A_bf16_smem)) + offset));
+        }
+    }
+    __syncthreads();
+
+    // Perform MXFP8 quantization
+    #pragma unroll
+    for (int i = 0; i < NUM_Q_BLOCKS; i++) {
+        // A group of 8 threads handles the same Q block segment
+        int q_block_idx = (i + tid / 8) % NUM_Q_BLOCKS;
+
+        // Calculate absolute maximum
+        bf16_2 amax = __habs2(A_bf16_reg[i][0]);
+        #pragma unroll
+        for (int j = 1; j < N_PER_Q_BLOCK; j++)
+            amax = __hmax2(amax, __habs2(A_bf16_reg[i][j]));
+
+        // Compute the scales
+        // Must narrow to e8m0, rounding towards positive infinity and saturating to finite, then clamp
+        // https://arxiv.org/pdf/2506.08027
+        float scale = max(__bfloat162float(__hmax(amax.x, amax.y)) * 0.002232142857f, 0.000000000001f);
+        A_sc_reg[q_block_idx].__x = __nv_cvt_float_to_e8m0(scale, __NV_SATFINITE, cudaRoundPosInf); // causes stack frame, but ignorable
+        scale = static_cast<float>(A_sc_reg[q_block_idx]); // utilizes the float() operator defined in __nv_fp8x2_e8m0
+
+        // Quantize input matrix and store to share memory
+        #pragma unroll
+        for (int j = 0; j < N_PER_Q_BLOCK; j++) {
+            int tile_col = q_block_idx * K_BLOCK_SIZE + ((tid + j) * 2) % K_BLOCK_SIZE;
+            int offset = (tile_row * TILE_SIZE + tile_col) * sizeof(fp8e4m3);
+            fp8e4m3 A_fp8_reg[2] = {
+                __nv_fp8_e4m3(__bfloat162float(A_bf16_reg[i][j].x) / scale),
+                __nv_fp8_e4m3(__bfloat162float(A_bf16_reg[i][j].y) / scale)
+            };
+            asm volatile("{st.shared.b16 [%0], %1;}"
+                :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(A_fp8_smem)) + offset)
+                "h"(*reinterpret_cast<uint16_t *>(&A_fp8_reg[0])));
+        }
+    }
+
+    // Store the scales to shared memory. Each thread will access 1 bank, so no need to swizzle,
+    // but we do have to follow this complicated layout pattern made by NVIDIA:
+    // https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-mma-scale-factor-a-layout-1x
+    int scale_offset = (tile_row % 32) * 16 + // row
+                    (tile_row / 32) * 4; // column
+    asm volatile("{st.shared.b32 [%0], %1;}" 
+        :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(A_sc_smem)) + scale_offset)
+        "r"(*reinterpret_cast<uint32_t *>(&A_sc_reg[0])));
+
+    // Store to global memory
+    asm volatile("{fence.proxy.async.shared::cta;}" ::: "memory"); // make writes to smem visible
+    __syncthreads();
+    if (tid == 0) {
+        asm volatile("{cp.async.bulk.tensor.2d.global.shared::cta.tile.bulk_group [%0, {%1, %2}], [%3];}"
+            :: "l"(&A_fp8_tmap), "r"(col), "r"(row),
+            "r"(static_cast<uint32_t>(__cvta_generic_to_shared(A_fp8_smem)))
+            : "memory");
+        asm volatile("{cp.async.bulk.tensor.3d.global.shared::cta.tile.bulk_group [%0, {%1, %2, %3}], [%4];}"
+            :: "l"(&A_sc_tmap), "n"(0), "r"(col / TILE_SIZE), "r"(row / TILE_SIZE),
+            "r"(static_cast<uint32_t>(__cvta_generic_to_shared(A_sc_smem)))
+            : "memory");
+        asm volatile("{cp.async.bulk.tensor.3d.global.shared::cta.tile.bulk_group [%0, {%1, %2, %3}], [%4];}"
+            :: "l"(&A_sc_tmap), "r"(TILE_SIZE * TILE_SIZE / K_BLOCK_SIZE / 2), "r"(col / TILE_SIZE), "r"(row / TILE_SIZE),
+            "r"(static_cast<uint32_t>(__cvta_generic_to_shared(A_sc_smem)) + TILE_SIZE * TILE_SIZE / K_BLOCK_SIZE / 2)
+            : "memory");
+    }
+}
+
+__host__ void entrypoint(
+    const at::Tensor &A_bf16,
+    at::Tensor &A_fp8,
+    at::Tensor &A_sc 
+) {
+    TORCH_CHECK(A_bf16.is_cuda(), "Tensor must be on CUDA device");
+    TORCH_CHECK(A_bf16.is_contiguous(), "Tensor must be contiguous");
+    TORCH_CHECK(A_bf16.dim() <= 4, "Expected Tensor.dim() <= 4");
+    TORCH_CHECK(A_bf16.dtype() == at::ScalarType::BFloat16, "Tensor has invalid dtype (expected bfloat16)");
+    TORCH_CHECK(A_bf16.dim() == 2 || A_bf16.dim() == 3, "A_bf16 must be 2D or 3D");
+    TORCH_CHECK(A_bf16.size(-2) % 128 == 0, "A_bf16.shape[-2] must be divisible by 128");
+    TORCH_CHECK(A_bf16.size(-1) % 128 == 0, "A_bf16.shape[-1] must be divisible by 128");
+    TORCH_CHECK(A_bf16.size(-2) >= 128, "A_bf16.shape[-2] must be at least 128");
+    TORCH_CHECK(A_bf16.size(-1) >= 128, "A_bf16.shape[-1] must be at least 128");
+
+    const auto options_fp8 = A_bf16.options().dtype(at::ScalarType::Float8_e4m3fn).requires_grad(false);
+    const auto options_scale = A_bf16.options().dtype(at::ScalarType::Byte).requires_grad(false);
+
+    const uint32_t M = A_bf16.size(-2);
+    const uint32_t N = A_bf16.size(-1);
+
+    static constexpr int input_rank = 2;
+    static constexpr int scale_rank = 3;
+
+    CUtensorMap A_bf16_tmap{}, A_fp8_tmap{}, A_sc_tmap{}, A_t_fp8_tmap{}, A_t_sc_tmap{};
+
+    uint64_t input_global_shape[input_rank] = {N, M}; // inner-dim first
+    [[maybe_unused]] uint64_t input_transposed_global_shape[input_rank] = {M, N};
+    uint64_t scale_global_shape[scale_rank] = {TILE_SIZE * TILE_SIZE / K_BLOCK_SIZE, N / TILE_SIZE, M / TILE_SIZE};
+    [[maybe_unused]] uint64_t scale_transposed_global_shape[scale_rank] = {TILE_SIZE * TILE_SIZE / K_BLOCK_SIZE, M / TILE_SIZE, N / TILE_SIZE};
+    uint32_t input_smem_shape[input_rank] = {TILE_SIZE, TILE_SIZE};
+    uint32_t input_smem_stride[input_rank] = {1, 1};
+    uint32_t scale_smem_shape[scale_rank] = {TILE_SIZE * TILE_SIZE / K_BLOCK_SIZE / 2, 1, 1}; // divide into 2 TMA stores
+    uint32_t scale_smem_stride[scale_rank] = {1, 1, 1};
+
+    uint64_t A_bf16_stride[input_rank - 1] = {N * sizeof(bf16)};
+    [[maybe_unused]] uint64_t A_fp8_stride[input_rank - 1] = {N * sizeof(fp8e4m3)};    
+    [[maybe_unused]] uint64_t A_sc_stride[scale_rank - 1] = {TILE_SIZE * TILE_SIZE / K_BLOCK_SIZE * sizeof(fp8e8m0), N * TILE_SIZE / K_BLOCK_SIZE * sizeof(fp8e8m0)};
+    [[maybe_unused]] uint64_t A_t_fp8_stride[input_rank - 1] = {M * sizeof(fp8e4m3)};
+    [[maybe_unused]] uint64_t A_t_sc_stride[scale_rank - 1] = {TILE_SIZE * TILE_SIZE / K_BLOCK_SIZE * sizeof(fp8e8m0), M * TILE_SIZE / K_BLOCK_SIZE * sizeof(fp8e8m0)};
+
+    bf16 *A_bf16_data_ptr = reinterpret_cast<bf16 *>(A_bf16.data_ptr());
+    fp8e4m3 *A_fp8_data_ptr = nullptr, *A_t_fp8_data_ptr = nullptr;
+    fp8e8m0 *A_sc_data_ptr = nullptr, *A_t_sc_data_ptr = nullptr;
+
+    A_fp8_data_ptr = reinterpret_cast<fp8e4m3 *>(A_fp8.data_ptr());
+    A_sc_data_ptr = reinterpret_cast<fp8e8m0 *>(A_sc.data_ptr());
+
+    CUCHECK(cuTensorMapEncodeTiled(
+        &A_bf16_tmap, CU_TENSOR_MAP_DATA_TYPE_BFLOAT16,
+        input_rank, (void *)A_bf16_data_ptr,
+        &input_global_shape[0], &A_bf16_stride[0],
+        &input_smem_shape[0], &input_smem_stride[0],
+        CU_TENSOR_MAP_INTERLEAVE_NONE, CU_TENSOR_MAP_SWIZZLE_NONE,
+        CU_TENSOR_MAP_L2_PROMOTION_NONE, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE
+    ));
+
+    CUCHECK(cuTensorMapEncodeTiled(
+        &A_fp8_tmap, CU_TENSOR_MAP_DATA_TYPE_UINT8,
+        input_rank, (void *)A_fp8_data_ptr,
+        &input_global_shape[0], &A_fp8_stride[0],
+        &input_smem_shape[0], &input_smem_stride[0],
+        CU_TENSOR_MAP_INTERLEAVE_NONE, CU_TENSOR_MAP_SWIZZLE_NONE,
+        CU_TENSOR_MAP_L2_PROMOTION_NONE, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE
+    ));
+    CUCHECK(cuTensorMapEncodeTiled(
+        &A_sc_tmap, CU_TENSOR_MAP_DATA_TYPE_UINT8,
+        scale_rank, (void *)A_sc_data_ptr,
+        &scale_global_shape[0], &A_sc_stride[0],
+        &scale_smem_shape[0], &scale_smem_stride[0],
+        CU_TENSOR_MAP_INTERLEAVE_NONE, CU_TENSOR_MAP_SWIZZLE_NONE,
+        CU_TENSOR_MAP_L2_PROMOTION_NONE, CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE
+    ));
+
+    dim3 grid{(N / TILE_SIZE), (M / TILE_SIZE)};
+    dim3 block{TILE_SIZE};
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+
+    // Should aim for 4-occupancy (at most 227KB / 4 = 56.75KB per block and 128 registers per thread)
+    constexpr int dynamic_shared_memory = TILE_SIZE * TILE_SIZE * sizeof(bf16) + 1024;
+    CUDACHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, dynamic_shared_memory));
+    kernel<<<grid, block, dynamic_shared_memory, stream>>>(
+        A_bf16_tmap, 
+        A_fp8_tmap, 
+        A_sc_tmap
+    );
+}
+
 } // namespace mxfp8_quantize
 
 PYBIND11_MODULE(_C, m) {
     m.def("mxfp8_gemm", &mxfp8_gemm::entrypoint);
+    m.def("mxfp8_quantize", &mxfp8_quantize::entrypoint);
 }
