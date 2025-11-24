@@ -767,6 +767,7 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
     if constexpr (ST::swizzle) {
         int4 tma_coords = detail::tma_coords<ST, axis>(unit_coord);
 
+#ifdef KITTENS_BLACKWELL
         if(dst_mbar_cta != -1) {
             uint32_t neighbor_mbar_ptr;
             asm volatile (
@@ -783,8 +784,7 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
                     "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w), "h"(cluster_mask)
                     : "memory"
                 );
-            }
-            else {
+            } else {
                 asm volatile (
                     "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.cta_group::2.multicast::cluster.L2::cache_hint"
                     " [%0], [%1, {%3, %4, %5, %6, %7}], [%2], %8, %9;"
@@ -794,8 +794,9 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
                     : "memory"
                 );
             }
-        } else {
-            if constexpr (policy == cache_policy::NORMAL) {
+        } else
+#endif
+        if constexpr (policy == cache_policy::NORMAL) {
                 asm volatile (
                     "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster"
                     " [%0], [%1, {%3, %4, %5, %6, %7}], [%2], %8;"
@@ -804,21 +805,20 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
                     "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w), "h"(cluster_mask)
                     : "memory"
                 );
-            }
-            else {
-                asm volatile (
-                    "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster.L2::cache_hint"
-                    " [%0], [%1, {%3, %4, %5, %6, %7}], [%2], %8, %9;"
-                    :
-                    : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
-                    "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w), "h"(cluster_mask), "l"(make_cache_policy<policy>())
-                    : "memory"
-                );
-            }
+        } else {
+            asm volatile (
+                "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster.L2::cache_hint"
+                " [%0], [%1, {%3, %4, %5, %6, %7}], [%2], %8, %9;"
+                :
+                : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
+                "n"(0), "r"(tma_coords.x), "r"(tma_coords.y), "r"(tma_coords.z), "r"(tma_coords.w), "h"(cluster_mask), "l"(make_cache_policy<policy>())
+                : "memory"
+            );
         }
     } else {
         static_assert(axis == 2, "For non-swizzled tiles, only axis 2 is supported.");
 
+#ifdef KITTENS_BLACKWELL
         if(dst_mbar_cta != -1) {
             uint32_t neighbor_mbar_ptr;
             asm volatile (
@@ -846,8 +846,9 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
                     : "memory"
                 );
             }
-        } else {
-            if constexpr (policy == cache_policy::NORMAL) {
+        } else 
+#endif
+        if constexpr (policy == cache_policy::NORMAL) {
                 asm volatile (
                     "cp.async.bulk.tensor.4d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster"
                     " [%0], [%1, {%3, %4, %5, %6}], [%2], %7;"
@@ -856,8 +857,7 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
                     "r"(unit_coord.c), "r"(unit_coord.r), "r"(unit_coord.d), "r"(unit_coord.b), "h"(cluster_mask)
                     : "memory"
                 );
-            }
-            else {
+        } else {
                 asm volatile (
                     "cp.async.bulk.tensor.4d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster.L2::cache_hint"
                     " [%0], [%1, {%3, %4, %5, %6}], [%2], %7, %8;"
@@ -866,7 +866,6 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
                     "r"(unit_coord.c), "r"(unit_coord.r), "r"(unit_coord.d), "r"(unit_coord.b), "h"(cluster_mask), "l"(make_cache_policy<policy>())
                     : "memory"
                 );
-            }
         }
     }
 }
