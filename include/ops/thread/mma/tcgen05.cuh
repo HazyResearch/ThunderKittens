@@ -301,18 +301,12 @@ __device__ static inline void st_st(uint32_t d_tt_addr, uint64_t a_desc, uint64_
     }
 }
 
-template <int ncta=1, int notify_all=0>
+template <int ncta>
 __device__ static inline void commit(kittens::semaphore &sem) {
     if constexpr (ncta == 1) {
-        if constexpr (notify_all) {
-            asm volatile(
-                "tcgen05.commit.cta_group::1.mbarrier::arrive::one.shared::cluster.multicast::cluster.b64 [%0], %1;\n"
-            ::  "l"(__cvta_generic_to_shared(&sem)), "h"((uint16_t)(0b11))); // signal both CTAs
-        } else {
-            asm volatile(
-                "tcgen05.commit.cta_group::1.mbarrier::arrive::one.b64 [%0];\n"
-            ::  "l"(__cvta_generic_to_shared(&sem)));
-        }
+        asm volatile(
+            "tcgen05.commit.cta_group::1.mbarrier::arrive::one.b64 [%0];\n"
+        ::  "l"(__cvta_generic_to_shared(&sem)));
     }
     else {
         asm volatile(
