@@ -13,11 +13,10 @@
  */
 template<ducks::rt::all RT, ducks::st::all ST>
 __device__ inline static void load(RT &dst, const ST &src) {
-    constexpr int height = ST::height;
     constexpr int warp_height = RT::height;
-    static_assert(height%GROUP_WARPS == 0, "Group load / store requires tile height to be a multiple of GROUP_WARPS.");
-    static_assert(height%warp_height == 0, "Group load / store requires tile height to be a multiple of the RT height.");
-    static_assert(ST::width==RT::width, "Group load / store requires tile widths to match.");
+    static_assert(ST::rows/RT::rows == GROUP_WARPS, "Group load / store requires tile height to be a multiple of the RT height.");
+    static_assert(ST::rows%RT::rows == 0, "Group load / store requires tile height to be a multiple of the RT height.");
+    static_assert(ST::cols==RT::cols, "Group load / store requires tile widths to match.");
     int local_warpid;
     if constexpr(GROUP_WARPS % 4 == 0) local_warpid = (warpid()/4+(warpid()%4)*(GROUP_WARPS/4));
     else local_warpid = warpid();
@@ -138,11 +137,10 @@ __device__ inline static void load(RT &dst, const ST &src) {
  */
 template<ducks::st::all ST, ducks::rt::all RT>
 __device__ inline static void store(ST &dst, const RT &src) {
-    constexpr int height = ST::height;
     constexpr int warp_height = RT::height;
-    static_assert(height%GROUP_WARPS == 0, "Group load / store requires tile height to be a multiple of GROUP_WARPS.");
-    static_assert(height%warp_height == 0, "Group load / store requires tile height to be a multiple of the RT height.");
-    static_assert(ST::width==RT::width, "Group load / store requires tile widths to match.");
+    static_assert(ST::rows/RT::rows == GROUP_WARPS, "Group load / store requires tile height to be a multiple of the RT height.");
+    static_assert(ST::rows%RT::rows == 0, "Group load / store requires tile height to be a multiple of the RT height.");
+    static_assert(ST::cols==RT::cols, "Group load / store requires tile widths to match.");
     int local_warpid;
     if constexpr(GROUP_WARPS % 4 == 0) local_warpid = (warpid()/4+(warpid()%4)*(GROUP_WARPS/4));
     else local_warpid = warpid();

@@ -67,54 +67,58 @@ struct KITTENS_DEFAULT_ALIGN st {
     // define underlying data as same as that projected, to make clear that this is *not* a subtile.
     static constexpr int underlying_rows          = _rows;
     static constexpr int underlying_cols          = _cols;
-    static constexpr int underlying_height        = _rows / kittens::TILE_ROW_DIM<T>;
-    static constexpr int underlying_width         = _cols / kittens::TILE_COL_DIM<T>;
     static constexpr int underlying_num_elements  = underlying_rows * underlying_cols;
 
     static constexpr int rows                = _rows; ///< Total number of rows in the tile.
-    static_assert(rows % kittens::TILE_ROW_DIM<T> == 0, "Rows must be divisible by the tile dimension");
     static constexpr int cols                = _cols; ///< Total number of cols in the tile.
-    static_assert(cols % kittens::TILE_COL_DIM<T> == 0, "Cols must be divisible by the tile dimension");
-    static constexpr int height              = _rows / kittens::TILE_ROW_DIM<T>; ///< Height of the tile in terms of 16-element subtiles.
-    static constexpr int width               = _cols / kittens::TILE_COL_DIM<T>; ///< Width of the tile in terms of 16-element subtiles.
     static constexpr int num_elements        = rows * cols; ///< Total number of elements in the tile.
+
+    static_assert((swizzle && (rows % kittens::TILE_ROW_DIM<T> == 0)) || (!swizzle && (rows % kittens::BASE_TILE_DIM == 0)), "Rows must be divisible by the tile dimension");
+    static_assert((swizzle && (cols % kittens::TILE_COL_DIM<T> == 0)) || (!swizzle && (cols % kittens::BASE_TILE_DIM == 0)), "Cols must be divisible by the tile dimension");
 
     static_assert(base_types::packing<dtype>::num() == 1); // must be a 1-packed type (e.g. float, bf16, etc)
 
     static constexpr int swizzle_bytes = (
         sizeof(dtype) == 1 ? (  // Add FP8 case
-            underlying_width%4 == 0 ? 128 :
-            underlying_width%2 == 0 ?  64 : 32
+            (cols/kittens::TILE_COL_DIM<T>)%4 == 0 ? 128 :
+            (cols/kittens::TILE_COL_DIM<T>)%2 == 0 ?  64 : 32
         ) :
         sizeof(dtype) == 2 ? (
-            underlying_width%4 == 0 ? 128 :
-            underlying_width%2 == 0 ?  64 : 32
+            (cols/kittens::TILE_COL_DIM<T>)%4 == 0 ? 128 :
+            (cols/kittens::TILE_COL_DIM<T>)%2 == 0 ?  64 : 32
         ) :
         sizeof(dtype) == 4 ? (
-            underlying_width%2 == 0 ? 128 : 64
+            (cols/kittens::TILE_COL_DIM<T>)%2 == 0 ? 128 : 64
         ) : -1
     );
 
-    // wgmma layout with swizzling
     dtype data[rows*cols]; ///< Raw data storage for the tile.
 
     __device__ static inline T* idx(T *ptr, int2 coord) { // naive row-major coord default
         int r = coord.x, c = coord.y; // alias
-        static constexpr int swizzle_repeat = swizzle_bytes * 8;
-        static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
-        const int outer_idx = c/subtile_cols;
-        const uint64_t addr = (uint64_t)(&ptr[outer_idx*rows*subtile_cols + r*subtile_cols + c%subtile_cols]);
-        const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
-        return (T*)(addr ^ swizzle);
+        if constexpr (swizzle) {
+            static constexpr int swizzle_repeat = swizzle_bytes * 8;
+            static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
+            const int outer_idx = c/subtile_cols;
+            const uint64_t addr = (uint64_t)(&ptr[outer_idx*rows*subtile_cols + r*subtile_cols + c%subtile_cols]);
+            const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
+            return (T*)(addr ^ swizzle);
+        } else {
+            return &ptr[r*cols + c];
+        }
     }
     __device__ static inline uint32_t idx(uint32_t ptr, int2 coord) {
         int r = coord.x, c = coord.y; // alias
-        static constexpr int swizzle_repeat = swizzle_bytes * 8;
-        static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
-        const int outer_idx = c/subtile_cols;
-        const uint32_t addr = ptr + sizeof(T)*(outer_idx*rows*subtile_cols + r*subtile_cols + c%subtile_cols);
-        const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
-        return (addr ^ swizzle);
+        if constexpr (swizzle) {
+            static constexpr int swizzle_repeat = swizzle_bytes * 8;
+            static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
+            const int outer_idx = c/subtile_cols;
+            const uint32_t addr = ptr + sizeof(T)*(outer_idx*rows*subtile_cols + r*subtile_cols + c%subtile_cols);
+            const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
+            return (addr ^ swizzle);
+        } else {
+            return ptr + sizeof(T)*(r*cols + c);
+        }
     }
     /**
      * @brief Access a shared tile element using a row and column, as if the tile were row-major.
@@ -173,16 +177,12 @@ struct st_subtile {
     static_assert(underlying_rows % kittens::TILE_ROW_DIM<T> == 0, "Underlying rows must be divisible by the tile dimension");
     static constexpr int underlying_cols          = ST::underlying_cols;
     static_assert(underlying_cols % kittens::TILE_COL_DIM<T> == 0, "Underlying cols must be divisible by the tile dimension");
-    static constexpr int underlying_height        = ST::underlying_height;
-    static constexpr int underlying_width         = ST::underlying_width;
     static constexpr int underlying_num_elements  = ST::underlying_num_elements;
 
     static constexpr int rows                = _subtile_rows;
     static_assert(rows % kittens::TILE_ROW_DIM<T> == 0, "Rows must be divisible by the tile dimension");
     static constexpr int cols                = _subtile_cols;
     static_assert(cols % kittens::TILE_COL_DIM<T> == 0, "Cols must be divisible by the tile dimension");
-    static constexpr int height              = rows / kittens::TILE_ROW_DIM<T>;
-    static constexpr int width               = cols / kittens::TILE_COL_DIM<T>;
     static constexpr int num_elements        = rows * cols;
 
     static constexpr int swizzle_bytes = ST::swizzle_bytes;
@@ -198,21 +198,29 @@ struct st_subtile {
 
     __device__ inline T* idx(T *ptr, const int2 coord) const { // naive row-major coord default
         int r = coord.x+row_offset, c = coord.y+col_offset; // alias
-        static constexpr int swizzle_repeat = swizzle_bytes * 8;
-        static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
-        const int outer_idx = c/subtile_cols;
-        const uint64_t addr = (uint64_t)(&ptr[outer_idx*underlying_rows*subtile_cols + r*subtile_cols + c%subtile_cols]);
-        const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
-        return (T*)(addr ^ swizzle);
+        if constexpr (swizzle) {
+            static constexpr int swizzle_repeat = swizzle_bytes * 8;
+            static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
+            const int outer_idx = c/subtile_cols;
+            const uint64_t addr = (uint64_t)(&ptr[outer_idx*underlying_rows*subtile_cols + r*subtile_cols + c%subtile_cols]);
+            const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
+            return (T*)(addr ^ swizzle);
+        } else {
+            return &ptr[r*cols + c];
+        }
     }
     __device__ inline uint32_t idx(uint32_t ptr, const int2 coord) const { // naive row-major coord default
         int r = coord.x+row_offset, c = coord.y+col_offset; // alias
-        static constexpr int swizzle_repeat = swizzle_bytes * 8;
-        static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
-        const int outer_idx = c/subtile_cols;
-        const uint32_t addr = ptr + sizeof(T)*(outer_idx*underlying_rows*subtile_cols + r*subtile_cols + c%subtile_cols);
-        const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
-        return (addr ^ swizzle);
+        if constexpr(swizzle) {
+            static constexpr int swizzle_repeat = swizzle_bytes * 8;
+            static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
+            const int outer_idx = c/subtile_cols;
+            const uint32_t addr = ptr + sizeof(T)*(outer_idx*underlying_rows*subtile_cols + r*subtile_cols + c%subtile_cols);
+            const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
+            return (addr ^ swizzle);
+        } else {
+            return ptr + sizeof(T)*(r*cols + c);
+        }
     }
     /**
      * @brief Access a shared tile element using a row and column, as if the tile were row-major.
@@ -258,25 +266,16 @@ st<_T, _rows, _cols, _swizzle>::subtile(int2 rowcol) // Qualified function name 
     static_assert(subtile_cols % kittens::TILE_COL_DIM<dtype> == 0,
         "Subtile cols must be divisible by the base tile col dimension.");
 
-    // Calculate height/width in terms of base tiles for further checks
-    constexpr int subtile_height = subtile_rows / kittens::TILE_ROW_DIM<dtype>;
-    constexpr int subtile_width = subtile_cols / kittens::TILE_COL_DIM<dtype>;
-    static_assert(subtile_height > 0 && subtile_width > 0, "Subtile height/width in base tiles must be positive.");
-
-    // Check divisibility of parent height/width by subtile height/width
-    static_assert(ST_t::height % subtile_height == 0,
-        "Parent tile height (in base tiles) must be divisible by subtile height (in base tiles).");
-    static_assert(ST_t::width % subtile_width == 0,
-        "Parent tile width (in base tiles) must be divisible by subtile width (in base tiles).");
+    // Check divisibility of parent rows/cols by subtile rows/cols
+    static_assert(ST_t::rows % subtile_rows == 0,
+        "Parent tile rows must be divisible by subtile rows.");
+    static_assert(ST_t::cols % subtile_cols == 0,
+        "Parent tile cols must be divisible by subtile cols.");
 
     // Ensure the parent st object is not itself a subtile view by comparing its
     // dimensions to its underlying dimensions.
-    static_assert(ST_t::height == ST_t::underlying_height && ST_t::width == ST_t::underlying_width,
-        "Cannot create a subtile from an object that appears to be a subtile view (height/width mismatch underlying).");
-    // Also check rows/cols directly for robustness, though height/width check might suffice.
     static_assert(ST_t::rows == ST_t::underlying_rows && ST_t::cols == ST_t::underlying_cols,
         "Cannot create a subtile from an object that appears to be a subtile view (rows/cols mismatch underlying).");
-
 
     // Construct and return the st_subtile object using its constructor:
     // st_subtile(ST &src, int2 rowcol)

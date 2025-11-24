@@ -55,13 +55,13 @@ struct tt {
     using T2 = base_types::packing<_T>::packed_type;
     using dtype = T; ///< Data type of the elements in the tile.
 
-    static_assert(_rows <= MAX_TENSOR_ROWS, "Row dimension must be less than or equal to MAX_TENSOR_ROWS");
-    static_assert(_cols <= MAX_TENSOR_COLS, "Column dimension must be less than or equal to MAX_TENSOR_COLS");
-
     static constexpr int rows    = _rows;
     static constexpr int cols    = _cols;
-    static constexpr int height  = rows / kittens::TILE_ROW_DIM<T>;
-    static constexpr int width   = cols / kittens::TILE_COL_DIM<T>; // breaks for small cols, but okay as long as user is careful
+
+    static_assert(rows <= MAX_TENSOR_ROWS, "Row dimension must be less than or equal to MAX_TENSOR_ROWS");
+    static_assert(cols <= MAX_TENSOR_COLS, "Column dimension must be less than or equal to MAX_TENSOR_COLS");
+    static_assert(rows % kittens::BASE_TILE_DIM == 0, "Row dimension must be divisible by the 16");
+    static_assert(cols % kittens::BASE_TILE_DIM == 0, "Column dimension must be divisible by the 16");
 
     uint32_t addr;
 

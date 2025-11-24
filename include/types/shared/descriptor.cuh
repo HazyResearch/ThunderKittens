@@ -51,24 +51,22 @@ struct st_descriptor {
     using T = typename ST::T;
     static constexpr int rows = ST::rows;
     static constexpr int cols = ST::cols;
-    static constexpr int height = ST::height;
-    static constexpr int width  = ST::width;
     static constexpr bool swizzle = ST::swizzle;
+    static_assert(swizzle, "Non-swizzled descriptor is not supported yet.");
     uint64_t base_desc;
     __device__ inline st_descriptor(const ST &tile) {
-        static_assert(swizzle, "Non-swizzled mode is not supported yet.");
         if constexpr (MN_major) { // MN major mode (i.e., K x M for A matrix, K x N for B matrix)
-            if constexpr (ST::width%4 == 0)
-                base_desc = detail::matrix_descriptor_raw(&tile.data[0], 2048*ST::height, 1024, 1);
-            else if constexpr (ST::width%2 == 0)
-                base_desc = detail::matrix_descriptor_raw(&tile.data[0], 1024*ST::height, 512, 2);
+            if constexpr ((ST::cols/TILE_COL_DIM<T>)%4 == 0)
+                base_desc = detail::matrix_descriptor_raw(&tile.data[0], 2048*ST::rows/TILE_ROW_DIM<T>, 1024, 1);
+            else if constexpr ((ST::cols/TILE_COL_DIM<T>)%2 == 0)
+                base_desc = detail::matrix_descriptor_raw(&tile.data[0], 1024*ST::rows/TILE_ROW_DIM<T>, 512, 2);
             else
-                base_desc = detail::matrix_descriptor_raw(&tile.data[0], 512*ST::height, 256, 3);
+                base_desc = detail::matrix_descriptor_raw(&tile.data[0], 512*ST::rows/TILE_ROW_DIM<T>, 256, 3);
         }
         else { // K major mode (i.e., M x K for A matrix, N x K for B matrix)
-            if constexpr (ST::width%4 == 0)
+            if constexpr ((ST::cols/TILE_COL_DIM<T>)%4 == 0)
                 base_desc = detail::matrix_descriptor_raw(&tile.data[0], 16 /* does not matter */, 1024, 1);
-            else if constexpr (ST::width%2 == 0)
+            else if constexpr ((ST::cols/TILE_COL_DIM<T>)%2 == 0)
                 base_desc = detail::matrix_descriptor_raw(&tile.data[0], 16 /* does not matter */, 512, 2);
             else
                 base_desc = detail::matrix_descriptor_raw(&tile.data[0], 16 /* does not matter */, 256, 3);
@@ -76,7 +74,6 @@ struct st_descriptor {
     }
     __device__ inline st_descriptor(const st_descriptor<ST, MN_major> &other) : base_desc(other.base_desc) {} // copy constructor
     __device__ inline uint64_t chunk_descriptor(int chunk_idx) {
-        static_assert(swizzle, "Non-swizzled mode is not supported yet.");
         // Return the n-th chunk along the K dimension.
         // In MMA instructions, K per tensor core call is always 32 bytes
         //   ex. Hopper: K=32 for FP8, K=16 for BF16/FP16, K=8 for TF32)
@@ -84,10 +81,10 @@ struct st_descriptor {
         // So for MN-major, this is same as asking "how to forward 32 bytes worth of elements (=K elements) in the stride dimension?"
         // And for K-major, "how to forward K elements in the leading dimension?"
         if constexpr (MN_major) { // MN major mode (i.e., K x M for A matrix, K x N for B matrix)
-            if constexpr (ST::width%4 == 0) { // 128B swizzle: 
+            if constexpr ((ST::cols/TILE_COL_DIM<T>)%4 == 0) { // 128B swizzle: 
                 return base_desc + detail::matrix_descriptor_encode(chunk_idx*2048);
             }
-            else if constexpr (ST::width%2 == 0) {
+            else if constexpr ((ST::cols/TILE_COL_DIM<T>)%2 == 0) {
                 return base_desc + detail::matrix_descriptor_encode(chunk_idx*1024);
             }
             else {
@@ -95,17 +92,17 @@ struct st_descriptor {
             }
         }
         else { // K major mode (i.e., M x K for A matrix, N x K for B matrix)
-            if constexpr (ST::width%4 == 0) {
+            if constexpr ((ST::cols/TILE_COL_DIM<T>)%4 == 0) {
                 // 128B swizzle: 4 chunks fit within swizzle bytes; move on to next every 4 chunks (rows * 128B swizzle bytes)
-                return base_desc + detail::matrix_descriptor_encode((chunk_idx%4)*32 + (chunk_idx/4)*ST::height*2048);
+                return base_desc + detail::matrix_descriptor_encode((chunk_idx%4)*32 + (chunk_idx/4)*(ST::rows/TILE_ROW_DIM<T>)*2048);
             }
-            else if constexpr (ST::width%2 == 0) {
+            else if constexpr ((ST::cols/TILE_COL_DIM<T>)%2 == 0) {
                 // 64B swizzle: 2 chunks fit within swizzle bytes; move on to next every 2 chunks (rows * 64B swizzle bytes)
-                return base_desc + detail::matrix_descriptor_encode((chunk_idx%2)*32 + (chunk_idx/2)*ST::height*1024);
+                return base_desc + detail::matrix_descriptor_encode((chunk_idx%2)*32 + (chunk_idx/2)*(ST::rows/TILE_ROW_DIM<T>)*1024);
             }
             else {
                 // 32B swizzle: Entire chunk fits within swizzle bytes; move on to next on every chunk (rows * 32B swizzle bytes)
-                return base_desc + detail::matrix_descriptor_encode(chunk_idx*ST::height*512);
+                return base_desc + detail::matrix_descriptor_encode(chunk_idx*(ST::rows/TILE_ROW_DIM<T>)*512);
             }
         }
     }

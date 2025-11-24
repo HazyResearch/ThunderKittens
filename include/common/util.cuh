@@ -58,8 +58,9 @@ namespace kittens {
 /**
  * @brief Tile dimension constant.
  */
-template<typename T> constexpr int TILE_COL_DIM = sizeof(T) == 1 ? 32 : 16;
-template<typename T> constexpr int TILE_ROW_DIM = 16;
+constexpr int BASE_TILE_DIM = 16;
+template<typename T> constexpr int TILE_COL_DIM = sizeof(T) == 1 ? BASE_TILE_DIM * 2 : BASE_TILE_DIM;
+template<typename T> constexpr int TILE_ROW_DIM = BASE_TILE_DIM;
 /**
  * @brief Tile num elements constant calculated as TILE_DIM squared.
  */

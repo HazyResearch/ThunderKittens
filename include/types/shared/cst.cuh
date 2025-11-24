@@ -57,8 +57,6 @@ struct cst {
 
     static constexpr int rows       = component::rows;
     static constexpr int cols       = component::cols;
-    static constexpr int height     = component::height;
-    static constexpr int width      = component::width;
 
     // todo: fill in the rest for convenience, but they're all accessible via component so it's not urgent.
 
@@ -76,7 +74,5 @@ struct cst {
 template<int _rows, int _cols> using cst_bf = cst<bf16,  _rows, _cols>;
 template<int _rows, int _cols> using cst_hf = cst<half,  _rows, _cols>;
 template<int _rows, int _cols> using cst_fl = cst<float, _rows, _cols>;
-
-
 
 }

@@ -409,7 +409,7 @@ template<ducks::rt::row_layout RT>
 __device__ static inline void make_causal(RT &dst, const RT &src, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
     KITTENS_CHECK_WARP
     const typename RT::dtype packed_val = base_types::packing<typename RT::dtype>::pack(val);
-    #ifdef KITTENS_HOPPER
+    #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     static_assert(!std::is_same_v<typename RT::dtype, fp8e4m3_4> && !std::is_same_v<typename RT::dtype, fp8e5m2_4>, "Unsupported type for make_causal");
     #endif
     #pragma unroll
@@ -470,7 +470,7 @@ template<ducks::rt::row_layout RT>
 __device__ static inline void make_causal_t(RT &dst, const RT &src, const typename base_types::packing<typename RT::dtype>::unpacked_type &val=0) {
     KITTENS_CHECK_WARP
     const typename RT::dtype packed_val = base_types::packing<typename RT::dtype>::pack(val);
-    #ifdef KITTENS_HOPPER
+    #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     static_assert(!std::is_same_v<typename RT::dtype, fp8e4m3_4> && !std::is_same_v<typename RT::dtype, fp8e5m2_4>, "Unsupported type for make_causal");
     #endif
     #pragma unroll

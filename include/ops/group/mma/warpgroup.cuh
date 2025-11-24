@@ -144,9 +144,10 @@ __device__ static inline void mma_AB(D &d,
     KITTENS_CHECK_WARPGROUP
     constexpr int M_DIV_4 = A::height;
     static_assert(D::height == M_DIV_4); // output register is correctly sized
-    constexpr int N = B::width;
+    constexpr int N = B::cols / kittens::TILE_COL_DIM<typename B::T>;
+    static_assert(D::width == N); // N dimension must match
     constexpr int K = A::width;
-    static_assert(B::height == K); // K dimension must match
+    static_assert(B::rows/kittens::TILE_ROW_DIM<typename B::T> == K); // K dimension must match
     static_assert(std::is_same_v<typename A::T, typename B::T>); // A and B must match type.
 
     // Usings
@@ -194,12 +195,12 @@ __device__ static inline void mma_AB(D &d,
                                const B &b) {
     // Checks
     KITTENS_CHECK_WARPGROUP
-    constexpr int M = A::height;
+    constexpr int M = A::rows / kittens::TILE_ROW_DIM<typename A::T>;
     static_assert(M == 4);
     static_assert(D::height == 1); // output register is correctly sized
-    constexpr int N = B::width;
-    constexpr int K = A::width;
-    static_assert(B::height == K); // K dimension must match
+    constexpr int N = B::cols / kittens::TILE_COL_DIM<typename B::T>;
+    constexpr int K = A::cols / kittens::TILE_COL_DIM<typename A::T>;
+    static_assert(B::rows / kittens::TILE_ROW_DIM<typename B::T> == K); // K dimension must match
     static_assert(std::is_same_v<typename A::T, typename B::T>); // A and B must match type.
 
     // Usings
@@ -261,9 +262,9 @@ __device__ static inline void mma_ABt(D &d,
     KITTENS_CHECK_WARPGROUP
     constexpr int M_DIV_4 = A::height;
     static_assert(D::height == M_DIV_4); // output register is correctly sized
-    constexpr int N = B::height;
+    constexpr int N = B::rows / kittens::TILE_ROW_DIM<typename B::T>;
     constexpr int K = A::width;
-    static_assert(B::width == K); // K dimension must match
+    static_assert(B::cols/kittens::TILE_COL_DIM<typename B::T> == K); // K dimension must match
     static_assert(std::is_same_v<typename A::T, typename B::T>); // A and B must match type.
 
     // Usings
@@ -324,12 +325,12 @@ __device__ static inline void mma_ABt(D &d,
                                 const B &b) {
     // Checks
     KITTENS_CHECK_WARPGROUP
-    constexpr int M = A::height;
+    constexpr int M = A::rows / kittens::TILE_ROW_DIM<typename A::T>;
     static_assert(M == 4);
     static_assert(D::height == 1); // output register is correctly sized
-    constexpr int N = B::height;
-    constexpr int K = A::width;
-    static_assert(B::width == K); // K dimension must match
+    constexpr int N = B::rows / kittens::TILE_ROW_DIM<typename B::T>;
+    constexpr int K = A::cols / kittens::TILE_COL_DIM<typename A::T>;
+    static_assert(B::cols/kittens::TILE_COL_DIM<typename B::T> == K); // K dimension must match
     static_assert(std::is_same_v<typename A::T, typename B::T>); // A and B must match type.
 
     // Usings
@@ -387,12 +388,12 @@ __device__ static inline void mma_AtB(D &d,
                                 const B &b) {
     // Checks
     KITTENS_CHECK_WARPGROUP
-    constexpr int M = A::width;
+    constexpr int M = A::cols / kittens::TILE_COL_DIM<typename A::T>;
     static_assert(M == 4);
     static_assert(D::height == 1); // output register is correctly sized
-    constexpr int N = B::width;
-    constexpr int K = A::height;
-    static_assert(B::height == K); // K dimension must match
+    constexpr int N = B::cols / kittens::TILE_COL_DIM<typename B::T>;
+    constexpr int K = A::rows / kittens::TILE_ROW_DIM<typename A::T>;
+    static_assert(B::rows/kittens::TILE_ROW_DIM<typename B::T> == K); // K dimension must match
     static_assert(std::is_same_v<typename A::T, typename B::T>); // A and B must match type.
 
     // Usings
@@ -448,12 +449,12 @@ __device__ static inline void mma_AtBt(D &d,
                                  const B &b) {
     // Checks
     KITTENS_CHECK_WARPGROUP
-    constexpr int M = A::width;
+    constexpr int M = A::cols / kittens::TILE_COL_DIM<typename A::T>;
     static_assert(M == 4);
     static_assert(D::height == 1); // output register is correctly sized
-    constexpr int N = B::height;
-    constexpr int K = A::height;
-    static_assert(B::width == K); // K dimension must match
+    constexpr int N = B::rows / kittens::TILE_ROW_DIM<typename B::T>;
+    constexpr int K = A::rows / kittens::TILE_ROW_DIM<typename A::T>;
+    static_assert(B::cols/kittens::TILE_COL_DIM<typename B::T> == K); // K dimension must match
     static_assert(std::is_same_v<typename A::T, typename B::T>); // A and B must match type.
 
     // Usings
@@ -546,9 +547,9 @@ __device__ static inline void mma_AB(D &d,
     KITTENS_CHECK_WARPGROUP
     constexpr int M_DIV_4 = A::height;
     static_assert(D::height == M_DIV_4); // output register is correctly sized
-    constexpr int N = B::width;
+    constexpr int N = B::cols / kittens::TILE_COL_DIM<typename B::T>;
     constexpr int K = A::width;
-    static_assert(B::height == K); // K dimension must match
+    static_assert(B::rows/kittens::TILE_ROW_DIM<typename B::T> == K); // K dimension must match
     static_assert(std::is_same_v<typename A::T, typename B::T>); // A and B must match type.
 
     // Usings
@@ -634,12 +635,12 @@ __device__ static inline void mma_AB(D &d,
                                const B &b) {
     // Checks
     KITTENS_CHECK_WARPGROUP
-    constexpr int M = A::height;
+    constexpr int M = A::rows / kittens::TILE_ROW_DIM<typename A::T>;
     static_assert(M == 4);
     static_assert(D::height == 1); // output register is correctly sized
-    constexpr int N = B::width;
-    constexpr int K = A::width;
-    static_assert(B::height == K); // K dimension must match
+    constexpr int N = B::cols / kittens::TILE_COL_DIM<typename B::T>;
+    constexpr int K = A::cols / kittens::TILE_COL_DIM<typename A::T>;
+    static_assert(B::rows/kittens::TILE_ROW_DIM<typename B::T> == K); // K dimension must match
     static_assert(std::is_same_v<typename A::T, typename B::T>); // A and B must match type.
 
     // Usings
@@ -736,9 +737,9 @@ __device__ static inline void mma_ABt(D &d,
     KITTENS_CHECK_WARPGROUP
     constexpr int M_DIV_4 = A::height;
     static_assert(D::height == M_DIV_4); // output register is correctly sized
-    constexpr int N = B::height;
+    constexpr int N = B::rows / kittens::TILE_ROW_DIM<typename B::T>;
     constexpr int K = A::width;
-    static_assert(B::width == K); // K dimension must match
+    static_assert(B::cols/kittens::TILE_COL_DIM<typename B::T> == K); // K dimension must match
     static_assert(std::is_same_v<typename A::T, typename B::T>); // A and B must match type.
 
     // Usings
@@ -837,12 +838,12 @@ __device__ static inline void mma_ABt(D &d,
                                 const B &b) {
     // Checks
     KITTENS_CHECK_WARPGROUP
-    constexpr int M = A::height;
+    constexpr int M = A::rows / kittens::TILE_ROW_DIM<typename A::T>;
     static_assert(M == 4);
     static_assert(D::height == 1); // output register is correctly sized
-    constexpr int N = B::height;
-    constexpr int K = A::width;
-    static_assert(B::width == K); // K dimension must match
+    constexpr int N = B::rows / kittens::TILE_ROW_DIM<typename B::T>;
+    constexpr int K = A::cols / kittens::TILE_COL_DIM<typename A::T>;
+    static_assert(B::cols/kittens::TILE_COL_DIM<typename B::T> == K); // K dimension must match
     static_assert(std::is_same_v<typename A::T, typename B::T>); // A and B must match type.
 
     // Usings
@@ -935,12 +936,12 @@ __device__ static inline void mma_AtB(D &d,
                                 const B &b) {
     // Checks
     KITTENS_CHECK_WARPGROUP
-    constexpr int M = A::width;
+    constexpr int M = A::cols / kittens::TILE_COL_DIM<typename A::T>;
     static_assert(M == 4);
     static_assert(D::height == 1); // output register is correctly sized
-    constexpr int N = B::width;
-    constexpr int K = A::height;
-    static_assert(B::height == K); // K dimension must match
+    constexpr int N = B::cols / kittens::TILE_COL_DIM<typename B::T>;
+    constexpr int K = A::rows / kittens::TILE_ROW_DIM<typename A::T>;
+    static_assert(B::rows/kittens::TILE_ROW_DIM<typename B::T> == K); // K dimension must match
     static_assert(std::is_same_v<typename A::T, typename B::T>); // A and B must match type.
 
     // Usings
@@ -1031,12 +1032,12 @@ __device__ static inline void mma_AtBt(D &d,
                                  const B &b) {
     // Checks
     KITTENS_CHECK_WARPGROUP
-    constexpr int M = A::width;
+    constexpr int M = A::cols / kittens::TILE_COL_DIM<typename A::T>;
     static_assert(M == 4);
     static_assert(D::height == 1); // output register is correctly sized
-    constexpr int N = B::height;
-    constexpr int K = A::height;
-    static_assert(B::width == K); // K dimension must match
+    constexpr int N = B::rows / kittens::TILE_ROW_DIM<typename B::T>;
+    constexpr int K = A::rows / kittens::TILE_ROW_DIM<typename A::T>;
+    static_assert(B::cols/kittens::TILE_COL_DIM<typename B::T> == K); // K dimension must match
     static_assert(std::is_same_v<typename A::T, typename B::T>); // A and B must match type.
 
     // Usings
