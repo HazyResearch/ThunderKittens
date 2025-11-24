@@ -51,8 +51,6 @@ struct tt {
     using T2 = base_types::packing<_T>::packed_type;
     using dtype = T; ///< Data type of the elements in the tile.
 
-    static_assert(rows == 64 || rows == 128, "Rows must be 64 or 128 for tensor tiles.");
-
     static constexpr int rows    = _rows;
     static constexpr int cols    = _cols;
     static constexpr int height  = rows / kittens::TILE_ROW_DIM<T>;
@@ -71,6 +69,9 @@ struct tt {
         }
 #endif
         return TT(addr + (row_offset<<16) + col_offset/(4/(uint32_t)sizeof(T)));
+    }
+    template<ducks::tt::all TT>  __device__ inline TT subtile(int col_offset) const {
+        return TT(addr + col_offset/(4/(uint32_t)sizeof(T)));
     }
     template<int transpose> __device__ inline uint32_t chunk_addr(int chunk) const {
         if constexpr (transpose) {
@@ -92,8 +93,7 @@ struct tt {
                 static_assert(sizeof(T) == 999, "Currently unsupported type for input to an mma.");
             }
         }
-    } 
-
+    }
 };
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
@@ -105,5 +105,7 @@ template<int _height, int _width> using tt_fp8e4m3 = tt<fp8e4m3, _height, _width
 template<int _height, int _width> using tt_fp8e5m2 = tt<fp8e5m2, _height, _width>;
 template<int _height, int _width> using tt_fp8e8m0 = tt<fp8e8m0, _height, _width>;
 template<int _height, int _width> using tt_fp4e2m1 = tt<fp4e2m1, _height, _width>;
+using tt_mxfp8_sfa = tt_fp8e8m0<128, 16>;
+using tt_mxfp8_sfb = tt_fp8e8m0<128, 32>;
 
 } // namespace kittens

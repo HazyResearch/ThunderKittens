@@ -483,7 +483,7 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
         )),
         "SAB must be fp8e8m0 for fp8e4m3 element type, or fp8e4m3 / fp8e8m0 for fp4e2m1 element type");
     // Only float32 accumulator is supported for microscaling formats
-    static_assert(std::is_same_v<T_D, float>, "Only float32 accumulator is supported for microscaling formats");
+    static_assert(std::is_same_v<typename D::T, float>, "Only float32 accumulator is supported for microscaling formats");
     using T_AB = A::T;
     using T_SAB = SA::T;
     using T_D  = D::T;
