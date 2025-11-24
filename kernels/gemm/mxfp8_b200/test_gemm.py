@@ -39,9 +39,9 @@ if __name__ == '__main__':
 
     # Quantize matrices
     A_fp8 = torch.zeros(M, K, dtype=torch.float8_e4m3fn, device="cuda")
-    A_sc = torch.zeros(M // 128, K // 128, 512, dtype=torch.uint8, device="cuda")
+    A_sc = torch.zeros(M // 128, K // 128, 32, 16, dtype=torch.uint8, device="cuda")
     B_fp8 = torch.zeros(M, K, dtype=torch.float8_e4m3fn, device="cuda")
-    B_sc = torch.zeros(M // 128, K // 128, 512, dtype=torch.uint8, device="cuda")
+    B_sc = torch.zeros(M // 128, K // 128, 32, 16, dtype=torch.uint8, device="cuda")
     mxfp8_quantize(A, A_fp8, A_sc)
     mxfp8_quantize(B, B_fp8, B_sc)
     torch.cuda.synchronize()

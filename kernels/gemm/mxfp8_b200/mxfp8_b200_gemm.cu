@@ -36,24 +36,23 @@ struct globals {
     static constexpr int ROW_BLOCK = 256;
     static constexpr int COL_BLOCK = 256;
     static constexpr int REDUCTION_BLOCK = 128;
-    static constexpr int SCALE_BLOCK = 512; // 4 K=32-blocks per 128 rows per CTA
 
     using A_fp8_tile = st_fp8e4m3<ROW_BLOCK / 2, REDUCTION_BLOCK>; // CTA distributed
-    using A_sc_vec = sv_fp8e8m0<SCALE_BLOCK>;
+    using A_sc_tile  = st_fp8e8m0<32, 16, false>;
     using B_fp8_tile = st_fp8e4m3<COL_BLOCK / 2, REDUCTION_BLOCK>; // CTA distributed
-    using B_sc_vec = sv_fp8e8m0<SCALE_BLOCK>;
-    using C_tile = st_bf<ROW_BLOCK / 2, COL_BLOCK / 2>;            // CTA/WG distributed
+    using B_sc_tile  = st_fp8e8m0<32, 16, false>;
+    using C_tile     = st_bf<ROW_BLOCK / 2, COL_BLOCK / 2>;        // CTA/WG distributed
 
-    using A_gl = gl<fp8e4m3, 1, 1, -1, -1, A_fp8_tile>;
-    using A_sc_gl = gl<fp8e8m0, 1, -1, -1, SCALE_BLOCK, A_sc_vec>;
-    using B_gl = gl<fp8e4m3, 1, 1, -1, -1, B_fp8_tile>;
-    using B_sc_gl = gl<fp8e8m0, 1, -1, -1, SCALE_BLOCK, B_sc_vec>;
-    using C_gl = gl<bf16, 1, 1, -1, -1, C_tile>;
+    using A_gl    = gl<fp8e4m3,  1,  1, -1, -1, A_fp8_tile>;
+    using A_sc_gl = gl<fp8e8m0, -1, -1, 32, 16, A_sc_tile>;
+    using B_gl    = gl<fp8e4m3,  1,  1, -1, -1, B_fp8_tile>;
+    using B_sc_gl = gl<fp8e8m0, -1, -1, 32, 16, B_sc_tile>;
+    using C_gl    = gl<bf16,     1,  1, -1, -1, C_tile>;
 
     A_gl A;       // M x K
-    A_sc_gl A_sc; // (M // ROW_BLOCK) x (K // COL_BLOCK) x SCALE_BLOCK
+    A_sc_gl A_sc; // (M // 128) x (K // 128) x 32 x 16
     B_gl B;       // N x K
-    B_sc_gl B_sc; // (M // ROW_BLOCK) x (K // COL_BLOCK) x SCALE_BLOCK
+    B_sc_gl B_sc; // (M // 128) x (K // 128) x 32 x 16
     C_gl C;       // M x N
 
     __host__ inline dim3 grid() const { return dim3(config::SM_COUNT); }
@@ -67,8 +66,8 @@ struct pipeline_input_tiles {
 };
 
 struct pipeline_input_scales {
-    globals::A_sc_vec A;
-    globals::B_sc_vec B[2];
+    globals::A_sc_tile A;
+    globals::B_sc_tile B[2];
 };
 
 struct pipeline_outputs {
@@ -82,13 +81,13 @@ __device__ inline void kernel(const globals &G) {
     static_assert(sizeof(pipeline_input_tiles) * globals::PIPELINE_STAGES +
                   sizeof(pipeline_input_scales) * globals::PIPELINE_STAGES + 1024 +
                   sizeof(pipeline_outputs) <= config::DYNAMIC_SHARED_MEMORY);
-    pipeline_input_tiles (&input_tiles)[globals::PIPELINE_STAGES] = sm_allocator.allocate<pipeline_input_tiles, globals::PIPELINE_STAGES>();
+    pipeline_input_tiles  (&input_tiles) [globals::PIPELINE_STAGES] = sm_allocator.allocate<pipeline_input_tiles, globals::PIPELINE_STAGES>();
     pipeline_input_scales (&input_scales)[globals::PIPELINE_STAGES] = sm_allocator.allocate<pipeline_input_scales, globals::PIPELINE_STAGES>();
     pipeline_outputs &output_tiles = sm_allocator.allocate<pipeline_outputs>();
 
     // Allocate tensor memory
     tensor_allocator<1, config::CLUSTER_SIZE> tm_allocator;
-    auto out_tm = tm_allocator.allocate<full_tt_fl<globals::COL_BLOCK>>(0); // columns 000-255
+    auto out_tm  = tm_allocator.allocate<full_tt_fl<globals::COL_BLOCK>>(0);                 // columns 000-255
     auto A_sc_tm = tm_allocator.allocate<full_tt_fp8e8m0<16*globals::PIPELINE_STAGES>>(256); // columns 256-383
     auto B_sc_tm = tm_allocator.allocate<full_tt_fp8e8m0<32*globals::PIPELINE_STAGES>>(384); // columns 384-511
 
@@ -164,7 +163,6 @@ __device__ inline void kernel(const globals &G) {
                         last_stage = stage;
                     }
 
-                    // Update stage
                     stage = (stage + 1) % globals::PIPELINE_STAGES;
                 }
             } else if (warp_id == 2 && lane_id == 0) {
@@ -172,10 +170,10 @@ __device__ inline void kernel(const globals &G) {
                 for (int i = 0; i < num_iters_per_block; ++i) {
                     tma::cluster::wait(scales_tm_arrived[stage], get_phasebit<1>(phasebits, stage));
                     update_phasebit<1>(phasebits, stage);
-                    tma::cluster::expect_bytes(scales_sm_arrived[stage], sizeof(globals::A_sc_vec) + sizeof(globals::B_sc_vec) * 2, 0);
-                    tma::cluster::load_async(input_scales[stage].A, G.A_sc, {row_block_idx * 2 + cta_id, i, 0}, scales_sm_arrived[stage], (uint16_t)(1 << cta_id), 0);
-                    tma::cluster::load_async(input_scales[stage].B[0], G.B_sc, {col_block_idx * 2 + 0, i, 0}, scales_sm_arrived[stage], (uint16_t)(1 << cta_id), 0);
-                    tma::cluster::load_async(input_scales[stage].B[1], G.B_sc, {col_block_idx * 2 + 1, i, 0}, scales_sm_arrived[stage], (uint16_t)(1 << cta_id), 0);
+                    tma::cluster::expect_bytes(scales_sm_arrived[stage], sizeof(globals::A_sc_tile) + sizeof(globals::B_sc_tile) * 2, 0);
+                    tma::cluster::load_async(input_scales[stage].A,    G.A_sc, {row_block_idx * 2 + cta_id, i, 0, 0}, scales_sm_arrived[stage], (uint16_t)(1 << cta_id), 0);
+                    tma::cluster::load_async(input_scales[stage].B[0], G.B_sc, {col_block_idx * 2 + 0,      i, 0, 0}, scales_sm_arrived[stage], (uint16_t)(1 << cta_id), 0);
+                    tma::cluster::load_async(input_scales[stage].B[1], G.B_sc, {col_block_idx * 2 + 1,      i, 0, 0}, scales_sm_arrived[stage], (uint16_t)(1 << cta_id), 0);
                     stage = (stage + 1) % globals::PIPELINE_STAGES;
                 }
             } else if (cta_id == 0 && warp_id == 1 && lane_id == 0) {
@@ -186,11 +184,11 @@ __device__ inline void kernel(const globals &G) {
                     tma::cluster::wait(matmul_finished[stage], get_phasebit<1>(phasebits, stage));
                     update_phasebit<1>(phasebits, stage);
 
-                    auto A_sc_tm_subtile = A_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 16);
+                    auto A_sc_tm_subtile   = A_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 16);
                     auto B_sc_tm_subtile_0 = B_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 32);
                     auto B_sc_tm_subtile_1 = B_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 32 + 16);
 
-                    load_mxnv_scale_async(A_sc_tm_subtile, input_scales[stage].A);
+                    load_mxnv_scale_async(A_sc_tm_subtile,   input_scales[stage].A);
                     load_mxnv_scale_async(B_sc_tm_subtile_0, input_scales[stage].B[0]);
                     load_mxnv_scale_async(B_sc_tm_subtile_1, input_scales[stage].B[1]);
 
