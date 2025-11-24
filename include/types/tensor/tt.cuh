@@ -51,11 +51,13 @@ struct tt {
     using T2 = base_types::packing<_T>::packed_type;
     using dtype = T; ///< Data type of the elements in the tile.
 
+    static_assert(rows == 64 || rows == 128, "Rows must be 64 or 128 for tensor tiles.");
+
     static constexpr int rows    = _rows;
     static constexpr int cols    = _cols;
     static constexpr int height  = rows / kittens::TILE_ROW_DIM<T>;
-    static constexpr int width   = cols / kittens::TILE_COL_DIM<T>;
-    
+    static constexpr int width   = cols / kittens::TILE_COL_DIM<T>; // breaks for small cols, but okay as long as user is careful
+
     uint32_t addr;
 
     __device__ inline tt() : addr(0) {}
