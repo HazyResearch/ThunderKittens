@@ -185,16 +185,15 @@ __device__ inline void kernel(const globals &G) {
                     update_phasebit<0>(phasebits, stage);
                     tma::cluster::wait(matmul_finished[stage], get_phasebit<1>(phasebits, stage));
                     update_phasebit<1>(phasebits, stage);
-                    uint64_t A_sc_desc = detail::matrix_descriptor_raw(&input_scales[stage].A, 128, 128, 0);
-                    uint64_t B_sc_desc[2] = {detail::matrix_descriptor_raw(&input_scales[stage].B[0], 128, 128, 0),
-                                             detail::matrix_descriptor_raw(&input_scales[stage].B[1], 128, 128, 0)};
 
-                    asm volatile("{tcgen05.cp.cta_group::2.32x128b.warpx4 [%0], %1;}"
-                        :: "r"(A_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 16).addr), "l"(A_sc_desc));
-                    asm volatile("{tcgen05.cp.cta_group::2.32x128b.warpx4 [%0], %1;}"
-                        :: "r"(B_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 32).addr), "l"(B_sc_desc[0]));
-                    asm volatile("{tcgen05.cp.cta_group::2.32x128b.warpx4 [%0], %1;}"
-                        :: "r"(B_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 32 + 16).addr), "l"(B_sc_desc[1]));
+                    auto A_sc_tm_subtile = A_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 16);
+                    auto B_sc_tm_subtile_0 = B_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 32);
+                    auto B_sc_tm_subtile_1 = B_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 32 + 16);
+
+                    load_mxnv_scale_async(A_sc_tm_subtile, input_scales[stage].A);
+                    load_mxnv_scale_async(B_sc_tm_subtile_0, input_scales[stage].B[0]);
+                    load_mxnv_scale_async(B_sc_tm_subtile_1, input_scales[stage].B[1]);
+
                     detail::tcgen05::commit<config::CLUSTER_SIZE>(scales_tm_arrived[stage]);
                     tensor_before_thread_sync();
                     stage = (stage + 1) % globals::PIPELINE_STAGES;
