@@ -76,13 +76,6 @@ struct pipeline_outputs {
 };
 
 __device__ inline void kernel(const globals &G) {
-    // Warpgroup configuration
-    int lane_id = warp::laneid();
-    int warp_id = warpgroup::warpid();
-    int warpgroup_id = warpgroup::groupid();
-    int cta_id = cluster_ctarank();
-    int cluster_id = clusterIdx().x;
-
     // Allocate shared memory
     extern __shared__ int __shm[];
     tma_swizzle_allocator sm_allocator((int*)&__shm[0]);
@@ -118,6 +111,13 @@ __device__ inline void kernel(const globals &G) {
         init_semaphore(outputs_arrived, 0, 1); // local
     }
     everyone::tma::cluster::sync();
+
+    // Warpgroup configuration
+    int lane_id = warp::laneid();
+    int warp_id = warpgroup::warpid();
+    int warpgroup_id = warpgroup::groupid();
+    int cta_id = cluster_ctarank();
+    int cluster_id = clusterIdx().x;
 
     // Pipeline configuration
     int num_blocks_per_row = G.C.cols() / globals::COL_BLOCK;
@@ -222,28 +222,19 @@ __device__ inline void kernel(const globals &G) {
 
                     tensor_after_thread_sync();
                     asm volatile("{fence.proxy.async.shared::cta;}" ::: "memory");
-                    asm volatile("{.reg .pred P1; \t\n"
-                                    "setp.eq.u32 P1, 1, %6; \t\n"
-                                    "tcgen05.mma.cta_group::2.kind::mxf8f6f4.block_scale.scale_vec::1X [%0], %1, %2, %5, [%3], [%4], P1; \t\n}"
-                                    :: "r"(out_tm_addr), 
-                                    "l"(A_desc.chunk_descriptor(0)),
-                                    "l"(B_desc.chunk_descriptor(0)),
-                                    "r"(A_sc_tm_addr + stage * 16),
-                                    "r"(B_sc_tm_addr + stage * 16),
-                                    "r"(I_descs[0]),
-                                    "r"(i == 0 ? 0 : 1));
+                    if (i == 0)
+                        detail::tcgen05::st_st<fp8e4m3, fp8e8m0, 0, config::CLUSTER_SIZE>(
+                            out_tm_addr, A_desc.chunk_descriptor(0), B_desc.chunk_descriptor(0),
+                            A_sc_tm_addr + stage * 16, B_sc_tm_addr + stage * 16, I_descs[0]);
+                    else
+                        detail::tcgen05::st_st<fp8e4m3, fp8e8m0, 1, config::CLUSTER_SIZE>(
+                            out_tm_addr, A_desc.chunk_descriptor(0), B_desc.chunk_descriptor(0),
+                            A_sc_tm_addr + stage * 16, B_sc_tm_addr + stage * 16, I_descs[0]);
                     #pragma unroll
                     for (int i = 1; i < K / 32; i++) {
-                        asm volatile("{.reg .pred P1; \t\n"
-                                        "setp.eq.u32 P1, 1, %6; \t\n"
-                                        "tcgen05.mma.cta_group::2.kind::mxf8f6f4.block_scale.scale_vec::1X [%0], %1, %2, %5, [%3], [%4], P1; \t\n}"
-                                        :: "r"(out_tm_addr), 
-                                        "l"(A_desc.chunk_descriptor(i)),
-                                        "l"(B_desc.chunk_descriptor(i)),
-                                        "r"(A_sc_tm_addr + stage * 16),
-                                        "r"(B_sc_tm_addr + stage * 16),
-                                        "r"(I_descs[i]),
-                                        "n"(1));
+                        detail::tcgen05::st_st<fp8e4m3, fp8e8m0, 1, config::CLUSTER_SIZE>(
+                            out_tm_addr, A_desc.chunk_descriptor(i), B_desc.chunk_descriptor(i),
+                            A_sc_tm_addr + stage * 16, B_sc_tm_addr + stage * 16, I_descs[i]);
                     }
                     detail::tcgen05::commit<config::CLUSTER_SIZE>(matmul_finished[stage]);
                     stage = (stage + 1) % globals::PIPELINE_STAGES;
