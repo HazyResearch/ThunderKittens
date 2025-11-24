@@ -25,74 +25,64 @@ def torch_mxfp8_quantize(
     V_sc_unswizzled = torch.clamp(torch.ceil(torch.log2(decode_scale)), min=-127)
     V_fp8 = (V / (2 ** V_sc_unswizzled.repeat_interleave(32, dim=-1))).to(torch.float8_e4m3fn)
 
-    # Torch does not support float8_e8m0, so we need to manually convert to uint8
+    # Torch (up to 2.8) does not support float8_e8m0, so we need to manually convert to uint8
     fp8e8m0_bias = 127
     V_sc_unswizzled = (V_sc_unswizzled + fp8e8m0_bias).to(torch.uint8)
 
-    # Scale loads with TMA should be MN-major
-    V_sc_unswizzled = V_sc_unswizzled.T.contiguous()
-
-    return V_fp8, V_sc_unswizzled
+    return (
+        V_fp8,          # (M, N)
+        V_sc_unswizzled # (M, N // 32)
+    )
 
 
 def torch_mxfp8_dequantize(
-    V_fp8: torch.Tensor, 
-    V_sc_unswizzled: torch.Tensor
+    V_fp8: torch.Tensor,          # (M, N)
+    V_sc_unswizzled: torch.Tensor # (M, N // 32)
 ) -> torch.Tensor:
     # Function is naive for clarity, should not be like this in production
     assert len(V_fp8.shape) == 2
     assert len(V_sc_unswizzled.shape) == 2
     assert V_fp8.dtype == torch.float8_e4m3fn
     assert V_sc_unswizzled.dtype == torch.uint8
-    assert V_fp8.shape[0] == V_sc_unswizzled.shape[1]
-    assert V_fp8.shape[1] == V_sc_unswizzled.shape[0] * 32
+    assert V_fp8.shape[0] == V_sc_unswizzled.shape[0]
+    assert V_fp8.shape[1] == V_sc_unswizzled.shape[1] * 32
 
-    # Torch does not support float8_e8m0, so we need to manually convert
+    # Torch (up to 2.8) does not support float8_e8m0, so we need to manually convert
     fp8e8m0_bias = 127
     scale = 2 ** (V_sc_unswizzled.to(torch.float32) - fp8e8m0_bias)
-
-    # Scales are MN-major
-    scale = scale.T
 
     return V_fp8.to(torch.float32) * scale.repeat_interleave(32, dim=-1)
 
 
 def scale_swizzle(
-    V_sc_unswizzled: torch.Tensor
+    V_sc_unswizzled: torch.Tensor # (M, N // 32)
 ) -> torch.Tensor:
     # https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-mma-scale-factor-a-layout-1x
     assert len(V_sc_unswizzled.shape) == 2
     assert V_sc_unswizzled.dtype == torch.uint8
-    assert V_sc_unswizzled.shape[1] % 128 == 0
-    assert (V_sc_unswizzled.shape[0] * 32) % 128 == 0
+    assert V_sc_unswizzled.shape[0] % 128 == 0
+    assert (V_sc_unswizzled.shape[1] * 32) % 128 == 0
 
     M_BLOCK = 128
-    K_BLOCK = 4 # 128 / 32
+    N_BLOCK = 4 # 128 / 32
 
-    k_blocks, m = V_sc_unswizzled.shape
+    M, N_32 = V_sc_unswizzled.shape
 
-    V_sc = V_sc_unswizzled                    # (k_blocks, m)
-    V_sc = V_sc.transpose(0, 1)   # (m, k_blocks)
-    V_sc = V_sc.reshape(          # (m / 128, 128, k / 4, 4)
-        m // M_BLOCK, M_BLOCK,
-        k_blocks // K_BLOCK, K_BLOCK
+    V_sc = V_sc_unswizzled        # (M, N_32)
+    V_sc = V_sc.reshape(          # (M / 128, 128, N_32 / 4, 4)
+        M // M_BLOCK, M_BLOCK,
+        N_32 // N_BLOCK, N_BLOCK
     )
-    V_sc = V_sc.transpose(1, 2)   # (m / 128, k / 4, 128, 4) --> last 2 dims are all we need per MM
-    V_sc = V_sc.reshape(          # (m / 128, k / 4, 4, 32, 4)
-        m // M_BLOCK,
-        k_blocks // K_BLOCK,
-        4, M_BLOCK // 4, K_BLOCK
+    V_sc = V_sc.transpose(1, 2)   # (M / 128, N_32 / 4, 128, 4) --> last 2 dims are all we need per MM
+    V_sc = V_sc.reshape(          # (M / 128, N_32 / 4, 4, 32, 4)
+        M // M_BLOCK, N_32 // N_BLOCK,
+        4, M_BLOCK // 4, N_BLOCK
     )
-    V_sc = V_sc.transpose(-2, -3) # (m / 128, k / 4, 32, 4, 4)
-    V_sc = V_sc.reshape(          # (m / 128, k / 4, 32, 16)
-        m // M_BLOCK,
-        k_blocks // K_BLOCK,
-        M_BLOCK // 4, K_BLOCK * 4
-    )
-    V_sc = V_sc.reshape(          # (m / 128, k / 4, 512)
-        m // M_BLOCK,               # this step is TK-specific (to load with SV)
-        k_blocks // K_BLOCK,
-        M_BLOCK * K_BLOCK
+    V_sc = V_sc.transpose(-2, -3) # (M / 128, N_32 / 4, 32, 4, 4)
+    V_sc = V_sc.reshape(          # (M / 128, N_32 / 4, 32, 16)
+        M // M_BLOCK,
+        N_32 // N_BLOCK,
+        M_BLOCK // 4, N_BLOCK * 4
     )
 
     return V_sc.contiguous()
@@ -117,13 +107,13 @@ def check_diff(
 
 if __name__ == '__main__':
     # Matrix dimensions
-    M = int(sys.argv[1]) if len(sys.argv) > 1 else 16384
-    N = int(sys.argv[2]) if len(sys.argv) > 2 else 16384
+    M = int(sys.argv[1]) if len(sys.argv) > 1 else 204800
+    N = int(sys.argv[2]) if len(sys.argv) > 2 else 2048
     print(f"{M=}, {N=}")
 
     # Generate reference outputs and input matrix
     A_fp8_ref = ((torch.rand(M, N, dtype=torch.float32, device="cuda") * 2 - 1) * 448).to(torch.float8_e4m3fn)
-    A_sc_unswizzled_ref = torch.randint(127 - 20, 127 + 20, (N // 32, M), dtype=torch.uint8, device="cuda")
+    A_sc_unswizzled_ref = torch.randint(127 - 20, 127 + 20, (M, N // 32), dtype=torch.uint8, device="cuda")
     A_sc_ref = scale_swizzle(A_sc_unswizzled_ref)
     A_bf16 = torch_mxfp8_dequantize(A_fp8_ref, A_sc_unswizzled_ref).to(torch.bfloat16)
 

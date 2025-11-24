@@ -297,16 +297,16 @@ struct globals {
     static constexpr int K_BLOCK_SIZE = 32; // This should not change
 
     using A_bf16_tile = st_bf<TILE_SIZE, TILE_SIZE, false>;
-    using A_fp8_tile = st_fp8e4m3<TILE_SIZE, TILE_SIZE, false>;
-    using A_sc_vec = sv_fp8e8m0<TILE_SIZE * TILE_SIZE / K_BLOCK_SIZE>;
+    using A_fp8_tile  = st_fp8e4m3<TILE_SIZE, TILE_SIZE, false>;
+    using A_sc_tile   = st_fp8e8m0<32, 16, false>;
 
     using A_bf16_gl = gl<bf16, 1, 1, -1, -1, A_bf16_tile>;
     using A_fp8_gl = gl<fp8e4m3, 1, 1, -1, -1, A_fp8_tile>;
-    using A_sc_gl = gl<fp8e8m0, 1, -1, -1, TILE_SIZE * TILE_SIZE / K_BLOCK_SIZE, A_sc_vec>;
+    using A_sc_gl = gl<fp8e8m0, -1, -1, 32, 16, A_sc_tile>;
 
     A_bf16_gl A_bf16; // M x N
     A_fp8_gl A_fp8;   // M x N
-    A_sc_gl A_sc;     // (M // 128) x (N // 128) x 512
+    A_sc_gl A_sc;     // (M // 128) x (N // 128) x 32 x 16
 
     __host__ inline dim3 grid() const {
         return dim3(A_bf16.cols() / TILE_SIZE, A_bf16.rows() / TILE_SIZE);
@@ -321,8 +321,8 @@ __device__ inline void kernel(const globals &G) {
     extern __shared__ int __shm[];
     tma_swizzle_allocator sm_allocator((int*)&__shm[0]);
     globals::A_bf16_tile &A_bf16_smem = sm_allocator.allocate<globals::A_bf16_tile>();
-    globals::A_fp8_tile &A_fp8_smem = *reinterpret_cast<globals::A_fp8_tile *>(&A_bf16_smem);
-    globals::A_sc_vec &A_sc_smem = *reinterpret_cast<globals::A_sc_vec *>(
+    globals::A_fp8_tile  &A_fp8_smem = *reinterpret_cast<globals::A_fp8_tile *>(&A_bf16_smem);
+    globals::A_sc_tile   &A_sc_smem = *reinterpret_cast<globals::A_sc_tile *>(
         reinterpret_cast<uint64_t>(&A_fp8_smem) + sizeof(A_fp8_smem));
 
     // Calculate indices
@@ -413,7 +413,7 @@ __device__ inline void kernel(const globals &G) {
     __syncthreads();
     if (tid == 0) {
         tma::store_async(G.A_fp8, A_fp8_smem, {row, col});
-        tma::store_async(G.A_sc, A_sc_smem, {row, col, 0});
+        tma::store_async(G.A_sc,  A_sc_smem,  {row, col, 0, 0});
     }
 }
 
