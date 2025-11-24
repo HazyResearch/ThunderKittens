@@ -79,4 +79,4 @@ if __name__ == '__main__':
     tflops = flops * 1e-12
 
     print(f"Average time: {avg_time * 1e6:.2f} ± {std_time * 1e6:.2f} us")
-    print(f"Average TFLOPS: {tflops / (avg_time):.2f} TFLOp/s")
+    print(f"Average TFLOPs: {tflops / (avg_time):.2f} TFLOp/s")
