@@ -23,52 +23,23 @@ namespace detail {
 // See https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#asynchronous-warpgroup-level-matrix-shared-memory-layout-matrix-descriptor
 __device__ static inline uint64_t matrix_descriptor_encode(uint64_t x) { return (((x) & 0x3FFFF) >> 0x4); }
 
-template<typename T, int rows, int cols, bool MN_major, bool swizzle>
-__device__ static inline uint64_t matrix_descriptor_raw(uint64_t addr) {
-    static_assert(swizzle, "Non-swizzled mode is not supported yet.");
-    static constexpr int height = rows / kittens::TILE_ROW_DIM<T>;
-    static constexpr int width = cols / kittens::TILE_COL_DIM<T>;
+template <typename T>
+__device__ static inline uint64_t matrix_descriptor_raw(
+    T *addr,
+    uint32_t leading_dim_offset,
+    uint32_t stride_dim_offset,
+    uint32_t swizzle_mode
+) {
 #ifdef KITTENS_BLACKWELL
     // see https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#tcgen05-shared-memory-descriptor
-    uint64_t desc = matrix_descriptor_encode(addr) | (1llu<<46); // needed for blackwell shared memory descriptors
+    return matrix_descriptor_encode(reinterpret_cast<uint64_t>(addr)) | 
+           (1llu << 46) | // needed for blackwell shared memory descriptors
 #else
-    uint64_t desc = matrix_descriptor_encode(addr);
+    return matrix_descriptor_encode(reinterpret_cast<uint64_t>(addr)) |
 #endif
-    if constexpr (MN_major) { // MN major mode (i.e., K x M for A matrix, K x N for B matrix)
-        if constexpr (width%4 == 0) {
-            desc |= matrix_descriptor_encode((uint64_t)2048*height) << 16;
-            desc |= matrix_descriptor_encode((uint64_t)1024) << 32;
-            desc |= 1llu << 62; // set wgmma_swizzle mode
-        }
-        else if constexpr (width%2 == 0) {
-            desc |= matrix_descriptor_encode((uint64_t)1024*height) << 16;
-            desc |= matrix_descriptor_encode((uint64_t)512) << 32;
-            desc |= 2llu << 62; // set wgmma_swizzle mode
-        }
-        else {
-            desc |= matrix_descriptor_encode((uint64_t)512*height) << 16;
-            desc |= matrix_descriptor_encode((uint64_t)256) << 32;
-            desc |= 3llu << 62; // set wgmma_swizzle mode
-        }
-    }
-    else { // K major mode (i.e., M x K for A matrix, N x K for B matrix)
-        if constexpr (width%4 == 0) {
-            desc |= matrix_descriptor_encode((uint64_t)16) << 16;   // this line doesn't matter
-            desc |= matrix_descriptor_encode((uint64_t)1024) << 32; // 128 byte swizzle x 8 for core matrix rows
-            desc |= 1llu << 62; // set wgmma_swizzle mode
-        }
-        else if constexpr (width%2 == 0) {
-            desc |= matrix_descriptor_encode((uint64_t)16) << 16;  // this line doesn't matter
-            desc |= matrix_descriptor_encode((uint64_t)512) << 32; // 64 byte swizzle x 8 for core matrix rows
-            desc |= 2llu << 62; // set wgmma_swizzle mode
-        }
-        else {
-            desc |= matrix_descriptor_encode((uint64_t)16) << 16;  // this line doesn't matter
-            desc |= matrix_descriptor_encode((uint64_t)256) << 32; // 32 byte swizzle x 8 for core matrix rows
-            desc |= 3llu << 62; // set wgmma_swizzle mode
-        }
-    }
-    return desc;
+           matrix_descriptor_encode((uint64_t)leading_dim_offset) << 16 |
+           matrix_descriptor_encode((uint64_t)stride_dim_offset) << 32 |
+           (uint64_t)swizzle_mode << 62;
 }
 
 } // namespace detail
@@ -84,7 +55,25 @@ struct st_descriptor {
     static constexpr int width  = ST::width;
     static constexpr bool swizzle = ST::swizzle;
     uint64_t base_desc;
-    __device__ inline st_descriptor(const ST &tile) : base_desc(detail::matrix_descriptor_raw<T, rows, cols, MN_major, swizzle>((uint64_t)(&tile.data[0]))) {}
+    __device__ inline st_descriptor(const ST &tile) {
+        static_assert(swizzle, "Non-swizzled mode is not supported yet.");
+        if constexpr (MN_major) { // MN major mode (i.e., K x M for A matrix, K x N for B matrix)
+            if constexpr (ST::width%4 == 0)
+                base_desc = detail::matrix_descriptor_raw(&tile.data[0], 2048*ST::height, 1024, 1);
+            else if constexpr (ST::width%2 == 0)
+                base_desc = detail::matrix_descriptor_raw(&tile.data[0], 1024*ST::height, 512, 2);
+            else
+                base_desc = detail::matrix_descriptor_raw(&tile.data[0], 512*ST::height, 256, 3);
+        }
+        else { // K major mode (i.e., M x K for A matrix, N x K for B matrix)
+            if constexpr (ST::width%4 == 0)
+                base_desc = detail::matrix_descriptor_raw(&tile.data[0], 16 /* does not matter */, 1024, 1);
+            else if constexpr (ST::width%2 == 0)
+                base_desc = detail::matrix_descriptor_raw(&tile.data[0], 16 /* does not matter */, 512, 2);
+            else
+                base_desc = detail::matrix_descriptor_raw(&tile.data[0], 16 /* does not matter */, 256, 3);
+        }
+    }
     __device__ inline st_descriptor(const st_descriptor<ST, MN_major> &other) : base_desc(other.base_desc) {} // copy constructor
     __device__ inline uint64_t chunk_descriptor(int chunk_idx) {
         static_assert(swizzle, "Non-swizzled mode is not supported yet.");
