@@ -1,11 +1,3 @@
-/*
-    Benchmarks:
-        - 4096x4096x4096 : 1236.21 TFLOp/s
-        - 8192x8192x8192 : 2558.32 TFLOp/s
-        - 16384x16384x16384 : 2700.41 TFLOp/s
-        - 204800x2048x1536 : 2307.49 TFLOp/s
-*/
-
 #include "kittens.cuh"
 #include "pyutils/torchutils.cuh"
 
