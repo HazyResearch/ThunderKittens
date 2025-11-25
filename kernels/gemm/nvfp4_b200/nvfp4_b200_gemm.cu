@@ -409,11 +409,10 @@ __device__ inline void kernel(const globals &G) {
     // }
 }
 
-__host__ inline at::Tensor absmax(const at::Tensor& x) {
-    // https://docs.pytorch.org/docs/stable/generated/torch.linalg.vector_norm.html
+__host__ inline void absmax(const at::Tensor &x, at::Tensor &out) {
     const at::Scalar pos_infty = at::Scalar(std::numeric_limits<double>::infinity());
-    auto _x = at::_ops::linalg_vector_norm::call(x, pos_infty, c10::nullopt, false, c10::nullopt);
-    return at::_ops::unsqueeze::call(_x, /*dim=*/0);
+    auto out_view = at::_ops::squeeze::call(out);
+    at::_ops::linalg_vector_norm_out::call(x, pos_infty, c10::nullopt, false, c10::nullopt, out_view);
 }
 
 __host__ void entrypoint(
@@ -422,6 +421,7 @@ __host__ void entrypoint(
     at::Tensor &A_sc,
     at::Tensor &A_sc_global
 ) {
+    absmax(A_bf16, A_sc_global);
     globals G {
         .A_bf16 = kittens::py::tensor_to_gl<globals::A_bf16_gl>(A_bf16),
         .A_fp4x2 = kittens::py::tensor_to_gl<globals::A_fp4x2_gl>(A_fp4x2),
@@ -504,5 +504,4 @@ PYBIND11_MODULE(_C, m) {
     m.def("nvfp4_quantize", &nvfp4_quantize::entrypoint);
     m.def("fp32_to_fp4x2", &nvfp4_utils::fp32_to_fp4x2);
     m.def("fp4x2_to_fp32", &nvfp4_utils::fp4x2_to_fp32);
-    m.def("absmax", &nvfp4_quantize::absmax);
 }
