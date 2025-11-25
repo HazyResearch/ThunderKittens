@@ -14,7 +14,6 @@ def torch_mxfp8_quantize(
     assert len(V.shape) == 2
     assert V.shape[0] % 128 == 0
     assert V.shape[1] % 128 == 0
-    assert V.dtype == torch.bfloat16
 
     # Following not the OCP MX specs, but the NVIDIA recipe: https://arxiv.org/pdf/2506.08027
     # This specifically follows the Appendix (page 13)

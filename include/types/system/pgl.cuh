@@ -111,7 +111,7 @@ struct pgl {
     __host__ __device__ inline auto depth() const { return gls[0].depth(); }
     __host__ __device__ inline auto rows() const { return gls[0].rows(); }
     __host__ __device__ inline auto cols() const { return gls[0].cols(); }
-    __host__ __device__ inline size_t numel() const { return static_cast<size_t>(batch()) * depth() * rows() * cols(); }
+    __host__ __device__ inline auto numel() const { return gls[0].numel(); }
 
     template<int axis> __device__ inline size_t shape() const { return gls[0].template shape<axis>(); }
     template<int axis> __device__ inline size_t stride() const { return gls[0].template stride<axis>(); }

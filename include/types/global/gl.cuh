@@ -107,6 +107,9 @@ struct identifier {};
 
 template<typename _T, int b, int d, int r, int c, typename... TMA_Types>
 struct gl {
+#ifdef KITTENS_BLACKWELL
+    static_assert(!std::is_same_v<_T, fp4e2m1>, "For FP4 types, you must use a packed type (e.g., fp4e2m1_2 or fp4e2m1_4).");
+#endif
     using identifier = ducks::gl::identifier;
 
     using T     = base_types::packing<_T>::unpacked_type;
@@ -130,6 +133,7 @@ struct gl {
     template <int R=__r__> __device__ __host__ std::enable_if_t<(R == -1), int> rows() const { return rows_internal; }
     template <int C=__c__> __device__ __host__ static constexpr std::enable_if_t<(C > 0), int> cols() { return C; }
     template <int C=__c__> __device__ __host__ std::enable_if_t<(C == -1), int> cols() const { return cols_internal; }
+    __device__ __host__ inline size_t numel() const { return static_cast<size_t>(batch()) * depth() * rows() * cols(); }
 
     detail::descriptor_dict<TMA_Types...> tma_descs;
 
