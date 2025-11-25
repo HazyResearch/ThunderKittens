@@ -1,6 +1,9 @@
 #include "kittens.cuh"
 #include "pyutils/torchutils.cuh"
 
+#include "ATen/ops/linalg_vector_norm.h" 
+#include "ATen/ops/unsqueeze.h"
+
 using namespace kittens;
 
 namespace nvfp4_gemm {
@@ -283,17 +286,19 @@ struct globals {
     static constexpr int TILE_SIZE = 128;   // This should not change
     static constexpr int K_BLOCK_SIZE = 32; // This should not change
 
-    using A_bf16_tile = st_bf<TILE_SIZE, TILE_SIZE, false>;
-    using A_fp8_tile  = st_fp8e4m3<TILE_SIZE, TILE_SIZE, false>;
-    using A_sc_tile   = st_fp8e8m0<32, 16, false>;
+    using A_bf16_tile  = st_bf<TILE_SIZE, TILE_SIZE, false>;
+    using A_fp4x2_tile = st_fp4e2m1_2<TILE_SIZE, TILE_SIZE / 2, false>;
+    using A_sc_tile    = st_fp8e4m3<32, 16, false>;
 
-    using A_bf16_gl = gl<bf16, 1, 1, -1, -1, A_bf16_tile>;
-    using A_fp8_gl = gl<fp8e4m3, 1, 1, -1, -1, A_fp8_tile>;
-    using A_sc_gl = gl<fp8e8m0, -1, -1, 32, 16, A_sc_tile>;
+    using A_bf16_gl      = gl<bf16,      1,  1, -1, -1, A_bf16_tile>;
+    using A_fp4x2_gl     = gl<fp4e2m1_2, 1,  1, -1, -1, A_fp4x2_tile>;
+    using A_sc_gl        = gl<fp8e4m3,  -1, -1, 32, 16, A_sc_tile>;
+    using A_sc_global_gl = gl<float,     1,  1,  1,  1>;
 
-    A_bf16_gl A_bf16; // M x N
-    A_fp8_gl A_fp8;   // M x N
-    A_sc_gl A_sc;     // (M // 128) x (N // 128) x 32 x 16
+    A_bf16_gl A_bf16;           // M x N
+    A_fp4x2_gl A_fp4x2;         // M x (N // 2)
+    A_sc_gl A_sc;               // (M // 128) x (N // 64) x 32 x 16
+    A_sc_global_gl A_sc_global; // (1,)
 
     __host__ inline dim3 grid() const {
         return dim3(A_bf16.cols() / TILE_SIZE, A_bf16.rows() / TILE_SIZE);
@@ -304,115 +309,124 @@ struct globals {
 };
 
 __device__ inline void kernel(const globals &G) {
-    // Allocate shared memory
-    extern __shared__ int __shm[];
-    tma_swizzle_allocator sm_allocator((int*)&__shm[0]);
-    globals::A_bf16_tile &A_bf16_smem = sm_allocator.allocate<globals::A_bf16_tile>();
-    globals::A_fp8_tile  &A_fp8_smem = *reinterpret_cast<globals::A_fp8_tile *>(&A_bf16_smem);
-    globals::A_sc_tile   &A_sc_smem = *reinterpret_cast<globals::A_sc_tile *>(
-        reinterpret_cast<uint64_t>(&A_fp8_smem) + sizeof(A_fp8_smem));
+    // // Allocate shared memory
+    // extern __shared__ int __shm[];
+    // tma_swizzle_allocator sm_allocator((int*)&__shm[0]);
+    // globals::A_bf16_tile &A_bf16_smem = sm_allocator.allocate<globals::A_bf16_tile>();
+    // globals::A_fp8_tile  &A_fp8_smem = *reinterpret_cast<globals::A_fp8_tile *>(&A_bf16_smem);
+    // globals::A_sc_tile   &A_sc_smem = *reinterpret_cast<globals::A_sc_tile *>(
+    //     reinterpret_cast<uint64_t>(&A_fp8_smem) + sizeof(A_fp8_smem));
 
-    // Calculate indices
-    const int tid = threadIdx.x;
-    const int row = blockIdx.y;
-    const int col = blockIdx.x;
+    // // Calculate indices
+    // const int tid = threadIdx.x;
+    // const int row = blockIdx.y;
+    // const int col = blockIdx.x;
 
-    // Initialize mbarrier and initiate TMA load
-    __shared__ semaphore inputs_arrived;
-    if (tid == 0) {
-        init_semaphore(inputs_arrived, 0, 1);
-        tma::expect(inputs_arrived, A_bf16_smem);
-        tma::load_async(A_bf16_smem, G.A_bf16, {row, col}, inputs_arrived);
-    }
+    // // Initialize mbarrier and initiate TMA load
+    // __shared__ semaphore inputs_arrived;
+    // if (tid == 0) {
+    //     init_semaphore(inputs_arrived, 0, 1);
+    //     tma::expect(inputs_arrived, A_bf16_smem);
+    //     tma::load_async(A_bf16_smem, G.A_bf16, {row, col}, inputs_arrived);
+    // }
 
-    // Wait for the TMA load to complete
-    __syncthreads();
-    wait(inputs_arrived, 0);
+    // // Wait for the TMA load to complete
+    // __syncthreads();
+    // wait(inputs_arrived, 0);
 
-    // We have 128 threads per block. Each thread handles a row of 128 elements
-    constexpr int NUM_K_BLOCKS = globals::TILE_SIZE / globals::K_BLOCK_SIZE; // 4  (number of K blocks in 128 elements)
-    constexpr int N_PER_K_BLOCK = globals::TILE_SIZE / 2 / NUM_K_BLOCKS;     // 16 (number of bf16x2 elements per K block)
-    bf16_2 A_bf16_reg[NUM_K_BLOCKS][N_PER_K_BLOCK];
-    fp8e8m0 A_sc_reg[NUM_K_BLOCKS];
+    // // We have 128 threads per block. Each thread handles a row of 128 elements
+    // constexpr int NUM_K_BLOCKS = globals::TILE_SIZE / globals::K_BLOCK_SIZE; // 4  (number of K blocks in 128 elements)
+    // constexpr int N_PER_K_BLOCK = globals::TILE_SIZE / 2 / NUM_K_BLOCKS;     // 16 (number of bf16x2 elements per K block)
+    // bf16_2 A_bf16_reg[NUM_K_BLOCKS][N_PER_K_BLOCK];
+    // fp8e8m0 A_sc_reg[NUM_K_BLOCKS];
 
-    // Destination tile row this thread will handle.
-    // This makes code more clean when we also handle transposed case (which we don't here)
-    const int &tile_row = tid;
+    // // Destination tile row this thread will handle.
+    // // This makes code more clean when we also handle transposed case (which we don't here)
+    // const int &tile_row = tid;
 
-    // Load input matrix from shared memory (custom swizzling)
-    #pragma unroll
-    for (int i = 0; i < NUM_K_BLOCKS; i++) {
-        int k_block_idx = (i + tid / 8) % NUM_K_BLOCKS;
-        #pragma unroll
-        for (int j = 0; j < N_PER_K_BLOCK; j++) {
-            int tile_col = k_block_idx * globals::K_BLOCK_SIZE + ((tid + j) * 2) % globals::K_BLOCK_SIZE;
-            int offset = (tile_row * globals::TILE_SIZE + tile_col) * sizeof(bf16);
-            move<bf16_2>::lds(A_bf16_reg[i][j], 
-                static_cast<uint32_t>(__cvta_generic_to_shared(&A_bf16_smem)) + offset);
-        }
-    }
-    __syncthreads();
+    // // Load input matrix from shared memory (custom swizzling)
+    // #pragma unroll
+    // for (int i = 0; i < NUM_K_BLOCKS; i++) {
+    //     int k_block_idx = (i + tid / 8) % NUM_K_BLOCKS;
+    //     #pragma unroll
+    //     for (int j = 0; j < N_PER_K_BLOCK; j++) {
+    //         int tile_col = k_block_idx * globals::K_BLOCK_SIZE + ((tid + j) * 2) % globals::K_BLOCK_SIZE;
+    //         int offset = (tile_row * globals::TILE_SIZE + tile_col) * sizeof(bf16);
+    //         move<bf16_2>::lds(A_bf16_reg[i][j], 
+    //             static_cast<uint32_t>(__cvta_generic_to_shared(&A_bf16_smem)) + offset);
+    //     }
+    // }
+    // __syncthreads();
 
-    // Perform MXFP8 quantization
-    #pragma unroll
-    for (int i = 0; i < NUM_K_BLOCKS; i++) {
-        // A group of 8 threads handles the same K block segment
-        int k_block_idx = (i + tid / 8) % NUM_K_BLOCKS;
+    // // Perform MXFP8 quantization
+    // #pragma unroll
+    // for (int i = 0; i < NUM_K_BLOCKS; i++) {
+    //     // A group of 8 threads handles the same K block segment
+    //     int k_block_idx = (i + tid / 8) % NUM_K_BLOCKS;
 
-        // Calculate absolute maximum
-        bf16_2 amax = __habs2(A_bf16_reg[i][0]);
-        #pragma unroll
-        for (int j = 1; j < N_PER_K_BLOCK; j++)
-            amax = __hmax2(amax, __habs2(A_bf16_reg[i][j]));
+    //     // Calculate absolute maximum
+    //     bf16_2 amax = __habs2(A_bf16_reg[i][0]);
+    //     #pragma unroll
+    //     for (int j = 1; j < N_PER_K_BLOCK; j++)
+    //         amax = __hmax2(amax, __habs2(A_bf16_reg[i][j]));
 
-        // Compute the scales
-        // Must narrow to e8m0, rounding towards positive infinity and saturating to finite, then clamp
-        // https://arxiv.org/pdf/2506.08027
-        float scale = max(__bfloat162float(__hmax(amax.x, amax.y)) * 0.002232142857f, 0.000000000001f); // in theory lower clamp is not needed
-        A_sc_reg[k_block_idx].__x = __nv_cvt_float_to_e8m0(scale, __NV_SATFINITE, cudaRoundPosInf); // causes stack frame, but ignorable
-        scale = static_cast<float>(A_sc_reg[k_block_idx]); // utilizes the float() operator defined in __nv_fp8x2_e8m0
+    //     // Compute the scales
+    //     // Must narrow to e8m0, rounding towards positive infinity and saturating to finite, then clamp
+    //     // https://arxiv.org/pdf/2506.08027
+    //     float scale = max(__bfloat162float(__hmax(amax.x, amax.y)) * 0.002232142857f, 0.000000000001f); // in theory lower clamp is not needed
+    //     A_sc_reg[k_block_idx].__x = __nv_cvt_float_to_e8m0(scale, __NV_SATFINITE, cudaRoundPosInf); // causes stack frame, but ignorable
+    //     scale = static_cast<float>(A_sc_reg[k_block_idx]); // utilizes the float() operator defined in __nv_fp8x2_e8m0
 
-        // Quantize input matrix and store to share memory
-        #pragma unroll
-        for (int j = 0; j < N_PER_K_BLOCK; j++) {
-            int tile_col = k_block_idx * globals::K_BLOCK_SIZE + ((tid + j) * 2) % globals::K_BLOCK_SIZE;
-            int offset = (tile_row * globals::TILE_SIZE + tile_col) * sizeof(fp8e4m3);
-            fp8e4m3 A_fp8_reg[2] = {
-                __nv_fp8_e4m3(__bfloat162float(A_bf16_reg[i][j].x) / scale),
-                __nv_fp8_e4m3(__bfloat162float(A_bf16_reg[i][j].y) / scale)
-            };
-            asm volatile("{st.shared.b16 [%0], %1;}"
-                :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&A_fp8_smem)) + offset)
-                   "h"(*reinterpret_cast<uint16_t *>(&A_fp8_reg[0])));
-        }
-    }
+    //     // Quantize input matrix and store to share memory
+    //     #pragma unroll
+    //     for (int j = 0; j < N_PER_K_BLOCK; j++) {
+    //         int tile_col = k_block_idx * globals::K_BLOCK_SIZE + ((tid + j) * 2) % globals::K_BLOCK_SIZE;
+    //         int offset = (tile_row * globals::TILE_SIZE + tile_col) * sizeof(fp8e4m3);
+    //         fp8e4m3 A_fp8_reg[2] = {
+    //             __nv_fp8_e4m3(__bfloat162float(A_bf16_reg[i][j].x) / scale),
+    //             __nv_fp8_e4m3(__bfloat162float(A_bf16_reg[i][j].y) / scale)
+    //         };
+    //         asm volatile("{st.shared.b16 [%0], %1;}"
+    //             :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&A_fp8_smem)) + offset)
+    //                "h"(*reinterpret_cast<uint16_t *>(&A_fp8_reg[0])));
+    //     }
+    // }
 
-    // Store the scales to shared memory. Each thread will access 1 bank, so no need to swizzle,
-    // but we do have to follow this complicated layout pattern made by NVIDIA:
-    // https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-mma-scale-factor-a-layout-1x
-    int scale_offset = (tile_row % 32) * 16 + // row
-                       (tile_row / 32) * 4;   // column
-    asm volatile("{st.shared.b32 [%0], %1;}" 
-        :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&A_sc_smem)) + scale_offset)
-           "r"(*reinterpret_cast<uint32_t *>(&A_sc_reg[0])));
+    // // Store the scales to shared memory. Each thread will access 1 bank, so no need to swizzle,
+    // // but we do have to follow this complicated layout pattern made by NVIDIA:
+    // // https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-mma-scale-factor-a-layout-1x
+    // int scale_offset = (tile_row % 32) * 16 + // row
+    //                    (tile_row / 32) * 4;   // column
+    // asm volatile("{st.shared.b32 [%0], %1;}" 
+    //     :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&A_sc_smem)) + scale_offset)
+    //        "r"(*reinterpret_cast<uint32_t *>(&A_sc_reg[0])));
 
-    // Store to global memory
-    __syncthreads();
-    if (tid == 0) {
-        tma::store_async(G.A_fp8, A_fp8_smem, {row, col});
-        tma::store_async(G.A_sc,  A_sc_smem,  {row, col, 0, 0});
-    }
+    // // Store to global memory
+    // __syncthreads();
+    // if (tid == 0) {
+    //     tma::store_async(G.A_fp8, A_fp8_smem, {row, col});
+    //     tma::store_async(G.A_sc,  A_sc_smem,  {row, col, 0, 0});
+    // }
+}
+
+__host__ inline at::Tensor absmax(const at::Tensor& x) {
+    // https://docs.pytorch.org/docs/stable/generated/torch.linalg.vector_norm.html
+    const at::Scalar pos_infty = at::Scalar(std::numeric_limits<double>::infinity());
+    auto _x = at::_ops::linalg_vector_norm::call(x, pos_infty, c10::nullopt, false, c10::nullopt);
+    return at::_ops::unsqueeze::call(_x, /*dim=*/0);
 }
 
 __host__ void entrypoint(
     const at::Tensor &A_bf16,
-    at::Tensor &A_fp8,
-    at::Tensor &A_sc 
+    at::Tensor &A_fp4x2,
+    at::Tensor &A_sc,
+    at::Tensor &A_sc_global
 ) {
     globals G {
         .A_bf16 = kittens::py::tensor_to_gl<globals::A_bf16_gl>(A_bf16),
-        .A_fp8 = kittens::py::tensor_to_gl<globals::A_fp8_gl>(A_fp8),
-        .A_sc = kittens::py::tensor_to_gl<globals::A_sc_gl>(A_sc)
+        .A_fp4x2 = kittens::py::tensor_to_gl<globals::A_fp4x2_gl>(A_fp4x2),
+        .A_sc = kittens::py::tensor_to_gl<globals::A_sc_gl>(A_sc),
+        .A_sc_global = kittens::py::tensor_to_gl<globals::A_sc_global_gl>(A_sc_global)
     };
     kittens::py::launch_kernel<config, globals, kernel>(G);
 }
@@ -490,4 +504,5 @@ PYBIND11_MODULE(_C, m) {
     m.def("nvfp4_quantize", &nvfp4_quantize::entrypoint);
     m.def("fp32_to_fp4x2", &nvfp4_utils::fp32_to_fp4x2);
     m.def("fp4x2_to_fp32", &nvfp4_utils::fp4x2_to_fp32);
+    m.def("absmax", &nvfp4_quantize::absmax);
 }

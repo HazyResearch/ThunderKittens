@@ -26,29 +26,30 @@ def torch_nvfp4_quantize(
 
     V_fp4x2 = fp32_to_fp4x2(V * s_global_enc * s_local_enc.repeat_interleave(16, dim=-1)) # round-to-even or stochastic (refer to the recipe)
     V_sc_unswizzled = s_local_dec # alias for prettiness
-    V_sc_global = s_global_dec    # alias for prettiness
+    V_sc_global = s_global_dec.unsqueeze(0)
 
     return (
         V_fp4x2,         # (M, N // 2)  fp4e2m1x2
         V_sc_unswizzled, # (M, N // 16) fp8e4m3
-        V_sc_global      # (,)          fp32
+        V_sc_global      # (1,)         fp32
     )
 
 
 def torch_nvfp4_dequantize(
     V_fp4x2: torch.Tensor,         # (M, N // 2)  fp4e2m1x2
     V_sc_unswizzled: torch.Tensor, # (M, N // 16) fp8e4m3
-    V_sc_global: torch.Tensor      # (,)          fp32
+    V_sc_global: torch.Tensor      # (1,)         fp32
 ) -> torch.Tensor:
     # Function is naive for clarity, should not be like this in production
     assert len(V_fp4x2.shape) == 2
     assert len(V_sc_unswizzled.shape) == 2
-    assert len(V_sc_global.shape) == 0
+    assert len(V_sc_global.shape) == 1
     assert V_fp4x2.dtype == torch.float4_e2m1fn_x2
     assert V_sc_unswizzled.dtype == torch.float8_e4m3fn
     assert V_sc_global.dtype == torch.float32
     assert V_fp4x2.shape[0] == V_sc_unswizzled.shape[0]
     assert V_fp4x2.shape[1] == V_sc_unswizzled.shape[1] * 16 // 2
+    assert V_sc_global.shape[0] == 1
 
     return (
         fp4x2_to_fp32(V_fp4x2) * 
@@ -119,13 +120,9 @@ if __name__ == '__main__':
     A_fp4x2_ref, A_sc_unswizzled_ref, A_sc_global_ref = torch_nvfp4_quantize(A_bf16)
     A_sc_ref = scale_swizzle(A_sc_unswizzled_ref)
 
-    # Check quantization roundtrip error
-    A_fp4x2_round, A_sc_unswizzled_round, A_sc_global_round = torch_nvfp4_quantize(
-        torch_nvfp4_dequantize(A_fp4x2_ref, A_sc_unswizzled_ref, A_sc_global_ref)
-    )
-    check_diff("Round-FP4", fp4x2_to_fp32(A_fp4x2_round), fp4x2_to_fp32(A_fp4x2_ref))
-    check_diff("Round-SC", A_sc_unswizzled_round, A_sc_unswizzled_ref)
-    check_diff("Round-SC-Global", A_sc_global_round, A_sc_global_ref)
+    # Check quantization error
+    A_bf16_dequantized = torch_nvfp4_dequantize(A_fp4x2_ref, A_sc_unswizzled_ref, A_sc_global_ref)
+    check_diff("Quantization error", A_bf16_dequantized, A_bf16)
 
     # # Run our version and check correctness
     # A_fp8_tk = torch.zeros_like(A_fp8_ref)
