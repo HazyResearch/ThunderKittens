@@ -8,7 +8,7 @@ from _C import mxfp8_quantize
 
 
 def torch_mxfp8_quantize(
-    V: torch.Tensor
+    V: torch.Tensor # (M, N)
 ) -> tuple[torch.Tensor, torch.Tensor]:
     # Function is naive for clarity, should not be like this in production
     assert len(V.shape) == 2
