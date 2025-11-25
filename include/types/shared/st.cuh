@@ -57,6 +57,9 @@ struct st_subtile;
  */
 template<typename _T, int _rows, int _cols, bool _swizzle=true>
 struct KITTENS_DEFAULT_ALIGN st {
+#ifdef KITTENS_BLACKWELL
+    static_assert(!std::is_same_v<_T, fp4e2m1>, "For FP4 types, you must use a packed type (i.e., fp4e2m1_2 or fp4e2m1_4).");
+#endif
     using identifier = ducks::st::identifier; ///< Type identifier for shared memory tile.
     using T = base_types::packing<_T>::unpacked_type;
     using T2 = base_types::packing<_T>::packed_type;
@@ -76,7 +79,8 @@ struct KITTENS_DEFAULT_ALIGN st {
     static_assert((swizzle && (rows % kittens::TILE_ROW_DIM<T> == 0)) || (!swizzle && (rows % kittens::BASE_TILE_DIM == 0)), "Rows must be divisible by the tile dimension");
     static_assert((swizzle && (cols % kittens::TILE_COL_DIM<T> == 0)) || (!swizzle && (cols % kittens::BASE_TILE_DIM == 0)), "Cols must be divisible by the tile dimension");
 
-    static_assert(base_types::packing<dtype>::num() == 1); // must be a 1-packed type (e.g. float, bf16, etc)
+    // Must be a 1-packed type (e.g. float, bf16, etc) unless fp4
+    static_assert(base_types::packing<dtype>::num() == 1 || std::is_same_v<dtype, fp4e2m1_2>); 
 
     static constexpr int swizzle_bytes = (
         sizeof(dtype) == 1 ? (  // Add FP8 case
@@ -294,7 +298,7 @@ template<int _height, int _width, bool _swizzle=true> using st_fp8e5m2 = st<fp8e
 #endif
 #if defined(KITTENS_BLACKWELL)
 template<int _height, int _width, bool _swizzle=true> using st_fp8e8m0 = st<fp8e8m0, _height, _width, _swizzle>;
-template<int _height, int _width, bool _swizzle=true> using st_fp4e2m1 = st<fp4e2m1, _height, _width, _swizzle>;
+template<int _height, int _width, bool _swizzle=true> using st_fp4e2m1_2 = st<fp4e2m1_2, _height, _width, _swizzle>;
 #endif
 
 /* ----------  PRINTOUTS  ---------- */

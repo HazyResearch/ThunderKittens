@@ -108,7 +108,7 @@ struct identifier {};
 template<typename _T, int b, int d, int r, int c, typename... TMA_Types>
 struct gl {
 #ifdef KITTENS_BLACKWELL
-    static_assert(!std::is_same_v<_T, fp4e2m1>, "For FP4 types, you must use a packed type (e.g., fp4e2m1_2 or fp4e2m1_4).");
+    static_assert(!std::is_same_v<_T, fp4e2m1>, "For FP4 types, you must use a packed type (i.e., fp4e2m1_2 or fp4e2m1_4).");
 #endif
     using identifier = ducks::gl::identifier;
 

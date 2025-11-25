@@ -32,7 +32,7 @@ __host__ static inline void create_tensor_map(
     using dtype = typename ST::dtype;
     static_assert(axis==0 || axis==1 || axis==2, "axis must be 0, 1, or 2");
 #ifdef KITTENS_BLACKWELL
-    static_assert(!(std::is_same_v<dtype, fp4e2m1> && axis != 2), "Axes 0 and 1 are not yet supported for FP4 type");
+    static_assert(!(std::is_same_v<dtype, fp4e2m1_2> && axis != 2), "Axes 0 and 1 are not yet supported for FP4 type");
 #endif
 
     constexpr uint32_t  tma_dim = ST::swizzle ? 5 : 4;
@@ -46,10 +46,7 @@ __host__ static inline void create_tensor_map(
         std::is_same_v<dtype, fp8e5m2> ? CU_TENSOR_MAP_DATA_TYPE_UINT8 :
 #ifdef KITTENS_BLACKWELL
         std::is_same_v<dtype, fp8e8m0> ? CU_TENSOR_MAP_DATA_TYPE_UINT8 :
-        // std::is_same_v<dtype, fp4e2m1> ? CU_TENSOR_MAP_DATA_TYPE_16U4_ALIGN16B : // ALIGN16B automatically adds 8 bytes of padding for every 8 bytes of data in SMEM
-        std::is_same_v<dtype, fp4e2m1> ? CU_TENSOR_MAP_DATA_TYPE_16U4_ALIGN8B :  // ALIGN8B does not add any padding
-        std::is_same_v<dtype, fp4e2m1_2> ? CU_TENSOR_MAP_DATA_TYPE_16U4_ALIGN16B :
-        std::is_same_v<dtype, fp4e2m1_4> ? CU_TENSOR_MAP_DATA_TYPE_16U4_ALIGN16B :
+        std::is_same_v<dtype, fp4e2m1_2> ? CU_TENSOR_MAP_DATA_TYPE_UINT8 :
 #endif
         CUtensorMapDataType(-1)
     );
@@ -71,14 +68,14 @@ __host__ static inline void create_tensor_map(
     constexpr uint64_t shared_tile_height = ST::rows; 
 #ifdef KITTENS_BLACKWELL
     // for FP4, there are two elements per byte, so multiply cols by 2
-    constexpr uint64_t shared_tile_width  = std::is_same_v<dtype, fp4e2m1> ? ST::cols * 2 : ST::cols;
+    constexpr uint64_t shared_tile_width  = ST::cols * (std::is_same_v<dtype, fp4e2m1_2> ? 2 : 1);
 #else
     constexpr uint64_t shared_tile_width  = ST::cols;
 #endif
 
     // TMA expects the global and shared shapes to be in elements. Multiply swizzle_bytes by 2 for FP4 (2 elements per byte).
 #ifdef KITTENS_BLACKWELL
-    constexpr int swizzle_elements = std::is_same_v<dtype, fp4e2m1> ? ST::swizzle_bytes * 2 : ST::swizzle_bytes / sizeof(dtype);
+    constexpr int swizzle_elements = (std::is_same_v<dtype, fp4e2m1_2> ? 2 : 1) * ST::swizzle_bytes / sizeof(dtype);
 #else
     constexpr int swizzle_elements = ST::swizzle_bytes / sizeof(dtype);
 #endif
@@ -88,7 +85,7 @@ __host__ static inline void create_tensor_map(
             gmem_shape[0] = swizzle_elements;
             gmem_shape[1] = (uint64_t)rows;
 #ifdef KITTENS_BLACKWELL
-            gmem_shape[2] = std::is_same_v<dtype, fp4e2m1> ? (uint64_t)(cols*2+swizzle_elements-1) / swizzle_elements : (uint64_t)(cols+swizzle_elements-1) / swizzle_elements; // round up, note this can potentially screw up out of bounds access handling :/
+            gmem_shape[2] = (uint64_t)(cols*(std::is_same_v<dtype, fp4e2m1_2> ? 2 : 1)+swizzle_elements-1) / swizzle_elements; // round up, note this can potentially screw up out of bounds access handling :/
 #else
             gmem_shape[2] = (uint64_t)(cols+swizzle_elements-1) / swizzle_elements; // round up, note this can potentially screw up out of bounds access handling :/
 #endif
@@ -172,12 +169,11 @@ __host__ static inline void create_tensor_map(
 
     if constexpr (tma_interleave == CU_TENSOR_MAP_INTERLEAVE_NONE && tma_swizzle != CU_TENSOR_MAP_SWIZZLE_NONE) {
 #ifdef KITTENS_BLACKWELL
-        if constexpr (std::is_same_v<dtype, fp4e2m1>) // For FP4, elements are packed 2 per byte, so rearrange the inequality
+        if constexpr (std::is_same_v<dtype, fp4e2m1_2>) // For FP4, elements are packed 2 per byte, so rearrange the inequality
             assert(smem_shape[0] <= ST::swizzle_bytes * 2);
         else
 #endif
             assert(smem_shape[0] * sizeof(dtype) <= ST::swizzle_bytes);
-        
     }
 
     const uint64_t *gmem_shape_ptr = &gmem_shape[0];
@@ -282,7 +278,7 @@ __host__ static inline void create_tensor_map(CUtensorMap *tma_map, const typena
         std::is_same_v<dtype, fp8e5m2> ? CU_TENSOR_MAP_DATA_TYPE_UINT8 :
 #ifdef KITTENS_BLACKWELL
         std::is_same_v<dtype, fp8e8m0> ? CU_TENSOR_MAP_DATA_TYPE_UINT8 :
-        std::is_same_v<dtype, fp4e2m1> ? CU_TENSOR_MAP_DATA_TYPE_16U4_ALIGN8B :
+        std::is_same_v<dtype, fp4e2m1_2> ? CU_TENSOR_MAP_DATA_TYPE_UINT8 :
 #endif
         CUtensorMapDataType(-1)
     );
