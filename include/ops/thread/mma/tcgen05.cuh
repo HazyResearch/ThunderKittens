@@ -122,7 +122,7 @@ template<typename D, typename AB, typename SAB, int M, int N, bool neg=false, in
 __device__ static inline constexpr uint32_t instruction_descriptor() {
     // Only supported types are MXFP8 and NVFP4
     static_assert(std::is_same_v<AB, fp8e4m3> || std::is_same_v<AB, fp4e2m1_2>, "AB must be fp8e4m3 for f4e2m1");
-    static_assert(std::is_same_v<SAB, fp8e4m3> || std::is_same_v<SAB, fp8e8e0>, "SAB must be either fp8e4m3 or fp8e8m0");
+    static_assert(std::is_same_v<SAB, fp8e4m3> || std::is_same_v<SAB, fp8e8m0>, "SAB must be either fp8e4m3 or fp8e8m0");
     constexpr int scale_type = std::is_same_v<SAB, fp8e4m3> ? 0 : std::is_same_v<SAB, fp8e8m0> ? 1 : -1;
 
     uint32_t desc = 0;
