@@ -55,20 +55,21 @@ struct st_descriptor {
     static_assert(swizzle, "Non-swizzled descriptor is not supported yet.");
     uint64_t base_desc;
     __device__ inline st_descriptor(const ST &tile) {
+        // See https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#asynchronous-warpgroup-level-leading-dimension-byte-offset
         if constexpr (MN_major) { // MN major mode (i.e., K x M for A matrix, K x N for B matrix)
-            if constexpr ((ST::cols/TILE_COL_DIM<T>)%4 == 0)
+            if constexpr ((ST::cols/TILE_COL_DIM<T>)%4 == 0) // 128B swizzle mode
                 base_desc = detail::matrix_descriptor_raw(&tile.data[0], 2048*ST::rows/TILE_ROW_DIM<T>, 1024, 1);
-            else if constexpr ((ST::cols/TILE_COL_DIM<T>)%2 == 0)
+            else if constexpr ((ST::cols/TILE_COL_DIM<T>)%2 == 0) // 64B swizzle mode
                 base_desc = detail::matrix_descriptor_raw(&tile.data[0], 1024*ST::rows/TILE_ROW_DIM<T>, 512, 2);
-            else
+            else // 32B swizzle mode
                 base_desc = detail::matrix_descriptor_raw(&tile.data[0], 512*ST::rows/TILE_ROW_DIM<T>, 256, 3);
         }
         else { // K major mode (i.e., M x K for A matrix, N x K for B matrix)
-            if constexpr ((ST::cols/TILE_COL_DIM<T>)%4 == 0)
+            if constexpr ((ST::cols/TILE_COL_DIM<T>)%4 == 0) // 128B swizzle mode
                 base_desc = detail::matrix_descriptor_raw(&tile.data[0], 16 /* does not matter */, 1024, 1);
-            else if constexpr ((ST::cols/TILE_COL_DIM<T>)%2 == 0)
+            else if constexpr ((ST::cols/TILE_COL_DIM<T>)%2 == 0) // 64B swizzle mode
                 base_desc = detail::matrix_descriptor_raw(&tile.data[0], 16 /* does not matter */, 512, 2);
-            else
+            else // 32B swizzle mode
                 base_desc = detail::matrix_descriptor_raw(&tile.data[0], 16 /* does not matter */, 256, 3);
         }
     }
