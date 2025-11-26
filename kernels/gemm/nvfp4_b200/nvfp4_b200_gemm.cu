@@ -11,7 +11,7 @@ namespace nvfp4_gemm {
 struct config {
     static constexpr int CLUSTER_SIZE = 2;
 
-    static constexpr int SM_COUNT = 148;
+    static constexpr int NUM_BLOCKS = 148;
     static constexpr int STATIC_SHARED_MEMORY = 1024;
     static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - STATIC_SHARED_MEMORY;
 
@@ -30,34 +30,34 @@ struct globals {
     static constexpr int SUPERGROUP_BLOCKS = 12;
     static constexpr int ROW_BLOCK = 256;
     static constexpr int COL_BLOCK = 256;
-    static constexpr int REDUCTION_BLOCK = 128;
+    static constexpr int REDUCTION_BLOCK = 64; // 64 for each tcgen05.mma
 
-    using A_fp8_tile = st_fp8e4m3<ROW_BLOCK / 2, REDUCTION_BLOCK>; // CTA distributed
-    using A_sc_tile  = st_fp8e8m0<32, 16, false>;
-    using B_fp8_tile = st_fp8e4m3<COL_BLOCK / 2, REDUCTION_BLOCK>; // CTA distributed
-    using B_sc_tile  = st_fp8e8m0<32, 16, false>;
-    using C_tile     = st_bf<ROW_BLOCK / 2, COL_BLOCK / 2>;        // CTA/WG distributed
+    using A_fp4x2_tile = st_fp4e2m1_2<ROW_BLOCK / 2, REDUCTION_BLOCK / 2>; // CTA distributed & 2-packed
+    using A_sc_tile    = st_fp8e4m3<32, 16, false>;
+    using B_fp4x2_tile = st_fp4e2m1_2<COL_BLOCK / 2, REDUCTION_BLOCK / 2>; // CTA distributed & 2-packed
+    using B_sc_tile    = st_fp8e4m3<32, 16, false>;
+    using C_tile       = st_bf<ROW_BLOCK / 2, COL_BLOCK / 2>; // CTA/WG distributed
 
-    using A_gl    = gl<fp8e4m3,  1,  1, -1, -1, A_fp8_tile>;
-    using A_sc_gl = gl<fp8e8m0, -1, -1, 32, 16, A_sc_tile>;
-    using B_gl    = gl<fp8e4m3,  1,  1, -1, -1, B_fp8_tile>;
-    using B_sc_gl = gl<fp8e8m0, -1, -1, 32, 16, B_sc_tile>;
-    using C_gl    = gl<bf16,     1,  1, -1, -1, C_tile>;
+    using A_fp4x2_gl     = gl<fp4e2m1_2,  1,  1, -1, -1, A_fp4x2_tile>;
+    using A_sc_gl        = gl<fp8e4m3,   -1, -1, 32, 16, A_sc_tile>;
+    using A_sc_global_gl = gl<float,      1,  1,  1,  1>;
+    using B_fp4x2_gl     = gl<fp4e2m1_2,  1,  1, -1, -1, B_fp4x2_tile>;
+    using B_sc_gl        = gl<fp8e4m3,   -1, -1, 32, 16, B_sc_tile>;
+    using B_sc_global_gl = gl<float,      1,  1,  1,  1>;
+    using C_gl           = gl<bf16,       1,  1, -1, -1, C_tile>;
 
-    A_gl A;       // M x K
-    A_sc_gl A_sc; // (M // 128) x (K // 128) x 32 x 16
-    B_gl B;       // N x K
-    B_sc_gl B_sc; // (M // 128) x (K // 128) x 32 x 16
-    C_gl C;       // M x N
-
-    __host__ inline dim3 grid() const { return dim3(config::SM_COUNT); }
-    __host__ inline dim3 block() const { return dim3(config::NUM_THREADS); }
-    __host__ inline int dynamic_shared_memory() const { return config::DYNAMIC_SHARED_MEMORY; }
+    A_fp4x2_gl     A_fp4x2;     // M x (N // 2)
+    A_sc_gl        A_sc;        // (M // 128) x (N // 64) x 32 x 16
+    A_sc_global_gl A_sc_global; // (1,)
+    B_fp4x2_gl     B_fp4x2;     // M x (N // 2)
+    B_sc_gl        B_sc;        // (M // 128) x (N // 64) x 32 x 16
+    B_sc_global_gl B_sc_global; // (1,)
+    C_gl           C;           // M x N
 };
 
 struct pipeline_input_tiles {
-    globals::A_fp8_tile A;
-    globals::B_fp8_tile B;
+    globals::A_fp4x2_tile A;
+    globals::B_fp4x2_tile B;
 };
 
 struct pipeline_input_scales {
@@ -83,8 +83,8 @@ __device__ inline void kernel(const globals &G) {
     // Allocate tensor memory
     tensor_allocator<1, config::CLUSTER_SIZE> tm_allocator;
     auto out_tm  = tm_allocator.allocate<full_tt_fl<globals::COL_BLOCK>>(0);                 // columns 000-255
-    auto A_sc_tm = tm_allocator.allocate<full_tt_fp8e8m0<16*globals::PIPELINE_STAGES>>(256); // columns 256-383
-    auto B_sc_tm = tm_allocator.allocate<full_tt_fp8e8m0<32*globals::PIPELINE_STAGES>>(384); // columns 384-511
+    auto A_sc_tm = tm_allocator.allocate<full_tt_fp8e4m3<16*globals::PIPELINE_STAGES>>(256); // columns 256-383
+    auto B_sc_tm = tm_allocator.allocate<full_tt_fp8e4m3<32*globals::PIPELINE_STAGES>>(384); // columns 384-511
 
     // Set up mbarriers
     __shared__ semaphore inputs_arrived[globals::PIPELINE_STAGES];
@@ -216,6 +216,8 @@ __device__ inline void kernel(const globals &G) {
         // Consumer group
         using consumer = group<config::CONSUMER_WARPGROUPS * WARPGROUP_WARPS>;
         warpgroup::increase_registers<config::CONSUMER_REGISTERS>();
+        const float2 global_scale = {G.A_sc_global[{0}] * G.B_sc_global[{0}],
+                                     G.A_sc_global[{0}] * G.B_sc_global[{0}]};
 
         for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / config::CLUSTER_SIZE) {
             // Compute block indices
@@ -238,6 +240,20 @@ __device__ inline void kernel(const globals &G) {
             if (consumer::laneid() == 0)
                 tma::cluster::arrive(tensor_finished, 0, 1); // signal CTA 0
 
+            // Decode with global scale
+            #pragma unroll
+            for (int ii = 0; ii < C_reg.height; ii++) {
+                #pragma unroll
+                for (int jj = 0; jj < C_reg.width; jj++) {
+                    #pragma unroll
+                    for (int kk = 0; kk < C_reg.packed_per_tile; kk++) {
+                        C_reg.tiles[ii][jj].data[kk] = __float22bfloat162_rn(
+                            __fmul2_rd(__bfloat1622float2(C_reg.tiles[ii][jj].data[kk]), global_scale));
+                    }
+                }
+            }
+
+            // Store back to global memory
             #pragma unroll
             for (int i = 0; i < 2; i++) {
                 if (warpgroup::groupid() == i) {
@@ -295,9 +311,9 @@ struct globals {
     using A_sc_gl        = gl<fp8e4m3,  -1, -1, 32, 16, A_sc_tile>;
     using A_sc_global_gl = gl<float,     1,  1,  1,  1>;
 
-    A_bf16_gl A_bf16;           // M x N
-    A_fp4x2_gl A_fp4x2;         // M x (N // 2)
-    A_sc_gl A_sc;               // (M // 128) x (N // 64) x 32 x 16
+    A_bf16_gl      A_bf16;      // M x N
+    A_fp4x2_gl     A_fp4x2;     // M x (N // 2)
+    A_sc_gl        A_sc;        // (M // 128) x (N // 64) x 32 x 16
     A_sc_global_gl A_sc_global; // (1,)
 
     __host__ inline dim3 grid() const {
