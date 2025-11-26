@@ -58,8 +58,8 @@ struct tt {
     static constexpr int rows    = _rows;
     static constexpr int cols    = _cols;
 
-    static_assert(rows <= MAX_TENSOR_ROWS, "Row dimension must be less than or equal to MAX_TENSOR_ROWS");
-    static_assert(cols <= MAX_TENSOR_COLS, "Column dimension must be less than or equal to MAX_TENSOR_COLS");
+    static_assert(rows / (4 / sizeof(T)) <= MAX_TENSOR_ROWS, "Row dimension must be less than or equal to MAX_TENSOR_ROWS");
+    static_assert(cols / (4 / sizeof(T)) <= MAX_TENSOR_COLS, "Column dimension must be less than or equal to MAX_TENSOR_COLS");
     static_assert(rows % kittens::BASE_TILE_DIM == 0, "Row dimension must be divisible by the 16");
     static_assert(cols % kittens::BASE_TILE_DIM == 0, "Column dimension must be divisible by the 16");
 
