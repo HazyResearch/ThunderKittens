@@ -29,9 +29,9 @@ def check_diff(
 
 if __name__ == '__main__':
     # Matrix dimensions
-    M = int(sys.argv[1]) if len(sys.argv) > 1 else 512
-    N = int(sys.argv[2]) if len(sys.argv) > 2 else 512
-    K = int(sys.argv[3]) if len(sys.argv) > 3 else 512
+    M = int(sys.argv[1]) if len(sys.argv) > 1 else 16384
+    N = int(sys.argv[2]) if len(sys.argv) > 2 else 16384
+    K = int(sys.argv[3]) if len(sys.argv) > 3 else 16384
     print(f"{M=}, {N=}, {K=}")
 
     # Generate input and output matrices
@@ -70,8 +70,6 @@ if __name__ == '__main__':
     torch.cuda.synchronize()
     check_diff("TK NVFP4 vs PyTorch NVFP4", C, C_torch)
     check_diff("TK NVFP4 vs PyTorch BF16", C, C_ref)
-
-    quit()
 
     # Benchmark
     NUM_WARMUPS = 5
