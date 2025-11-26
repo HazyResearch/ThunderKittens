@@ -117,7 +117,7 @@ __device__ inline void kernel(const globals &G) {
     int num_blocks_per_row = G.C.cols() / globals::COL_BLOCK;
     int num_blocks_per_col = G.C.rows() / globals::ROW_BLOCK;
     int num_blocks = num_blocks_per_row * num_blocks_per_col;
-    int num_iters_per_block = G.A.cols() / globals::REDUCTION_BLOCK;
+    int num_iters_per_block = G.A.cols() / (globals::REDUCTION_BLOCK / 2);
     int num_blocks_per_supergroup = globals::SUPERGROUP_BLOCKS * num_blocks_per_row;
 
     // Declare stage and phasebits for semaphore waits
