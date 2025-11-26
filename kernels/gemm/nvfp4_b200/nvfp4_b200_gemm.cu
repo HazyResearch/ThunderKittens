@@ -28,29 +28,30 @@ struct config {
 struct globals {
     static constexpr int PIPELINE_STAGES = 5;
     static constexpr int SUPERGROUP_BLOCKS = 12;
+    static constexpr int PACKED_PER_TILE = 4; // TODO: 6 seems better
     static constexpr int ROW_BLOCK = 256;
     static constexpr int COL_BLOCK = 256;
-    static constexpr int REDUCTION_BLOCK = 64; // 64 for each tcgen05.mma
+    static constexpr int REDUCTION_BLOCK = PACKED_PER_TILE * 64; // 64 for each tcgen05.mma
 
     using A_fp4x2_tile = st_fp4e2m1_2<ROW_BLOCK / 2, REDUCTION_BLOCK / 2>; // CTA distributed & 2-packed
-    using A_sc_tile    = st_fp8e4m3<32, 16, false>;
+    using A_sc_tile    = st_fp8e4m3<PACKED_PER_TILE * 32, 16, false>;
     using B_fp4x2_tile = st_fp4e2m1_2<COL_BLOCK / 2, REDUCTION_BLOCK / 2>; // CTA distributed & 2-packed
-    using B_sc_tile    = st_fp8e4m3<32, 16, false>;
+    using B_sc_tile    = st_fp8e4m3<PACKED_PER_TILE * 32, 16, false>;
     using C_tile       = st_bf<ROW_BLOCK / 2, COL_BLOCK / 2>; // CTA/WG distributed
 
     using A_fp4x2_gl     = gl<fp4e2m1_2,  1,  1, -1, -1, A_fp4x2_tile>;
-    using A_sc_gl        = gl<fp8e4m3,   -1, -1, 32, 16, A_sc_tile>;
+    using A_sc_gl        = gl<fp8e4m3,   -1, -1, PACKED_PER_TILE * 32, 16, A_sc_tile>;
     using A_sc_global_gl = gl<float,      1,  1,  1,  1>;
     using B_fp4x2_gl     = gl<fp4e2m1_2,  1,  1, -1, -1, B_fp4x2_tile>;
-    using B_sc_gl        = gl<fp8e4m3,   -1, -1, 32, 16, B_sc_tile>;
+    using B_sc_gl        = gl<fp8e4m3,   -1, -1, PACKED_PER_TILE * 32, 16, B_sc_tile>;
     using B_sc_global_gl = gl<float,      1,  1,  1,  1>;
     using C_gl           = gl<bf16,       1,  1, -1, -1, C_tile>;
 
     A_fp4x2_gl     A;           // M x (N // 2)
-    A_sc_gl        A_sc;        // (M // 128) x (N // 64) x 32 x 16
+    A_sc_gl        A_sc;        // (M // 128) x (N // (PACKED_PER_TILE * 64)) x (PACKED_PER_TILE * 32) x 16
     A_sc_global_gl A_sc_global; // (1,)
     B_fp4x2_gl     B;           // M x (N // 2)
-    B_sc_gl        B_sc;        // (M // 128) x (N // 64) x 32 x 16
+    B_sc_gl        B_sc;        // (M // 128) x (N // (PACKED_PER_TILE * 64)) x (PACKED_PER_TILE * 32) x 16
     B_sc_global_gl B_sc_global; // (1,)
     C_gl           C;           // M x N
 };
@@ -81,11 +82,11 @@ __device__ inline void kernel(const globals &G) {
     pipeline_outputs &output_tiles = sm_allocator.allocate<pipeline_outputs>();
 
     // Allocate tensor memory
-    static_assert(globals::PIPELINE_STAGES * 8 <= 128, "Not enough tensor memory for scale matrices");
+    static_assert(12 * globals::PACKED_PER_TILE * globals::PIPELINE_STAGES <= 256, "Not enough tensor memory for scale matrices");
     tensor_allocator<1, config::CLUSTER_SIZE> tm_allocator;
-    auto out_tm  = tm_allocator.allocate<full_tt_fl<globals::COL_BLOCK>>(0);                 // columns 000-255
-    auto A_sc_tm = tm_allocator.allocate<full_tt_fp8e4m3<16*globals::PIPELINE_STAGES>>(256); // columns 256-383
-    auto B_sc_tm = tm_allocator.allocate<full_tt_fp8e4m3<32*globals::PIPELINE_STAGES>>(384); // columns 384-511
+    auto out_tm  = tm_allocator.allocate<full_tt_fl<globals::COL_BLOCK>>(0); // columns 000-255
+    auto A_sc_tm = tm_allocator.allocate<full_tt_fp8e4m3<16 * globals::PACKED_PER_TILE * globals::PIPELINE_STAGES>>(256);
+    auto B_sc_tm = tm_allocator.allocate<full_tt_fp8e4m3<32 * globals::PACKED_PER_TILE * globals::PIPELINE_STAGES>>(256 + 4 * globals::PACKED_PER_TILE * globals::PIPELINE_STAGES);
 
     // Set up mbarriers
     __shared__ semaphore inputs_arrived[globals::PIPELINE_STAGES];
@@ -118,7 +119,7 @@ __device__ inline void kernel(const globals &G) {
     int num_blocks_per_row = G.C.cols() / globals::COL_BLOCK;
     int num_blocks_per_col = G.C.rows() / globals::ROW_BLOCK;
     int num_blocks = num_blocks_per_row * num_blocks_per_col;
-    int num_iters_per_block = G.A.cols() / (globals::REDUCTION_BLOCK / 2);
+    int num_iters_per_block = 2 * G.A.cols() / globals::REDUCTION_BLOCK;
     int num_blocks_per_supergroup = globals::SUPERGROUP_BLOCKS * num_blocks_per_row;
 
     // Declare stage and phasebits for semaphore waits
@@ -180,12 +181,19 @@ __device__ inline void kernel(const globals &G) {
                     tma::cluster::wait(matmul_finished[stage], get_phasebit<1>(phasebits, stage));
                     update_phasebit<1>(phasebits, stage);
 
-                    auto A_sc_tm_subtile   = A_sc_tm.subtile<full_tt_fp8e4m3<16>>(stage * 16);
-                    auto B_sc_tm_subtile_0 = B_sc_tm.subtile<full_tt_fp8e4m3<16>>(stage * 32);
-                    auto B_sc_tm_subtile_1 = B_sc_tm.subtile<full_tt_fp8e4m3<16>>(stage * 32 + 16);
-                    load_mxnv_scale_async2(A_sc_tm_subtile,   input_scales[stage].A);
-                    load_mxnv_scale_async2(B_sc_tm_subtile_0, input_scales[stage].B[0]);
-                    load_mxnv_scale_async2(B_sc_tm_subtile_1, input_scales[stage].B[1], scales_tm_arrived[stage]);
+                    #pragma unroll
+                    for (int ii = 0; ii < globals::PACKED_PER_TILE; ii++) {
+                        auto A_sc_tm_subtile    = A_sc_tm.subtile<full_tt_fp8e4m3<16>>(stage * globals::PACKED_PER_TILE * 16 + ii * 16);
+                        auto B_sc_tm_subtile_0  = B_sc_tm.subtile<full_tt_fp8e4m3<16>>(stage * globals::PACKED_PER_TILE * 32 + ii * 32);
+                        auto B_sc_tm_subtile_1  = B_sc_tm.subtile<full_tt_fp8e4m3<16>>(stage * globals::PACKED_PER_TILE * 32 + ii * 32 + 16);
+                        auto &A_sc_sm_subtile   = *reinterpret_cast<st_fp8e4m3<32, 16, false> *>(reinterpret_cast<uint64_t>(&input_scales[stage].A.data[0]) + 16 * 32 * ii);
+                        auto &B_sc_sm_subtile_0 = *reinterpret_cast<st_fp8e4m3<32, 16, false> *>(reinterpret_cast<uint64_t>(&input_scales[stage].B[0].data[0]) + 16 * 32 * ii);
+                        auto &B_sc_sm_subtile_1 = *reinterpret_cast<st_fp8e4m3<32, 16, false> *>(reinterpret_cast<uint64_t>(&input_scales[stage].B[1].data[0]) + 16 * 32 * ii);
+                        load_mxnv_scale_async2(A_sc_tm_subtile,   A_sc_sm_subtile);
+                        load_mxnv_scale_async2(B_sc_tm_subtile_0, B_sc_sm_subtile_0);
+                        load_mxnv_scale_async2(B_sc_tm_subtile_1, B_sc_sm_subtile_1);
+                    }
+                    kittens::detail::tcgen05::commit<2>(scales_tm_arrived[stage]);
 
                     stage = (stage + 1) % globals::PIPELINE_STAGES;
                 }
@@ -198,12 +206,12 @@ __device__ inline void kernel(const globals &G) {
                     tma::cluster::wait(scales_tm_arrived[stage], get_phasebit<0>(phasebits, stage));
                     update_phasebit<0>(phasebits, stage);
                     if (i == 0) mm2_ABt(out_tm, input_tiles[stage].A, input_tiles[stage].B,
-                                        A_sc_tm.subtile<full_tt_fp8e4m3<16>>(stage * 16), 
-                                        B_sc_tm.subtile<full_tt_fp8e4m3<32>>(stage * 32),
+                                        A_sc_tm.subtile<full_tt_fp8e4m3<globals::PACKED_PER_TILE * 16>>(stage * globals::PACKED_PER_TILE * 16), 
+                                        B_sc_tm.subtile<full_tt_fp8e4m3<globals::PACKED_PER_TILE * 32>>(stage * globals::PACKED_PER_TILE * 32),
                                         matmul_finished[stage]);
                     else mma2_ABt(out_tm, input_tiles[stage].A, input_tiles[stage].B,
-                                  A_sc_tm.subtile<full_tt_fp8e4m3<16>>(stage * 16), 
-                                  B_sc_tm.subtile<full_tt_fp8e4m3<32>>(stage * 32),
+                                  A_sc_tm.subtile<full_tt_fp8e4m3<globals::PACKED_PER_TILE * 16>>(stage * globals::PACKED_PER_TILE * 16), 
+                                  B_sc_tm.subtile<full_tt_fp8e4m3<globals::PACKED_PER_TILE * 32>>(stage * globals::PACKED_PER_TILE * 32),
                                   matmul_finished[stage]);
                     stage = (stage + 1) % globals::PIPELINE_STAGES;
                 }

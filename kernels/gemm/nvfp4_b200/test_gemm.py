@@ -32,7 +32,8 @@ if __name__ == '__main__':
     M = int(sys.argv[1]) if len(sys.argv) > 1 else 16384
     N = int(sys.argv[2]) if len(sys.argv) > 2 else 16384
     K = int(sys.argv[3]) if len(sys.argv) > 3 else 16384
-    print(f"{M=}, {N=}, {K=}")
+    PACKED_PER_TILE = 4 # should equal to kernel's (REDUCTION_BLOCK / 64)
+    print(f"{M=}, {N=}, {K=}, {PACKED_PER_TILE=}")
 
     # Generate input and output matrices
     A = torch.randn(M, K, dtype=torch.bfloat16, device="cuda") / K ** 0.25
@@ -54,9 +55,9 @@ if __name__ == '__main__':
 
     # TEMP TEMP TEMP TEMP
     A_fp4x2, A_sc_unswizzled, A_sc_global = torch_nvfp4_quantize(A)
-    A_sc = scale_swizzle(A_sc_unswizzled)
+    A_sc = scale_swizzle(A_sc_unswizzled, PACKED_PER_TILE)
     B_fp4x2, B_sc_unswizzled, B_sc_global = torch_nvfp4_quantize(B)
-    B_sc = scale_swizzle(B_sc_unswizzled)
+    B_sc = scale_swizzle(B_sc_unswizzled, PACKED_PER_TILE)
 
 
 
