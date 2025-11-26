@@ -81,6 +81,7 @@ __device__ inline void kernel(const globals &G) {
     pipeline_outputs &output_tiles = sm_allocator.allocate<pipeline_outputs>();
 
     // Allocate tensor memory
+    static_assert(globals::PIPELINE_STAGES * 8 <= 128, "Not enough tensor memory for scale matrices");
     tensor_allocator<1, config::CLUSTER_SIZE> tm_allocator;
     auto out_tm  = tm_allocator.allocate<full_tt_fl<globals::COL_BLOCK>>(0);                 // columns 000-255
     auto A_sc_tm = tm_allocator.allocate<full_tt_fp8e4m3<16*globals::PIPELINE_STAGES>>(256); // columns 256-383
