@@ -8,7 +8,7 @@ namespace mxfp8_gemm {
 struct config {
     static constexpr int CLUSTER_SIZE = 2;
 
-    static constexpr int SM_COUNT = 148;
+    static constexpr int NUM_BLOCKS = 148;
     static constexpr int STATIC_SHARED_MEMORY = 1024;
     static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - STATIC_SHARED_MEMORY;
 
@@ -46,10 +46,6 @@ struct globals {
     B_gl B;       // N x K
     B_sc_gl B_sc; // (M // 128) x (K // 128) x 32 x 16
     C_gl C;       // M x N
-
-    __host__ inline dim3 grid() const { return dim3(config::SM_COUNT); }
-    __host__ inline dim3 block() const { return dim3(config::NUM_THREADS); }
-    __host__ inline int dynamic_shared_memory() const { return config::DYNAMIC_SHARED_MEMORY; }
 };
 
 struct pipeline_input_tiles {

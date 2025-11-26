@@ -115,6 +115,6 @@ template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fp8e5m2 = 
 #endif
 #ifdef KITTENS_BLACKWELL
 template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fp8e8m0 = rt_base<fp8e8m0, L>;
-template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fp4e2m1 = rt_base<fp4e2m1, L>;
+template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fp4e2m1_2 = rt_base<fp4e2m1_2, L>;
 #endif
 }

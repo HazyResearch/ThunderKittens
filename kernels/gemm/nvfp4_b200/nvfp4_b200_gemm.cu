@@ -309,13 +309,13 @@ struct globals {
 };
 
 __device__ inline void kernel(const globals &G) {
-    // // Allocate shared memory
-    // extern __shared__ int __shm[];
-    // tma_swizzle_allocator sm_allocator((int*)&__shm[0]);
-    // globals::A_bf16_tile &A_bf16_smem = sm_allocator.allocate<globals::A_bf16_tile>();
-    // globals::A_fp8_tile  &A_fp8_smem = *reinterpret_cast<globals::A_fp8_tile *>(&A_bf16_smem);
-    // globals::A_sc_tile   &A_sc_smem = *reinterpret_cast<globals::A_sc_tile *>(
-    //     reinterpret_cast<uint64_t>(&A_fp8_smem) + sizeof(A_fp8_smem));
+    // Allocate shared memory
+    extern __shared__ int __shm[];
+    tma_swizzle_allocator sm_allocator((int*)&__shm[0]);
+    globals::A_bf16_tile &A_bf16_smem = sm_allocator.allocate<globals::A_bf16_tile>();
+    globals::A_fp4x2_tile &A_fp4x2_smem = *reinterpret_cast<globals::A_fp4x2_tile *>(&A_bf16_smem);
+    globals::A_sc_tile &A_sc_smem = *reinterpret_cast<globals::A_sc_tile *>(
+        reinterpret_cast<uint64_t>(&A_fp4x2_smem) + sizeof(A_fp4x2_smem));
 
     // // Calculate indices
     // const int tid = threadIdx.x;
@@ -387,7 +387,7 @@ __device__ inline void kernel(const globals &G) {
     //             __nv_fp8_e4m3(__bfloat162float(A_bf16_reg[i][j].y) / scale)
     //         };
     //         asm volatile("{st.shared.b16 [%0], %1;}"
-    //             :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&A_fp8_smem)) + offset)
+    //             :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&A_fp4x2_smem)) + offset)
     //                "h"(*reinterpret_cast<uint16_t *>(&A_fp8_reg[0])));
     //     }
     // }
@@ -404,7 +404,7 @@ __device__ inline void kernel(const globals &G) {
     // // Store to global memory
     // __syncthreads();
     // if (tid == 0) {
-    //     tma::store_async(G.A_fp8, A_fp8_smem, {row, col});
+    //     tma::store_async(G.A_fp8, A_fp4x2_smem, {row, col});
     //     tma::store_async(G.A_sc,  A_sc_smem,  {row, col, 0, 0});
     // }
 }

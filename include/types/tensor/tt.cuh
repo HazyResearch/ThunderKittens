@@ -111,20 +111,20 @@ template<int _height, int _width> using tt_fl = tt<float, _height, _width>;
 template<int _height, int _width> using tt_fp8e4m3 = tt<fp8e4m3, _height, _width>;
 template<int _height, int _width> using tt_fp8e5m2 = tt<fp8e5m2, _height, _width>;
 template<int _height, int _width> using tt_fp8e8m0 = tt<fp8e8m0, _height, _width>;
-template<int _height, int _width> using tt_fp4e2m1 = tt<fp4e2m1, _height, _width>;
+template<int _height, int _width> using tt_fp4e2m1_2 = tt<fp4e2m1_2, _height, _width>;
 template<int _width> using half_tt_bf = tt<bf16, MAX_TENSOR_ROWS / 2, _width>;
 template<int _width> using half_tt_hf = tt<half, MAX_TENSOR_ROWS / 2, _width>;
 template<int _width> using half_tt_fl = tt<float, MAX_TENSOR_ROWS / 2, _width>;
 template<int _width> using half_tt_fp8e4m3 = tt<fp8e4m3, MAX_TENSOR_ROWS / 2, _width>;
 template<int _width> using half_tt_fp8e5m2 = tt<fp8e5m2, MAX_TENSOR_ROWS / 2, _width>;
 template<int _width> using half_tt_fp8e8m0 = tt<fp8e8m0, MAX_TENSOR_ROWS / 2, _width>;
-template<int _width> using half_tt_fp4e2m1 = tt<fp4e2m1, MAX_TENSOR_ROWS / 2, _width>;
+template<int _width> using half_tt_fp4e2m1_2 = tt<fp4e2m1_2, MAX_TENSOR_ROWS / 2, _width>;
 template<int _width> using full_tt_bf = tt<bf16, MAX_TENSOR_ROWS, _width>;
 template<int _width> using full_tt_hf = tt<half, MAX_TENSOR_ROWS, _width>;
 template<int _width> using full_tt_fl = tt<float, MAX_TENSOR_ROWS, _width>;
 template<int _width> using full_tt_fp8e4m3 = tt<fp8e4m3, MAX_TENSOR_ROWS, _width>;
 template<int _width> using full_tt_fp8e5m2 = tt<fp8e5m2, MAX_TENSOR_ROWS, _width>;
 template<int _width> using full_tt_fp8e8m0 = tt<fp8e8m0, MAX_TENSOR_ROWS, _width>;
-template<int _width> using full_tt_fp4e2m1 = tt<fp4e2m1, MAX_TENSOR_ROWS, _width>;
+template<int _width> using full_tt_fp4e2m1_2 = tt<fp4e2m1_2, MAX_TENSOR_ROWS, _width>;
 
 } // namespace kittens

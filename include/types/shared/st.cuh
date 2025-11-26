@@ -315,8 +315,8 @@ __device__ constexpr const char* get_tile_type_name() {
     } else if constexpr (std::is_same_v<T, bf16>) {
         return "st_bf";
 #if defined(KITTENS_BLACKWELL)
-    } else if constexpr (std::is_same_v<T, fp4e2m1>) {
-        return "st_fp4_e2m1";
+    } else if constexpr (std::is_same_v<T, fp4e2m1_2>) {
+        return "st_fp4_e2m1_2";
     } else if constexpr (std::is_same_v<T, fp8e8m0>) {
         return "st_fp8_e8m0";
 #endif

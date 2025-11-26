@@ -110,7 +110,7 @@ template<int _length> using sv_fp8e5m2 = sv<fp8e5m2, _length>;
 #endif
 #if defined(KITTENS_BLACKWELL)
 template<int _length> using sv_fp8e8m0 = sv<fp8e8m0, _length>;
-template<int _length> using sv_fp4e2m1 = sv<fp4e2m1, _length>;
+template<int _length> using sv_fp4e2m1_2 = sv<fp4e2m1_2, _length>;
 #endif
 
 /* ----------  PRINTOUTS  ---------- */

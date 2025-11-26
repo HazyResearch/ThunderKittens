@@ -151,7 +151,7 @@ template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> usi
 #endif
 #if defined(KITTENS_BLACKWELL)
 template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fp8e8m0 = rt<fp8e8m0,  _r, _c, layout>;
-template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fp4e2m1 = rt<fp4e2m1,  _r, _c, layout>;
+template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fp4e2m1_2 = rt<fp4e2m1_2,  _r, _c, layout>;
 #endif
 
 /* ----------  PRINTOUTS  ---------- */
@@ -168,8 +168,8 @@ __device__ constexpr const char* get_rt_type_name() {
     } else if constexpr (std::is_same_v<T, bf16>) {
         return "rt_bf";
 #if defined(KITTENS_BLACKWELL)
-    } else if constexpr (std::is_same_v<T, fp4e2m1>) {
-        return "rt_fp4_e2m1";
+    } else if constexpr (std::is_same_v<T, fp4e2m1_2>) {
+        return "rt_fp4_e2m1_2";
     } else if constexpr (std::is_same_v<T, fp8e8m0>) {
         return "rt_fp8_e8m0";
 #endif
