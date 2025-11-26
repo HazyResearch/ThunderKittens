@@ -46,10 +46,10 @@ struct globals {
     using B_sc_global_gl = gl<float,      1,  1,  1,  1>;
     using C_gl           = gl<bf16,       1,  1, -1, -1, C_tile>;
 
-    A_fp4x2_gl     A_fp4x2;     // M x (N // 2)
+    A_fp4x2_gl     A;           // M x (N // 2)
     A_sc_gl        A_sc;        // (M // 128) x (N // 64) x 32 x 16
     A_sc_global_gl A_sc_global; // (1,)
-    B_fp4x2_gl     B_fp4x2;     // M x (N // 2)
+    B_fp4x2_gl     B;           // M x (N // 2)
     B_sc_gl        B_sc;        // (M // 128) x (N // 64) x 32 x 16
     B_sc_global_gl B_sc_global; // (1,)
     C_gl           C;           // M x N
@@ -150,7 +150,7 @@ __device__ inline void kernel(const globals &G) {
                         last_stage = globals::PIPELINE_STAGES;
                     }
 
-                    tma::cluster::expect_bytes(inputs_arrived[stage], sizeof(globals::A_fp8_tile) + sizeof(globals::B_fp8_tile), 0);
+                    tma::cluster::expect_bytes(inputs_arrived[stage], sizeof(globals::A_fp4x2_tile) + sizeof(globals::B_fp4x2_tile), 0);
                     tma::cluster::load_async(input_tiles[stage].A, G.A, {row_block_idx * 2 + cta_id, i}, inputs_arrived[stage], (uint16_t)(1 << cta_id), 0);
                     tma::cluster::load_async(input_tiles[stage].B, G.B, {col_block_idx * 2 + cta_id, i}, inputs_arrived[stage], (uint16_t)(1 << cta_id), 0);
 
@@ -179,9 +179,9 @@ __device__ inline void kernel(const globals &G) {
                     tma::cluster::wait(matmul_finished[stage], get_phasebit<1>(phasebits, stage));
                     update_phasebit<1>(phasebits, stage);
 
-                    auto A_sc_tm_subtile   = A_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 16);
-                    auto B_sc_tm_subtile_0 = B_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 32);
-                    auto B_sc_tm_subtile_1 = B_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 32 + 16);
+                    auto A_sc_tm_subtile   = A_sc_tm.subtile<full_tt_fp8e4m3<16>>(stage * 16);
+                    auto B_sc_tm_subtile_0 = B_sc_tm.subtile<full_tt_fp8e4m3<16>>(stage * 32);
+                    auto B_sc_tm_subtile_1 = B_sc_tm.subtile<full_tt_fp8e4m3<16>>(stage * 32 + 16);
                     load_mxnv_scale_async2(A_sc_tm_subtile,   input_scales[stage].A, scales_tm_arrived[stage]);
                     load_mxnv_scale_async2(B_sc_tm_subtile_0, input_scales[stage].B[0], scales_tm_arrived[stage]);
                     load_mxnv_scale_async2(B_sc_tm_subtile_1, input_scales[stage].B[1], scales_tm_arrived[stage]);
@@ -197,12 +197,12 @@ __device__ inline void kernel(const globals &G) {
                     tma::cluster::wait(scales_tm_arrived[stage], get_phasebit<0>(phasebits, stage));
                     update_phasebit<0>(phasebits, stage);
                     if (i == 0) mm2_ABt(out_tm, input_tiles[stage].A, input_tiles[stage].B,
-                                        A_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 16), 
-                                        B_sc_tm.subtile<full_tt_fp8e8m0<32>>(stage * 32),
+                                        A_sc_tm.subtile<full_tt_fp8e4m3<16>>(stage * 16), 
+                                        B_sc_tm.subtile<full_tt_fp8e4m3<32>>(stage * 32),
                                         matmul_finished[stage]);
                     else mma2_ABt(out_tm, input_tiles[stage].A, input_tiles[stage].B,
-                                  A_sc_tm.subtile<full_tt_fp8e8m0<16>>(stage * 16), 
-                                  B_sc_tm.subtile<full_tt_fp8e8m0<32>>(stage * 32),
+                                  A_sc_tm.subtile<full_tt_fp8e4m3<16>>(stage * 16), 
+                                  B_sc_tm.subtile<full_tt_fp8e4m3<32>>(stage * 32),
                                   matmul_finished[stage]);
                     stage = (stage + 1) % globals::PIPELINE_STAGES;
                 }
@@ -273,15 +273,19 @@ __device__ inline void kernel(const globals &G) {
 void entrypoint(
     const at::Tensor &A,
     const at::Tensor &A_sc,
+    const at::Tensor &A_sc_global,
     const at::Tensor &B,
     const at::Tensor &B_sc,
+    const at::Tensor &B_sc_global,
     at::Tensor &C
 ) {
     globals G {
-        .A = kittens::py::tensor_to_gl<globals::A_gl>(A),
+        .A = kittens::py::tensor_to_gl<globals::A_fp4x2_gl>(A),
         .A_sc = kittens::py::tensor_to_gl<globals::A_sc_gl>(A_sc),
-        .B = kittens::py::tensor_to_gl<globals::B_gl>(B),
+        .A_sc_global = kittens::py::tensor_to_gl<globals::A_sc_global_gl>(A_sc_global),
+        .B = kittens::py::tensor_to_gl<globals::B_fp4x2_gl>(B),
         .B_sc = kittens::py::tensor_to_gl<globals::B_sc_gl>(B_sc),
+        .B_sc_global = kittens::py::tensor_to_gl<globals::B_sc_global_gl>(B_sc_global),
         .C = kittens::py::tensor_to_gl<globals::C_gl>(C)
     };
     kittens::py::launch_kernel<config, globals, kernel>(G);
