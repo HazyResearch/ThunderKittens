@@ -59,7 +59,8 @@ def torch_nvfp4_dequantize(
 
 
 def scale_swizzle(
-    V_sc_unswizzled: torch.Tensor # (M, N // 16) fp8e4m3
+    V_sc_unswizzled: torch.Tensor, # (M, N // 16) fp8e4m3
+    packed_per_tile: int           # number of packed K=64 blocks per scale tile
 ) -> torch.Tensor:
     # https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-mma-scale-factor-a-layout-4x
     assert len(V_sc_unswizzled.shape) == 2
@@ -88,6 +89,11 @@ def scale_swizzle(
         N_16 // N_BLOCK,
         M_BLOCK // 4, N_BLOCK * 4
     )
+    V_sc = V_sc.reshape(          # (M / 128, N_16 / 4, 32, 16)
+        M // M_BLOCK,             # Pack the scale tiles. This is purely for GEMM efficiency
+        N_16 // N_BLOCK // packed_per_tile,
+        packed_per_tile * M_BLOCK // 4, N_BLOCK * 4
+    )
 
     return V_sc.contiguous()
 
@@ -113,12 +119,13 @@ if __name__ == '__main__':
     # Matrix dimensions
     M = int(sys.argv[1]) if len(sys.argv) > 1 else 204800
     N = int(sys.argv[2]) if len(sys.argv) > 2 else 2048
-    print(f"{M=}, {N=}")
+    PACKED_PER_TILE = int(sys.argv[3]) if len(sys.argv) > 3 else 4
+    print(f"{M=}, {N=}, {PACKED_PER_TILE=}")
 
     # Generate reference input and outputs
     A_bf16 = torch.randn(M, N, dtype=torch.bfloat16, device="cuda")
     A_fp4x2_ref, A_sc_unswizzled_ref, A_sc_global_ref = torch_nvfp4_quantize(A_bf16)
-    A_sc_ref = scale_swizzle(A_sc_unswizzled_ref)
+    A_sc_ref = scale_swizzle(A_sc_unswizzled_ref, PACKED_PER_TILE)
 
     # Check quantization error
     A_bf16_dequantized = torch_nvfp4_dequantize(A_fp4x2_ref, A_sc_unswizzled_ref, A_sc_global_ref)
