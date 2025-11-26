@@ -122,8 +122,8 @@ template<typename D, typename AB, typename SAB, int M, int N, bool neg=false, in
 __device__ static inline constexpr uint32_t instruction_descriptor() {
     // Only supported types are MXFP8 and NVFP4
     static_assert(std::is_same_v<AB, fp8e4m3> || std::is_same_v<AB, fp4e2m1_2>, "AB must be fp8e4m3 for f4e2m1");
+    static_assert(std::is_same_v<SAB, fp8e4m3> || std::is_same_v<SAB, fp8e8e0>, "SAB must be either fp8e4m3 or fp8e8m0");
     constexpr int scale_type = std::is_same_v<SAB, fp8e4m3> ? 0 : std::is_same_v<SAB, fp8e8m0> ? 1 : -1;
-    static_assert(scale_type != -1, "SAB must be either fp8e4m3 or fp8e8m0");
 
     uint32_t desc = 0;
     desc |= 0b00 << 0; // SBZ
@@ -512,7 +512,13 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
     kittens::tensor_after_thread_sync();
     asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
 
-    constexpr uint32_t idesc = detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 0>();
+    // Generate instruction descriptors
+    constexpr uint32_t idescs[4] = {
+        detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 0>(),
+        detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 1>(),
+        detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 2>(),
+        detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 3>()
+    };
 
     detail::tcgen05::template st_st<T_AB, T_SAB, acc, ncta, block_size>(
         d.addr,
@@ -520,21 +526,14 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
         b_desc.chunk_descriptor(0),
         sa.addr,
         sb.addr,
-        idesc
+        idescs[0]
     );
 
-    constexpr int N_offset = N / 32;
-    constexpr int M_offset = M / 32 / ncta;
+    // Offsets for moving the scales
+    constexpr int N_offset = N / 32; // 8 if N=256
+    constexpr int M_offset = M / 32 / ncta; // 4 if M=256
 
-    if constexpr (std::is_same_v<typename A::T, fp8e4m3>) { // MXFP8 case
-        // Pre-calculate instruction descriptors to minimize runtime overhead
-        constexpr uint32_t idescs[4] = {
-            detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 0>(),
-            detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 1>(),
-            detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 2>(),
-            detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 3>()
-        };
-
+    if constexpr (std::is_same_v<typename A::T, fp8e4m3>) { // FP8E4M3 + FP8E8M0 scale (MXFP8)
         #pragma unroll
         for (int i = 1; i < K / red_dim; i++) {
             detail::tcgen05::template st_st<T_AB, T_SAB, 1, ncta, block_size>(
@@ -546,44 +545,28 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
                 idescs[i % 4]
             );
         }
-
-    } else if constexpr (std::is_same_v<typename A::T, fp4e2m1_2>) { // NVFP4 case
-        // Pre-calculate instruction descriptors to minimize runtime overhead
-        constexpr uint32_t idesc_sf0 = detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 0>();
-        constexpr uint32_t idesc_sf2 = detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 2>();
-    
+    } else if constexpr (std::is_same_v<typename A::T, fp4e2m1_2> && block_size == 16) { // FP4E2M1 + FP8E4M3 scale (NVFP4)
         #pragma unroll
         for (int i = 1; i < K / red_dim; i++) {
-            uint32_t sa_addr_offset, sb_addr_offset;
-            uint32_t current_idesc;
-    
-            // int scale_factor_id = 0;
-            // int tile_num = 0;
-            
-            if constexpr (block_size == 16) {
-                // For block_size == 16: scale factor ID is always 0, direct tile mapping
-                sa_addr_offset = sa.addr + i * M_offset;
-                sb_addr_offset = sb.addr + i * N_offset;
-                current_idesc = idesc_sf0;
-                // scale_factor_id = 0; // for debugging
-                // tile_num = i;
-            } else {
-                // For block_size == 32: alternate scale_factor_id between 0 and 2
-                const int tile_number = i >> 1;  // i / 2, but faster
-                sa_addr_offset = sa.addr + tile_number * M_offset;
-                sb_addr_offset = sb.addr + tile_number * N_offset;
-                current_idesc = (i & 1) ? idesc_sf2 : idesc_sf0;  // i % 2 == 1 ? sf2 : sf0
-                // scale_factor_id = (i & 1) ? 2 : 0;
-                // tile_num = i >> 1;
-            }
-    
             detail::tcgen05::template st_st<T_AB, T_SAB, 1, ncta, block_size>(
                 d.addr,
                 a_desc.chunk_descriptor(i),
                 b_desc.chunk_descriptor(i),
-                sa_addr_offset,
-                sb_addr_offset,
-                current_idesc
+                sa.addr + i * M_offset,
+                sb.addr + i * N_offset,
+                idescs[0] // SFID is always 0
+            );
+        }
+    } else if constexpr (std::is_same_v<typename A::T, fp4e2m1_2> && block_size == 32) { // FP4E2M1 + FP8E8M0 scale
+        #pragma unroll
+        for (int i = 1; i < K / red_dim; i++) {
+            detail::tcgen05::template st_st<T_AB, T_SAB, 1, ncta, block_size>(
+                d.addr,
+                a_desc.chunk_descriptor(i),
+                b_desc.chunk_descriptor(i),
+                sa.addr + (i >> 1) * M_offset,
+                sb.addr + (i >> 1) * N_offset,
+                (i & 1) ? idescs[2] : idescs[0] // alternative between 0 and 2
             );
         }
     } else {
