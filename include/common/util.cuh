@@ -96,9 +96,9 @@ __device__ __forceinline__ int warpgroupid() { return threadIdx.x >> 7; }
 __device__ __forceinline__ int laneid() { return threadIdx.x & 0x1f; }
 
 #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
-constexpr int MAX_SHARED_MEMORY = 227000;
+constexpr int MAX_SHARED_MEMORY = 227 * 1024;
 #elif defined(KITTENS_AMPERE)
-constexpr int MAX_SHARED_MEMORY = 164000;
+constexpr int MAX_SHARED_MEMORY = 164 * 1024;
 #endif
 
 struct transpose {
