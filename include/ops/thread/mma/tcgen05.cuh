@@ -478,8 +478,8 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
             std::is_same_v<typename SA::T, fp8e8m0> && std::is_same_v<typename SB::T, fp8e8m0>
         )) || 
         (std::is_same_v<typename A::T, fp4e2m1_2> && (
-            (std::is_same_v<typename SA::T, fp8e8m0> || std::is_same_v<typename SA::T, fp8e4m3>) &&
-            (std::is_same_v<typename SB::T, fp8e8m0> || std::is_same_v<typename SB::T, fp8e4m3>)
+            (std::is_same_v<typename SA::T, fp8e8m0> && std::is_same_v<typename SB::T, fp8e8m0>) ||
+            (std::is_same_v<typename SA::T, fp8e4m3> && std::is_same_v<typename SB::T, fp8e4m3>)
         )),
         "SAB must be fp8e8m0 for fp8e4m3 element type, or fp8e4m3 / fp8e8m0 for fp4e2m1_2 element type");
     // Only float32 accumulator is supported for microscaling formats
