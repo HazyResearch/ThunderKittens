@@ -28,7 +28,7 @@ if __name__ == '__main__':
     # Matrix dimensions (should not change)
     M = int(sys.argv[1]) if len(sys.argv) > 1 else 16384
     N = int(sys.argv[2]) if len(sys.argv) > 2 else 16384
-    K = int(sys.argv[2]) if len(sys.argv) > 3 else 16384
+    K = int(sys.argv[3]) if len(sys.argv) > 3 else 16384
     print(f"{M=}, {N=}, {K=}")
 
     # Generate input and output matrices

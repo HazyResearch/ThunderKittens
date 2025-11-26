@@ -28,10 +28,10 @@ def check_diff(
 
 
 if __name__ == '__main__':
-    # Matrix dimensions (should not change)
-    M = int(sys.argv[1]) if len(sys.argv) > 1 else 256
-    N = int(sys.argv[2]) if len(sys.argv) > 2 else 256
-    K = int(sys.argv[2]) if len(sys.argv) > 3 else 64
+    # Matrix dimensions
+    M = int(sys.argv[1]) if len(sys.argv) > 1 else 512
+    N = int(sys.argv[2]) if len(sys.argv) > 2 else 512
+    K = int(sys.argv[3]) if len(sys.argv) > 3 else 512
     print(f"{M=}, {N=}, {K=}")
 
     # Generate input and output matrices
@@ -44,8 +44,8 @@ if __name__ == '__main__':
     A_fp4x2 = torch.empty(M, K // 2, dtype=torch.float4_e2m1fn_x2, device="cuda")
     A_sc = torch.zeros(M // 128, K // 64, 32, 16, dtype=torch.float8_e4m3fn, device="cuda")
     A_sc_global = torch.zeros(1, dtype=torch.float32, device="cuda")
-    B_fp4x2 = torch.empty(M, K // 2, dtype=torch.float4_e2m1fn_x2, device="cuda")
-    B_sc = torch.zeros(M // 128, K // 64, 32, 16, dtype=torch.float8_e4m3fn, device="cuda")
+    B_fp4x2 = torch.empty(N, K // 2, dtype=torch.float4_e2m1fn_x2, device="cuda")
+    B_sc = torch.zeros(N // 128, K // 64, 32, 16, dtype=torch.float8_e4m3fn, device="cuda")
     B_sc_global = torch.zeros(1, dtype=torch.float32, device="cuda")
     # nvfp4_quantize(A, A_fp4x2, A_sc, A_sc_global)
     # nvfp4_quantize(B, B_fp4x2, B_sc, B_sc_global)
@@ -71,34 +71,34 @@ if __name__ == '__main__':
     check_diff("TK NVFP4 vs PyTorch NVFP4", C, C_torch)
     check_diff("TK NVFP4 vs PyTorch BF16", C, C_ref)
 
-    breakpoint()
+    quit()
 
-    # # Benchmark
-    # NUM_WARMUPS = 5
-    # NUM_ITERS = 10
+    # Benchmark
+    NUM_WARMUPS = 5
+    NUM_ITERS = 10
 
-    # start_events = [torch.cuda.Event(enable_timing=True) for _ in range(NUM_ITERS)]
-    # end_events = [torch.cuda.Event(enable_timing=True) for _ in range(NUM_ITERS)]
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(NUM_ITERS)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(NUM_ITERS)]
 
-    # for i in range(NUM_WARMUPS):
-    #     nvfp4_gemm(A_fp4x2, A_sc, A_sc_global, B_fp4x2, B_sc, B_sc_global, C)
+    for i in range(NUM_WARMUPS):
+        nvfp4_gemm(A_fp4x2, A_sc, A_sc_global, B_fp4x2, B_sc, B_sc_global, C)
 
-    # l2_cache_size = 1024 * 1024 * 128 # ~128MB for Blackwell
-    # l2_cache = torch.randn(l2_cache_size // 2, dtype=torch.bfloat16)
-    # cache_clear = lambda: l2_cache.random_(0, 1)
+    l2_cache_size = 1024 * 1024 * 128 # ~128MB for Blackwell
+    l2_cache = torch.randn(l2_cache_size // 2, dtype=torch.bfloat16)
+    cache_clear = lambda: l2_cache.random_(0, 1)
 
-    # for i in range(NUM_ITERS):
-    #     cache_clear()
-    #     start_events[i].record()
-    #     nvfp4_gemm(A_fp4x2, A_sc, A_sc_global, B_fp4x2, B_sc, B_sc_global, C)
-    #     end_events[i].record()
-    # torch.cuda.synchronize()
+    for i in range(NUM_ITERS):
+        cache_clear()
+        start_events[i].record()
+        nvfp4_gemm(A_fp4x2, A_sc, A_sc_global, B_fp4x2, B_sc, B_sc_global, C)
+        end_events[i].record()
+    torch.cuda.synchronize()
 
-    # times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
-    # avg_time = np.mean(times) * 1e-3
-    # std_time = np.std(times) * 1e-3
-    # flops = 2.0 * M * N * K
-    # tflops = flops * 1e-12
+    times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
+    avg_time = np.mean(times) * 1e-3
+    std_time = np.std(times) * 1e-3
+    flops = 2.0 * M * N * K
+    tflops = flops * 1e-12
 
-    # print(f"Average time: {avg_time * 1e6:.2f} ± {std_time * 1e6:.2f} us")
-    # print(f"Average TFLOPs: {tflops / (avg_time):.2f} TFLOp/s")
+    print(f"Average time: {avg_time * 1e6:.2f} ± {std_time * 1e6:.2f} us")
+    print(f"Average TFLOPs: {tflops / (avg_time):.2f} TFLOp/s")
