@@ -182,8 +182,8 @@ __device__ inline void kernel(const globals &G) {
                     auto A_sc_tm_subtile   = A_sc_tm.subtile<full_tt_fp8e4m3<16>>(stage * 16);
                     auto B_sc_tm_subtile_0 = B_sc_tm.subtile<full_tt_fp8e4m3<16>>(stage * 32);
                     auto B_sc_tm_subtile_1 = B_sc_tm.subtile<full_tt_fp8e4m3<16>>(stage * 32 + 16);
-                    load_mxnv_scale_async2(A_sc_tm_subtile,   input_scales[stage].A, scales_tm_arrived[stage]);
-                    load_mxnv_scale_async2(B_sc_tm_subtile_0, input_scales[stage].B[0], scales_tm_arrived[stage]);
+                    load_mxnv_scale_async2(A_sc_tm_subtile,   input_scales[stage].A);
+                    load_mxnv_scale_async2(B_sc_tm_subtile_0, input_scales[stage].B[0]);
                     load_mxnv_scale_async2(B_sc_tm_subtile_1, input_scales[stage].B[1], scales_tm_arrived[stage]);
 
                     stage = (stage + 1) % globals::PIPELINE_STAGES;
