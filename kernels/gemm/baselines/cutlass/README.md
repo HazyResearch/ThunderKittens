@@ -24,6 +24,14 @@ Here, we describe how we benchmarked the [CUTLASS](https://github.com/NVIDIA/cut
 
 4. Re-run `cmake` to generate a build configuration of the kernels we actually want to compile. Below are some examples.
     ```bash
+    # BF16_BF16_FP32_void_BF16 GEMM
+    cmake .. \
+        -DCUTLASS_NVCC_ARCHS=100a \
+        -DCUTLASS_UNITY_BUILD_ENABLED=OFF \
+        -DCUTLASS_ENABLE_TESTS=OFF \
+        -DCUTLASS_ENABLE_EXAMPLES=OFF \
+        -DCUTLASS_LIBRARY_KERNELS=cutlass3x_sm100_tensorop_gemm_bf16_bf16_f32_void_bf16*_tnt_*
+
     # MXFP8_MXFP8_FP32_void_BF16 GEMM
     cmake .. \
         -DCUTLASS_NVCC_ARCHS=100a \
@@ -48,6 +56,22 @@ Here, we describe how we benchmarked the [CUTLASS](https://github.com/NVIDIA/cut
 
 6. Run CUTLASS profiler to find the best kernel configuration for the given MxNxK shape. Some options are `--kernels` (string filter for kernels to run), `--operation` (CUTLASS operation to profile), `--profiling-duration` (time to spend per kernel in milliseconds), `--min-iterations` (minimum number of iterations to spend profiling each kernel, even if `profiling-duration` is met), `--verification-enabled` (whether to do correctness check), `--dist` (data distribution of input tensors), and `--output` (path to output file. Operation name and `.csv` are automatically appended). Below are some examples.
     ```bash
+    # BF16_BF16_FP32_void_BF16 GEMM
+    for N in 1024 2048 4096 8192 16384; do
+    ./tools/profiler/cutlass_profiler \
+        --operation=block_scaled_gemm \
+        --m=${N} \
+        --n=${N} \
+        --k=${N} \
+        --output=bf16_${N} \
+        --kernels="cutlass3x_sm100_tensorop_gemm_bf16_bf16_f32_void_bf16" \
+        --warmup-iterations=500 \
+        --min-iterations=100 \
+        --profiling-duration=2000 \
+        --verification-enabled=false \
+        --dist=uniform,min:-1,max:1
+    done
+
     # MXFP8_MXFP8_FP32_void_BF16 GEMM
     for N in 1024 2048 4096 8192 16384; do
     ./tools/profiler/cutlass_profiler \
