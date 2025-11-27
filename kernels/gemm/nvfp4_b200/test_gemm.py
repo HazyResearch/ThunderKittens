@@ -1,4 +1,3 @@
-import numpy as np
 import sys
 import torch
 torch.random.manual_seed(42)
