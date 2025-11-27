@@ -73,8 +73,8 @@ if __name__ == '__main__':
     check_diff("TK NVFP4 vs PyTorch BF16", C, C_ref)
 
     # Benchmark
-    NUM_WARMUPS = 5
-    NUM_ITERS = 10
+    NUM_WARMUPS = 500
+    NUM_ITERS = 100
 
     start_events = [torch.cuda.Event(enable_timing=True) for _ in range(NUM_ITERS)]
     end_events = [torch.cuda.Event(enable_timing=True) for _ in range(NUM_ITERS)]

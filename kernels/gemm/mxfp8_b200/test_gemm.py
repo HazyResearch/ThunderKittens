@@ -25,7 +25,7 @@ def check_diff(
 
 
 if __name__ == '__main__':
-    # Matrix dimensions (should not change)
+    # Matrix dimensions
     M = int(sys.argv[1]) if len(sys.argv) > 1 else 16384
     N = int(sys.argv[2]) if len(sys.argv) > 2 else 16384
     K = int(sys.argv[3]) if len(sys.argv) > 3 else 16384
@@ -52,8 +52,8 @@ if __name__ == '__main__':
     check_diff("TK-MXFP8-GEMM", C, C_ref)
 
     # Benchmark
-    NUM_WARMUPS = 5
-    NUM_ITERS = 10
+    NUM_WARMUPS = 500
+    NUM_ITERS = 100
 
     start_events = [torch.cuda.Event(enable_timing=True) for _ in range(NUM_ITERS)]
     end_events = [torch.cuda.Event(enable_timing=True) for _ in range(NUM_ITERS)]
