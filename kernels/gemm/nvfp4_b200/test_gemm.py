@@ -5,7 +5,7 @@ torch.set_printoptions(sci_mode=False)
 
 from _C import nvfp4_gemm, nvfp4_quantize
 
-# TEMP TEMP TEMP TEMP
+# TEMPORARY
 from test_quantize import torch_nvfp4_quantize, scale_swizzle, torch_nvfp4_dequantize
 
 
@@ -27,76 +27,76 @@ def check_diff(
 
 
 if __name__ == '__main__':
+    # Constants. Should equal to kernel's configuration
+    PACKED_PER_TILE = 4 
+
     # Matrix dimensions
     M = int(sys.argv[1]) if len(sys.argv) > 1 else 16384
     N = int(sys.argv[2]) if len(sys.argv) > 2 else 16384
     K = int(sys.argv[3]) if len(sys.argv) > 3 else 16384
-    PACKED_PER_TILE = 4 # should equal to kernel's (REDUCTION_BLOCK / 64)
-    print(f"{M=}, {N=}, {K=}, {PACKED_PER_TILE=}")
 
-    # Generate input and output matrices
-    A = torch.randn(M, K, dtype=torch.bfloat16, device="cuda") / K ** 0.25
-    B = torch.randn(N, K, dtype=torch.bfloat16, device="cuda") / K ** 0.25
-    C = torch.zeros(M, N, dtype=torch.bfloat16, device="cuda")
-    C_ref = torch.matmul(A, B.T).to(torch.bfloat16)
+    # Group size
+    l2_size = 128 * 1024 * 1024
+    size_per_group = M * K + K * N
+    num_groups = (l2_size // size_per_group + 1) * 100
+    print(f"{M=}, {N=}, {K=}, {PACKED_PER_TILE=}, {num_groups=}")
 
-    # Quantize matrices
-    A_fp4x2 = torch.empty(M, K // 2, dtype=torch.float4_e2m1fn_x2, device="cuda")
-    A_sc = torch.zeros(M // 128, K // 64, 32, 16, dtype=torch.float8_e4m3fn, device="cuda")
-    A_sc_global = torch.zeros(1, dtype=torch.float32, device="cuda")
-    B_fp4x2 = torch.empty(N, K // 2, dtype=torch.float4_e2m1fn_x2, device="cuda")
-    B_sc = torch.zeros(N // 128, K // 64, 32, 16, dtype=torch.float8_e4m3fn, device="cuda")
-    B_sc_global = torch.zeros(1, dtype=torch.float32, device="cuda")
-    # nvfp4_quantize(A, A_fp4x2, A_sc, A_sc_global)
-    # nvfp4_quantize(B, B_fp4x2, B_sc, B_sc_global)
-    # torch.cuda.synchronize()
+    # Generate input and output matrices and quantize them
+    groups = []
+    for i in range(num_groups):
+        A = torch.randn(M, K, dtype=torch.bfloat16, device="cuda") / K ** 0.25
+        B = torch.randn(N, K, dtype=torch.bfloat16, device="cuda") / K ** 0.25
+        C = torch.zeros(M, N, dtype=torch.bfloat16, device="cuda")
 
+        # Quantize matrices
+        # A_fp4x2 = torch.empty(M, K // 2, dtype=torch.float4_e2m1fn_x2, device="cuda")
+        # A_sc = torch.zeros(M // 128, K // 64, 32, 16, dtype=torch.float8_e4m3fn, device="cuda")
+        # A_sc_global = torch.zeros(1, dtype=torch.float32, device="cuda")
+        # B_fp4x2 = torch.empty(N, K // 2, dtype=torch.float4_e2m1fn_x2, device="cuda")
+        # B_sc = torch.zeros(N // 128, K // 64, 32, 16, dtype=torch.float8_e4m3fn, device="cuda")
+        # B_sc_global = torch.zeros(1, dtype=torch.float32, device="cuda")
+        # nvfp4_quantize(A, A_fp4x2, A_sc, A_sc_global)
+        # nvfp4_quantize(B, B_fp4x2, B_sc, B_sc_global)
 
-    # TEMP TEMP TEMP TEMP
-    A_fp4x2, A_sc_unswizzled, A_sc_global = torch_nvfp4_quantize(A)
-    A_sc = scale_swizzle(A_sc_unswizzled, PACKED_PER_TILE)
-    B_fp4x2, B_sc_unswizzled, B_sc_global = torch_nvfp4_quantize(B)
-    B_sc = scale_swizzle(B_sc_unswizzled, PACKED_PER_TILE)
+        # TEMPORARY
+        A_fp4x2, A_sc_unswizzled, A_sc_global = torch_nvfp4_quantize(A)
+        A_sc = scale_swizzle(A_sc_unswizzled, PACKED_PER_TILE)
+        B_fp4x2, B_sc_unswizzled, B_sc_global = torch_nvfp4_quantize(B)
+        B_sc = scale_swizzle(B_sc_unswizzled, PACKED_PER_TILE)
 
+        groups.append((A_fp4x2, A_sc, A_sc_global, B_fp4x2, B_sc, B_sc_global, C))
 
-
-    # Run PyTorch version
+    # Run PyTorch version using the last input 
     A_torch = torch_nvfp4_dequantize(A_fp4x2, A_sc_unswizzled, A_sc_global)
     B_torch = torch_nvfp4_dequantize(B_fp4x2, B_sc_unswizzled, B_sc_global)
     C_torch = torch.matmul(A_torch, B_torch.T)
 
-    # Run kernel and check correctness
+    # Run kernel and check correctness using the last input
     nvfp4_gemm(A_fp4x2, A_sc, A_sc_global, B_fp4x2, B_sc, B_sc_global, C)
-    torch.cuda.synchronize()
     check_diff("TK NVFP4 vs PyTorch NVFP4", C, C_torch)
-    check_diff("TK NVFP4 vs PyTorch BF16", C, C_ref)
+    check_diff("TK NVFP4 vs PyTorch BF16", C, torch.matmul(A, B.T).to(torch.bfloat16))
 
     # Benchmark
     NUM_WARMUPS = 500
     NUM_ITERS = 100
 
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(NUM_ITERS)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(NUM_ITERS)]
+    start_event = torch.cuda.Event(enable_timing=True)
+    end_event = torch.cuda.Event(enable_timing=True)
 
     for i in range(NUM_WARMUPS):
-        nvfp4_gemm(A_fp4x2, A_sc, A_sc_global, B_fp4x2, B_sc, B_sc_global, C)
-
-    l2_cache_size = 1024 * 1024 * 128 # ~128MB for Blackwell
-    l2_cache = torch.randn(l2_cache_size // 2, dtype=torch.bfloat16)
-    cache_clear = lambda: l2_cache.random_(0, 1)
-
-    for i in range(NUM_ITERS):
-        cache_clear()
-        start_events[i].record()
-        nvfp4_gemm(A_fp4x2, A_sc, A_sc_global, B_fp4x2, B_sc, B_sc_global, C)
-        end_events[i].record()
+        nvfp4_gemm(*groups[i % num_groups])
     torch.cuda.synchronize()
 
-    times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
-    avg_time = np.mean(times) * 1e-3
-    std_time = np.std(times) * 1e-3
+    start_event.record()
+    for i in range(NUM_ITERS):
+        nvfp4_gemm(*groups[i % num_groups])
+    end_event.record()
+    torch.cuda.synchronize()
+
+    total_time = start_event.elapsed_time(end_event) * 1e-3
+    avg_time = total_time / NUM_ITERS
     flops = 2.0 * M * N * K
     tflops = flops * 1e-12
 
-    print(f"Average time: {avg_time * 1e6:.2f} ± {std_time * 1e6:.2f} us")
+    print(f"Average time: {avg_time * 1e6:.2f} us")
     print(f"Average TFLOPs: {tflops / (avg_time):.2f} TFLOp/s")
