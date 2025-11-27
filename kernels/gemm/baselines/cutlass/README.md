@@ -59,7 +59,7 @@ Here, we describe how we benchmarked the [CUTLASS](https://github.com/NVIDIA/cut
     # BF16_BF16_FP32_void_BF16 GEMM
     for N in 1024 2048 4096 8192 16384; do
     ./tools/profiler/cutlass_profiler \
-        --operation=block_scaled_gemm \
+        --operation=gemm \
         --m=${N} \
         --n=${N} \
         --k=${N} \
