@@ -108,54 +108,57 @@ if __name__ == '__main__':
     # Matrix dimensions
     M = int(sys.argv[1]) if len(sys.argv) > 1 else 204800
     N = int(sys.argv[2]) if len(sys.argv) > 2 else 2048
-    print(f"{M=}, {N=}")
+
+    # Group size
+    l2_size = 128 * 1024 * 1024
+    size_per_group = M * N * 2
+    num_groups = (l2_size // size_per_group + 1) * 100
+    print(f"{M=}, {N=}, {num_groups=}")
 
     # Generate reference outputs and input matrix
-    A_fp8_ref = ((torch.rand(M, N, dtype=torch.float32, device="cuda") * 2 - 1) * 448).to(torch.float8_e4m3fn)
-    A_sc_unswizzled_ref = torch.randint(127 - 20, 127 + 20, (M, N // 32), dtype=torch.uint8, device="cuda")
-    A_sc_ref = scale_swizzle(A_sc_unswizzled_ref)
-    A_bf16 = torch_mxfp8_dequantize(A_fp8_ref, A_sc_unswizzled_ref).to(torch.bfloat16)
+    groups = []
+    for i in range(num_groups):
+        A_fp8_ref = ((torch.rand(M, N, dtype=torch.float32, device="cuda") * 2 - 1) * 448).to(torch.float8_e4m3fn)
+        A_sc_unswizzled_ref = torch.randint(127 - 20, 127 + 20, (M, N // 32), dtype=torch.uint8, device="cuda")
+        A_sc_ref = scale_swizzle(A_sc_unswizzled_ref)
+        A_bf16 = torch_mxfp8_dequantize(A_fp8_ref, A_sc_unswizzled_ref).to(torch.bfloat16)
+        A_fp8 = torch.zeros_like(A_fp8_ref)
+        A_sc = torch.zeros_like(A_sc_ref)
+        groups.append((A_bf16, A_fp8, A_sc))
 
-    # Run PyTorch version and check correctness
+    # Run PyTorch version and check correctness using the last input
     A_fp8_torch, A_sc_unswizzled_torch = torch_mxfp8_quantize(A_bf16)
     A_sc_torch = scale_swizzle(A_sc_unswizzled_torch)
     check_diff("Torch-FP8", A_fp8_torch, A_fp8_ref)
     check_diff("Torch-SC", A_sc_torch, A_sc_ref)
 
-    # Run our version and check correctness
-    A_fp8_tk = torch.zeros_like(A_fp8_ref)
-    A_sc_tk = torch.zeros_like(A_sc_ref)
-    mxfp8_quantize(A_bf16, A_fp8_tk, A_sc_tk)
+    # Run our version and check correctness using the last input
+    mxfp8_quantize(A_bf16, A_fp8, A_sc)
     torch.cuda.synchronize()
-    check_diff("TK-FP8", A_fp8_tk, A_fp8_ref)
-    check_diff("TK-SC", A_sc_tk, A_sc_ref)
+    check_diff("TK-FP8", A_fp8, A_fp8_ref)
+    check_diff("TK-SC", A_sc, A_sc_ref)
 
     # Benchmark
-    NUM_WARMUPS = 5
-    NUM_ITERS = 10
+    NUM_WARMUPS = 500
+    NUM_ITERS = 100
 
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(NUM_ITERS)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(NUM_ITERS)]
+    start_event = torch.cuda.Event(enable_timing=True)
+    end_event = torch.cuda.Event(enable_timing=True)
 
     for i in range(NUM_WARMUPS):
-        mxfp8_quantize(A_bf16, A_fp8_tk, A_sc_tk)
-
-    l2_cache_size = 1024 * 1024 * 128 # ~128MB for Blackwell
-    l2_cache = torch.randn(l2_cache_size // 2, dtype=torch.bfloat16)
-    cache_clear = lambda: l2_cache.random_(0, 1)
-
-    for i in range(NUM_ITERS):
-        cache_clear()
-        start_events[i].record()
-        mxfp8_quantize(A_bf16, A_fp8_tk, A_sc_tk)
-        end_events[i].record()
+        mxfp8_quantize(*groups[i % num_groups])
     torch.cuda.synchronize()
 
-    times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
-    avg_time = np.mean(times) * 1e-3
-    std_time = np.std(times) * 1e-3
+    start_event.record()
+    for i in range(NUM_ITERS):
+        mxfp8_quantize(*groups[i % num_groups])
+    end_event.record()
+    torch.cuda.synchronize()
+
+    total_time = start_event.elapsed_time(end_event) * 1e-3
+    avg_time = total_time / NUM_ITERS
     gb = M * N * (2 + 1 + 1 / 32) * 1e-9
     gbps = gb / avg_time
 
-    print(f"Average time: {avg_time * 1e6:.2f} ± {std_time * 1e6:.2f} us")
+    print(f"Average time: {avg_time * 1e6:.2f} us")
     print(f"Average throughput: {gbps:.2f} GB/s")

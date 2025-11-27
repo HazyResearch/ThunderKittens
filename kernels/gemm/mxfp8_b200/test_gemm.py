@@ -1,4 +1,3 @@
-import numpy as np
 import sys
 import torch
 torch.random.manual_seed(42)
@@ -29,54 +28,54 @@ if __name__ == '__main__':
     M = int(sys.argv[1]) if len(sys.argv) > 1 else 16384
     N = int(sys.argv[2]) if len(sys.argv) > 2 else 16384
     K = int(sys.argv[3]) if len(sys.argv) > 3 else 16384
-    print(f"{M=}, {N=}, {K=}")
 
-    # Generate input and output matrices
-    A = torch.randn(M, K, dtype=torch.bfloat16, device="cuda") / K ** 0.25
-    B = torch.randn(N, K, dtype=torch.bfloat16, device="cuda") / K ** 0.25
-    C = torch.zeros(M, N, dtype=torch.bfloat16, device="cuda")
-    C_ref = torch.matmul(A, B.T).to(torch.bfloat16)
+    # Group size
+    l2_size = 128 * 1024 * 1024
+    size_per_group = M * K + K * N
+    num_groups = (l2_size // size_per_group + 1) * 100
+    print(f"{M=}, {N=}, {K=}, {num_groups=}")
 
-    # Quantize matrices
-    A_fp8 = torch.zeros(M, K, dtype=torch.float8_e4m3fn, device="cuda")
-    A_sc = torch.zeros(M // 128, K // 128, 32, 16, dtype=torch.uint8, device="cuda")
-    B_fp8 = torch.zeros(M, K, dtype=torch.float8_e4m3fn, device="cuda")
-    B_sc = torch.zeros(M // 128, K // 128, 32, 16, dtype=torch.uint8, device="cuda")
-    mxfp8_quantize(A, A_fp8, A_sc)
-    mxfp8_quantize(B, B_fp8, B_sc)
-    torch.cuda.synchronize()
+    # Generate input and output matrices and quantize them
+    groups = []
+    for i in range(num_groups):
+        A = torch.randn(M, K, dtype=torch.bfloat16, device="cuda") / K ** 0.25
+        B = torch.randn(N, K, dtype=torch.bfloat16, device="cuda") / K ** 0.25
+        C = torch.zeros(M, N, dtype=torch.bfloat16, device="cuda")
 
-    # Run kernel and check correctness
+        A_fp8 = torch.zeros(M, K, dtype=torch.float8_e4m3fn, device="cuda")
+        A_sc = torch.zeros(M // 128, K // 128, 32, 16, dtype=torch.uint8, device="cuda")
+        B_fp8 = torch.zeros(M, K, dtype=torch.float8_e4m3fn, device="cuda")
+        B_sc = torch.zeros(M // 128, K // 128, 32, 16, dtype=torch.uint8, device="cuda")
+        mxfp8_quantize(A, A_fp8, A_sc)
+        mxfp8_quantize(B, B_fp8, B_sc)
+
+        groups.append((A_fp8, A_sc, B_fp8, B_sc, C))
+
+    # Check correctness using the last input
     mxfp8_gemm(A_fp8, A_sc, B_fp8, B_sc, C)
-    torch.cuda.synchronize()
-    check_diff("TK-MXFP8-GEMM", C, C_ref)
+    check_diff("TK-MXFP8-GEMM", C, torch.matmul(A, B.T).to(torch.bfloat16))
 
     # Benchmark
     NUM_WARMUPS = 500
     NUM_ITERS = 100
 
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(NUM_ITERS)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(NUM_ITERS)]
+    start_event = torch.cuda.Event(enable_timing=True)
+    end_event = torch.cuda.Event(enable_timing=True)
 
     for i in range(NUM_WARMUPS):
-        mxfp8_gemm(A_fp8, A_sc, B_fp8, B_sc, C)
-
-    l2_cache_size = 1024 * 1024 * 128 # ~128MB for Blackwell
-    l2_cache = torch.randn(l2_cache_size // 2, dtype=torch.bfloat16)
-    cache_clear = lambda: l2_cache.random_(0, 1)
-
-    for i in range(NUM_ITERS):
-        cache_clear()
-        start_events[i].record()
-        mxfp8_gemm(A_fp8, A_sc, B_fp8, B_sc, C)
-        end_events[i].record()
+        mxfp8_gemm(*groups[i % num_groups])
     torch.cuda.synchronize()
 
-    times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
-    avg_time = np.mean(times) * 1e-3
-    std_time = np.std(times) * 1e-3
+    start_event.record()
+    for i in range(NUM_ITERS):
+        mxfp8_gemm(*groups[i % num_groups])
+    end_event.record()
+    torch.cuda.synchronize()
+
+    total_time = start_event.elapsed_time(end_event) * 1e-3
+    avg_time = total_time / NUM_ITERS
     flops = 2.0 * M * N * K
     tflops = flops * 1e-12
 
-    print(f"Average time: {avg_time * 1e6:.2f} ± {std_time * 1e6:.2f} us")
-    print(f"Average TFLOPs: {tflops / (avg_time):.2f} TFLOp/s")
+    print(f"Average time: {avg_time * 1e6:.2f} us")
+    print(f"Average TFLOPs: {tflops / avg_time:.2f} TFLOp/s")
