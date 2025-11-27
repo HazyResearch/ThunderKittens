@@ -66,8 +66,7 @@ Here, we describe how we benchmarked the [CUTLASS](https://github.com/NVIDIA/cut
         --output=bf16_${N} \
         --kernels="cutlass3x_sm100_tensorop_gemm_bf16_bf16_f32_void_bf16" \
         --warmup-iterations=500 \
-        --min-iterations=100 \
-        --profiling-duration=2000 \
+        --profiling-iterations=100 \
         --verification-enabled=false \
         --dist=uniform,min:-1,max:1
     done
@@ -82,8 +81,7 @@ Here, we describe how we benchmarked the [CUTLASS](https://github.com/NVIDIA/cut
         --output=mxfp8_${N} \
         --kernels="cutlass3x_sm100_bstensorop_gemm_ue8m0xe4m3_ue8m0xe4m3_f32_void_bf16" \
         --warmup-iterations=500 \
-        --min-iterations=100 \
-        --profiling-duration=2000 \
+        --profiling-iterations=100 \
         --verification-enabled=false \
         --dist=uniform,min:-1,max:1
     done
@@ -98,8 +96,7 @@ Here, we describe how we benchmarked the [CUTLASS](https://github.com/NVIDIA/cut
         --output=nvfp4_${N} \
         --kernels="cutlass3x_sm100_bstensorop_gemm_ue4m3xe2m1_ue4m3xe2m1_f32_void_f32" \
         --warmup-iterations=500 \
-        --min-iterations=100 \
-        --profiling-duration=2000 \
+        --profiling-iterations=100 \
         --verification-enabled=false \
         --dist=uniform,min:-1,max:1
     done
