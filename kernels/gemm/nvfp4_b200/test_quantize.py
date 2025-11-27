@@ -138,33 +138,3 @@ if __name__ == '__main__':
     # torch.cuda.synchronize()
     # check_diff("TK-FP8", A_fp8_tk, A_fp8_ref)
     # check_diff("TK-SC", A_sc_tk, A_sc_ref)
-
-    # # Benchmark
-    # NUM_WARMUPS = 5
-    # NUM_ITERS = 10
-
-    # start_events = [torch.cuda.Event(enable_timing=True) for _ in range(NUM_ITERS)]
-    # end_events = [torch.cuda.Event(enable_timing=True) for _ in range(NUM_ITERS)]
-
-    # for i in range(NUM_WARMUPS):
-    #     nvfp4_quantize(A_bf16, A_fp8_tk, A_sc_tk)
-
-    # l2_cache_size = 1024 * 1024 * 128 # ~128MB for Blackwell
-    # l2_cache = torch.randn(l2_cache_size // 2, dtype=torch.bfloat16)
-    # cache_clear = lambda: l2_cache.random_(0, 1)
-
-    # for i in range(NUM_ITERS):
-    #     cache_clear()
-    #     start_events[i].record()
-    #     nvfp4_quantize(A_bf16, A_fp8_tk, A_sc_tk)
-    #     end_events[i].record()
-    # torch.cuda.synchronize()
-
-    # times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
-    # avg_time = np.mean(times) * 1e-3
-    # std_time = np.std(times) * 1e-3
-    # gb = M * N * (2 + 1 + 1 / 32) * 1e-9
-    # gbps = gb / avg_time
-
-    # print(f"Average time: {avg_time * 1e6:.2f} ± {std_time * 1e6:.2f} us")
-    # print(f"Average throughput: {gbps:.2f} GB/s")
