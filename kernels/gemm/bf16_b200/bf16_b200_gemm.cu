@@ -37,7 +37,7 @@ struct matmul_globals {
     }
 };
 
-template<int SUPER_M=8> __device__ static inline int2 get_task_idx(const matmul_globals &g, int block_idx, bool is_consumer) {
+template<int SUPER_M=8> __device__ static inline int get_task_idx(const matmul_globals &g, int block_idx) {
     constexpr int CLUSTER_M = 2*Mb, CLUSTER_N = Nb;
     int cluster_idx = block_idx/2, cta_rank = cluster_ctarank();
     int Rblocks = g.d.rows() / CLUSTER_M, Cblocks = g.d.cols() / CLUSTER_N;
@@ -45,16 +45,10 @@ template<int SUPER_M=8> __device__ static inline int2 get_task_idx(const matmul_
         final_rows = Rblocks - super_rows,
         super_repeat = SUPER_M*Cblocks;
     if (cluster_idx < super_rows * Cblocks) {
-        return { 
-            (SUPER_M*(cluster_idx/super_repeat) + cluster_idx%SUPER_M)*2 + cta_rank,
-            is_consumer ? (cluster_idx%super_repeat)/SUPER_M : ((cluster_idx%super_repeat)/SUPER_M)*2 + cta_rank
-        };
+        return (((SUPER_M*(cluster_idx/super_repeat) + cluster_idx%SUPER_M)*2 + cta_rank) << 16) | (cluster_idx%super_repeat)/SUPER_M;
     } else {
         int remainder_id = cluster_idx - super_rows*Cblocks;
-        return {
-            (super_rows + remainder_id%final_rows)*2 + cta_rank,
-            is_consumer ? remainder_id/final_rows : (remainder_id/final_rows)*2 + cta_rank
-        };
+        return (((super_rows + remainder_id%final_rows)*2 + cta_rank) << 16) | (remainder_id/final_rows);
     }
 }
 
@@ -80,7 +74,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
     tensor_allocator<1, 2> tm_alloc{};
     using d_tt_t = tt<float, Mb, Nb>;
 
-    __shared__ int next_block_idx[CLC_PIPE_DEPTH];
+    __shared__ int next_tile_idx[CLC_PIPE_DEPTH];
     __shared__ uint4 clc_handle;
     __shared__ semaphore clc_arrived, job_arrived[CLC_PIPE_DEPTH], job_finished[CLC_PIPE_DEPTH];
     __shared__ semaphore inputs_arrived[SMEM_PIPE_DEPTH], inputs_finished[SMEM_PIPE_DEPTH], outputs_arrived, outputs_finished[MMA_PIPE_DEPTH];
@@ -113,9 +107,8 @@ void matmul(const __grid_constant__ matmul_globals g) {
             int input_ring = 0; // tracking which input block is being loaded
             for (int task_iter = 0; true; task_iter++) {
                 wait(job_arrived[task_iter%CLC_PIPE_DEPTH], (task_iter/CLC_PIPE_DEPTH)%2);
-                int block_idx = next_block_idx[task_iter%CLC_PIPE_DEPTH];
-                int2 rowcol = get_task_idx(g, block_idx, false);
-                if(block_idx == -1) {
+                int rowcol_packed = next_tile_idx[task_iter%CLC_PIPE_DEPTH];
+                if(rowcol_packed == -1) {
                     for (int idx = 0; idx < (SMEM_PIPE_DEPTH); idx++) {
                         tma::cluster::wait(inputs_finished[input_ring], get_phasebit<1>(bitfield, input_ring));
                         input_ring=ring_advance<SMEM_PIPE_DEPTH>(input_ring);
@@ -123,13 +116,15 @@ void matmul(const __grid_constant__ matmul_globals g) {
                     arrive(outputs_arrived);
                     break;
                 }
+                int2 rowcol = {rowcol_packed >> 16, rowcol_packed & 0xFFFF};
                 for (int idx = 0; idx < iters_per_task; idx++) {
                     tma::cluster::wait(inputs_finished[input_ring], get_phasebit<1>(bitfield, input_ring));
                     update_phasebit<1>(bitfield, input_ring);
                     if(task_iter>0 && idx==SMEM_PIPE_DEPTH-1) arrive(outputs_arrived);
                     tma::cluster::expect(inputs_arrived[input_ring], 0, a_smem[0], b_smem[0]);
-                    tma::cluster::load_async(a_smem[input_ring], g.a, {rowcol.x, idx}, inputs_arrived[input_ring], (uint16_t)(1<<ctarank), 0);
-                    tma::cluster::load_async(b_smem[input_ring], g.b, {rowcol.y, idx}, inputs_arrived[input_ring], (uint16_t)(1<<ctarank), 0);
+                    tma::cluster::load_async(a_smem[input_ring], g.a, {rowcol.x,           idx}, inputs_arrived[input_ring], (uint16_t)(1<<ctarank), 0);
+                    tma::cluster::load_async(b_smem[input_ring], g.b, {rowcol.y*2+ctarank, idx}, inputs_arrived[input_ring], (uint16_t)(1<<ctarank), 0);
+                    // tma::cluster::arrive(inputs_arrived[input_ring], 0, 1);
                     input_ring=ring_advance<SMEM_PIPE_DEPTH>(input_ring);
                 }
             }
@@ -139,9 +134,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
             int input_ring = 0; // tracking which input block is being loaded
             for(int task_iter = 0; true; task_iter++) {
                 wait(job_arrived[task_iter%CLC_PIPE_DEPTH], (task_iter/CLC_PIPE_DEPTH)%2);
-                int block_idx = next_block_idx[task_iter%CLC_PIPE_DEPTH];
-                int2 rowcol = get_task_idx(g, block_idx, false);
-                if(block_idx == -1) break;
+                if(next_tile_idx[task_iter%CLC_PIPE_DEPTH] == -1) break;
                 tma::cluster::wait(outputs_finished[task_iter%MMA_PIPE_DEPTH], (task_iter/MMA_PIPE_DEPTH+1)%2); // make sure tensor memory is ready to be written to.
                 tma::cluster::wait(inputs_arrived[input_ring], get_phasebit<0>(bitfield, input_ring));
                 update_phasebit<0>(bitfield, input_ring);
@@ -156,13 +149,12 @@ void matmul(const __grid_constant__ matmul_globals g) {
             }
         }
         else if(warp::laneid() == 0 && warpgroup::warpid() == 2) { // fetch next block idx
-            int clc_pipe_stage = 0;
-            update_phasebit<1>(bitfield, clc_pipe_stage);
-            next_block_idx[clc_pipe_stage] = blockIdx.x;
-            arrive(job_arrived[clc_pipe_stage]);
-            clc_pipe_stage = (clc_pipe_stage + 1) % CLC_PIPE_DEPTH;
+            update_phasebit<1>(bitfield, 0);
+            next_tile_idx[0] = get_task_idx(g, blockIdx.x);
+            arrive(job_arrived[0]);
 
-            while (true) {
+            for(int task_iter = 1; true; task_iter++) {
+                tma::cluster::expect_bytes(clc_arrived, sizeof(clc_handle), ctarank);
                 if (ctarank == 0) {
                     asm volatile("{fence.proxy.async::generic.acquire.sync_restrict::shared::cluster.cluster;}" ::: "memory");
                     asm volatile("{clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.multicast::cluster::all.b128 [%0], [%1];}"
@@ -170,10 +162,8 @@ void matmul(const __grid_constant__ matmul_globals g) {
                         : "memory"
                     );
                 }
-
-                tma::cluster::expect_bytes(clc_arrived, sizeof(clc_handle), ctarank);        
-                tma::cluster::wait(clc_arrived, get_phasebit<0>(bitfield, 8));
-                update_phasebit<0>(bitfield, 8);
+                tma::cluster::wait(clc_arrived, get_phasebit<0>(bitfield, 0));
+                update_phasebit<0>(bitfield, 0);
 
                 uint32_t success;
                 int3 next_cta_id;
@@ -195,14 +185,10 @@ void matmul(const __grid_constant__ matmul_globals g) {
                     : "memory"
                 );
 
-                wait(job_finished[clc_pipe_stage], get_phasebit<1>(bitfield, clc_pipe_stage));
-                update_phasebit<1>(bitfield, clc_pipe_stage);
-
-                next_block_idx[clc_pipe_stage] = success ? next_cta_id.x + ctarank : -1;
-
-                arrive(job_arrived[clc_pipe_stage]);
-                clc_pipe_stage = (clc_pipe_stage + 1) % CLC_PIPE_DEPTH;
-
+                wait(job_finished[task_iter%CLC_PIPE_DEPTH], get_phasebit<1>(bitfield, task_iter%CLC_PIPE_DEPTH));
+                update_phasebit<1>(bitfield, task_iter%CLC_PIPE_DEPTH);
+                next_tile_idx[task_iter%CLC_PIPE_DEPTH] = success ? get_task_idx(g, next_cta_id.x + ctarank) : 0xFFFFFFFF;
+                arrive(job_arrived[task_iter%CLC_PIPE_DEPTH]);
                 if (!success) break;
             }
         }
@@ -212,9 +198,9 @@ void matmul(const __grid_constant__ matmul_globals g) {
         d_tt_t d_tt[2] = {tm_alloc.allocate<d_tt_t>(0*Nb), tm_alloc.allocate<d_tt_t>(1*Nb)};
         for(int task_iter = 0; true; task_iter++) {
             wait(job_arrived[task_iter%CLC_PIPE_DEPTH], (task_iter/CLC_PIPE_DEPTH)%2);
-            int block_idx = next_block_idx[task_iter%CLC_PIPE_DEPTH];
-            int2 rowcol = get_task_idx(g, block_idx, true);
-            if(block_idx == -1) break;
+            int rowcol_packed = next_tile_idx[task_iter%CLC_PIPE_DEPTH];
+            if(rowcol_packed == -1) break;
+            int2 rowcol = {rowcol_packed >> 16, rowcol_packed & 0xFFFF};
             wait(outputs_arrived, task_iter%2);
             #pragma unroll
             for (int i = 0; i < TMEM_PIPE_DEPTH; i++) {
