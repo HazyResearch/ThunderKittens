@@ -278,22 +278,24 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     }
 
     // Start timing
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
     cudaDeviceSynchronize();
     std::cout << "Launching kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
-    auto start = std::chrono::high_resolution_clock::now();
-
+    
+    cudaEventRecord(start);
     constexpr int ITERS = (NCU ? 1 : 100);
     for(int i = 0; i < ITERS; i++) {
         inner_run(d_A, d_B, d_C, M, N, K, grid, block);
     }
-    cudaDeviceSynchronize();
-
-    // End timing
-    auto end = std::chrono::high_resolution_clock::now();
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
 
     // Calculate duration
-    std::chrono::duration<double> diff = end - start;
-    double useconds = diff.count() * 1e6 / ITERS;
+    float milliseconds;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    double useconds = milliseconds * 1000.0 / ITERS;
 
     // Calculate TFLOPs
     double flops = double(2.0) * M * N * K; // 2 FLOPs per multiply-add
@@ -353,6 +355,8 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     cudaFree(d_A);
     cudaFree(d_B);
     cudaFree(d_C);
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
 
     return 0;
 }
@@ -365,7 +369,7 @@ int main() {
     // run_benchmark(N, N, N);
     // N = 4096;
     // run_benchmark(N, N, N);
-    N = 8192;
+    N = 4096;
     run_benchmark(N, N, N);
     // N = 16384;
     // run_benchmark(N, N, N);
