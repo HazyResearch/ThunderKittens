@@ -302,7 +302,7 @@ __device__ static inline void st_st(uint32_t d_tt_addr, uint64_t a_desc, uint64_
 }
 
 template <int ncta>
-__device__ static inline void commit(kittens::semaphore &sem) {
+__device__ static inline void commit(kittens::semaphore &sem, uint16_t dst_cta_mask = 0b11) {
     if constexpr (ncta == 1) {
         asm volatile(
             "tcgen05.commit.cta_group::1.mbarrier::arrive::one.b64 [%0];\n"
@@ -311,7 +311,7 @@ __device__ static inline void commit(kittens::semaphore &sem) {
     else {
         asm volatile(
             "tcgen05.commit.cta_group::2.mbarrier::arrive::one.shared::cluster.multicast::cluster.b64 [%0], %1;\n"
-        ::  "l"(__cvta_generic_to_shared(&sem)), "h"((uint16_t)(0b11)));
+        ::  "l"(__cvta_generic_to_shared(&sem)), "h"(dst_cta_mask));
     }
 }
 
