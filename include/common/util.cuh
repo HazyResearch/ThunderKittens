@@ -312,7 +312,7 @@ public:
 using tma_allocator = shared_allocator<1024>;
 using tma_swizzle_allocator = tma_allocator; // swizzled TMA modes require up to 1024 byte alignments :/
 
-/* Get CTA ID within a cluster */
+/* Get cluster ID */
 __device__ static inline int3 clusterIdx() {
     int3 cluster_idx;
     asm volatile("mov.u32 %0, %clusterid.x;\n" : "=r"(cluster_idx.x));
@@ -320,6 +320,8 @@ __device__ static inline int3 clusterIdx() {
     asm volatile("mov.u32 %0, %clusterid.z;\n" : "=r"(cluster_idx.z));
     return cluster_idx;
 }
+
+/* Get CTA ID within a cluster */
 __device__ static inline int cluster_ctarank() {
     uint32_t ctarank;
     asm volatile("mov.u32 %0, %cluster_ctarank;\n" : "=r"(ctarank));
