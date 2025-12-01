@@ -153,11 +153,11 @@ struct KITTENS_DEFAULT_ALIGN st {
      *        The constraint is that only column dimension can be divided, and it must be a multiple of swizzle bytes.
      */
     template<int subtile_cols>
-    __device__ inline st<_T, _rows, subtile_cols, _swizzle> &subtile(int col) {
+    __device__ inline st<_T, _rows, subtile_cols, _swizzle, swizzle_bytes /*must not use _swizzle_bytes*/> &subtile(int idx) {
         constexpr int swizzle_elements = swizzle_bytes / sizeof(T);
         static_assert(subtile_cols >= 0 && subtile_cols % swizzle_elements == 0);
-        return *reinterpret_cast<st<_T, _rows, subtile_cols, _swizzle> *>(
-            &data[rows*swizzle_elements*(subtile_cols/swizzle_elements)]
+        return *reinterpret_cast<st<_T, _rows, subtile_cols, _swizzle, swizzle_bytes> *>(
+            &data[rows*swizzle_elements*(subtile_cols/swizzle_elements)*idx]
         );
     }
 
