@@ -227,7 +227,7 @@ struct result {
     uint32_t z;
 };
 
-/*
+/**
  * @brief Schedules a new threadblock. Must be called by a single thread in the entire CTA cluster.
  *        The caller must wait on the semaphore with tma::cluster::expect_bytes followed by tma::cluster::wait.
  * @param h The CLC handle.
@@ -241,7 +241,7 @@ __device__ static inline void schedule(handle &h, semaphore &sem) {
     );
 }
 
-/*
+/**
  * @brief Queries the result of a schedule operation. Calling this again after failure is undefined behavior.
  * @param r The result of the query to be filled in.
  * @param h The CLC handle.
