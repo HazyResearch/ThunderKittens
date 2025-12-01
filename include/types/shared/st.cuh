@@ -55,7 +55,7 @@ struct st_subtile;
  * @tparam _rows The height of the tile.
  * @tparam _cols The width of the tile.
  */
-template<typename _T, int _rows, int _cols, bool _swizzle=true>
+template<typename _T, int _rows, int _cols, bool _swizzle=true, int _swizzle_bytes=0>
 struct KITTENS_DEFAULT_ALIGN st {
 #ifdef KITTENS_BLACKWELL
     static_assert(!std::is_same_v<_T, fp4e2m1>, "For FP4 types, you must use a packed type (i.e., fp4e2m1_2 or fp4e2m1_4).");
@@ -82,7 +82,9 @@ struct KITTENS_DEFAULT_ALIGN st {
     // Must be a 1-packed type (e.g. float, bf16, etc) unless fp4
     static_assert(base_types::packing<dtype>::num() == 1 || std::is_same_v<dtype, fp4e2m1_2>); 
 
-    static constexpr int swizzle_bytes = (
+    // If a user specifies a swizzle bytes value, the column byte size must be a multiple of the swizzle bytes.
+    static_assert(_swizzle_bytes == 0 || _swizzle_bytes == 32 || _swizzle_bytes == 64 || _swizzle_bytes == 128);
+    static constexpr int swizzle_bytes = _swizzle_bytes > 0 ? _swizzle_bytes : (
         sizeof(dtype) == 1 ? (  // Add FP8 case
             (cols/kittens::TILE_COL_DIM<T>)%4 == 0 ? 128 :
             (cols/kittens::TILE_COL_DIM<T>)%2 == 0 ?  64 : 32
@@ -144,7 +146,20 @@ struct KITTENS_DEFAULT_ALIGN st {
     }
 
     template<int subtile_rows, int subtile_cols>
-    __device__ inline st_subtile<st<_T, _rows, _cols, _swizzle>, subtile_rows, subtile_cols> subtile(int2 rowcol);
+    __device__ inline st_subtile<st<_T, _rows, _cols, _swizzle, _swizzle_bytes>, subtile_rows, subtile_cols> subtile(int2 rowcol);
+
+    /**
+     * @brief Return a true "subtile" of this tile, not a temporary view with st_subtile. 
+     *        The constraint is that only column dimension can be divided, and it must be a multiple of swizzle bytes.
+     */
+    template<int subtile_cols>
+    __device__ inline st<_T, _rows, subtile_cols, _swizzle> &subtile(int col) {
+        constexpr int swizzle_elements = swizzle_bytes / sizeof(T);
+        static_assert(subtile_cols >= 0 && subtile_cols % swizzle_elements == 0);
+        return *reinterpret_cast<st<_T, _rows, subtile_cols, _swizzle> *>(
+            &data[rows*swizzle_elements*(subtile_cols/swizzle_elements)]
+        );
+    }
 
     // vector types
     using col_vec = sv<dtype, rows>; ///< Column vector type for this tile
@@ -254,10 +269,10 @@ struct st_subtile {
     }
 };
 
-template <typename _T, int _rows, int _cols, bool _swizzle> // Class template parameters
+template <typename _T, int _rows, int _cols, bool _swizzle, int _swizzle_bytes> // Class template parameters
 template <int subtile_rows, int subtile_cols> // Function template parameters
-__device__ inline st_subtile<st<_T, _rows, _cols, _swizzle>, subtile_rows, subtile_cols> // Return type
-st<_T, _rows, _cols, _swizzle>::subtile(int2 rowcol) // Qualified function name and parameters
+__device__ inline st_subtile<st<_T, _rows, _cols, _swizzle, _swizzle_bytes>, subtile_rows, subtile_cols> // Return type
+st<_T, _rows, _cols, _swizzle, _swizzle_bytes>::subtile(int2 rowcol) // Qualified function name and parameters
 {
     // Type aliases for convenience within the function body
     using ST_t = st<_T, _rows, _cols>; // Alias for the parent tile type
@@ -289,16 +304,23 @@ st<_T, _rows, _cols, _swizzle>::subtile(int2 rowcol) // Qualified function name 
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
-template<int _height, int _width, bool _swizzle=true> using st_bf = st<bf16,  _height, _width, _swizzle>;
-template<int _height, int _width, bool _swizzle=true> using st_hf = st<half,  _height, _width, _swizzle>;
-template<int _height, int _width, bool _swizzle=true> using st_fl = st<float, _height, _width, _swizzle>;
+template<int _height, int _width, bool _swizzle=true, int _swizzle_bytes=0> 
+using st_bf = st<bf16,  _height, _width, _swizzle, _swizzle_bytes>;
+template<int _height, int _width, bool _swizzle=true, int _swizzle_bytes=0> 
+using st_hf = st<half,  _height, _width, _swizzle, _swizzle_bytes>;
+template<int _height, int _width, bool _swizzle=true, int _swizzle_bytes=0> 
+using st_fl = st<float, _height, _width, _swizzle, _swizzle_bytes>;
 #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
-template<int _height, int _width, bool _swizzle=true> using st_fp8e4m3 = st<fp8e4m3, _height, _width, _swizzle>;
-template<int _height, int _width, bool _swizzle=true> using st_fp8e5m2 = st<fp8e5m2, _height, _width, _swizzle>;
+template<int _height, int _width, bool _swizzle=true, int _swizzle_bytes=0> 
+using st_fp8e4m3 = st<fp8e4m3, _height, _width, _swizzle, _swizzle_bytes>;
+template<int _height, int _width, bool _swizzle=true, int _swizzle_bytes=0> 
+using st_fp8e5m2 = st<fp8e5m2, _height, _width, _swizzle, _swizzle_bytes>;
 #endif
 #if defined(KITTENS_BLACKWELL)
-template<int _height, int _width, bool _swizzle=true> using st_fp8e8m0 = st<fp8e8m0, _height, _width, _swizzle>;
-template<int _height, int _width, bool _swizzle=true> using st_fp4e2m1_2 = st<fp4e2m1_2, _height, _width, _swizzle>;
+template<int _height, int _width, bool _swizzle=true, int _swizzle_bytes=0> 
+using st_fp8e8m0 = st<fp8e8m0, _height, _width, _swizzle, _swizzle_bytes>;
+template<int _height, int _width, bool _swizzle=true, int _swizzle_bytes=0> 
+using st_fp4e2m1_2 = st<fp4e2m1_2, _height, _width, _swizzle, _swizzle_bytes>;
 #endif
 
 /* ----------  PRINTOUTS  ---------- */

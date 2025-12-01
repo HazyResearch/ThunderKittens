@@ -57,17 +57,17 @@ struct st_descriptor {
     __device__ inline st_descriptor(const ST &tile) {
         // See https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#asynchronous-warpgroup-level-leading-dimension-byte-offset
         if constexpr (MN_major) { // MN major mode (i.e., K x M for A matrix, K x N for B matrix)
-            if constexpr ((ST::cols/TILE_COL_DIM<T>)%4 == 0) // 128B swizzle mode
+            if constexpr (ST::swizzle_bytes == 128) // 128B swizzle mode
                 base_desc = detail::matrix_descriptor_raw(&tile.data[0], 2048*ST::rows/TILE_ROW_DIM<T>, 1024, 1);
-            else if constexpr ((ST::cols/TILE_COL_DIM<T>)%2 == 0) // 64B swizzle mode
+            else if constexpr (ST::swizzle_bytes == 64) // 64B swizzle mode
                 base_desc = detail::matrix_descriptor_raw(&tile.data[0], 1024*ST::rows/TILE_ROW_DIM<T>, 512, 2);
             else // 32B swizzle mode
                 base_desc = detail::matrix_descriptor_raw(&tile.data[0], 512*ST::rows/TILE_ROW_DIM<T>, 256, 3);
         }
         else { // K major mode (i.e., M x K for A matrix, N x K for B matrix)
-            if constexpr ((ST::cols/TILE_COL_DIM<T>)%4 == 0) // 128B swizzle mode
+            if constexpr (ST::swizzle_bytes == 128) // 128B swizzle mode
                 base_desc = detail::matrix_descriptor_raw(&tile.data[0], 16 /* does not matter */, 1024, 1);
-            else if constexpr ((ST::cols/TILE_COL_DIM<T>)%2 == 0) // 64B swizzle mode
+            else if constexpr (ST::swizzle_bytes == 64) // 64B swizzle mode
                 base_desc = detail::matrix_descriptor_raw(&tile.data[0], 16 /* does not matter */, 512, 2);
             else // 32B swizzle mode
                 base_desc = detail::matrix_descriptor_raw(&tile.data[0], 16 /* does not matter */, 256, 3);
@@ -82,10 +82,10 @@ struct st_descriptor {
         // So for MN-major, this is same as asking "how to forward 32 bytes worth of elements (=K elements) in the stride dimension?"
         // And for K-major, "how to forward K elements in the leading dimension?"
         if constexpr (MN_major) { // MN major mode (i.e., K x M for A matrix, K x N for B matrix)
-            if constexpr ((ST::cols/TILE_COL_DIM<T>)%4 == 0) { // 128B swizzle: 
+            if constexpr (ST::swizzle_bytes == 128) { // 128B swizzle: 
                 return base_desc + detail::matrix_descriptor_encode(chunk_idx*2048);
             }
-            else if constexpr ((ST::cols/TILE_COL_DIM<T>)%2 == 0) {
+            else if constexpr (ST::swizzle_bytes == 64) {
                 return base_desc + detail::matrix_descriptor_encode(chunk_idx*1024);
             }
             else {
@@ -93,11 +93,11 @@ struct st_descriptor {
             }
         }
         else { // K major mode (i.e., M x K for A matrix, N x K for B matrix)
-            if constexpr ((ST::cols/TILE_COL_DIM<T>)%4 == 0) {
+            if constexpr (ST::swizzle_bytes == 128) {
                 // 128B swizzle: 4 chunks fit within swizzle bytes; move on to next every 4 chunks (rows * 128B swizzle bytes)
                 return base_desc + detail::matrix_descriptor_encode((chunk_idx%4)*32 + (chunk_idx/4)*(ST::rows/TILE_ROW_DIM<T>)*2048);
             }
-            else if constexpr ((ST::cols/TILE_COL_DIM<T>)%2 == 0) {
+            else if constexpr (ST::swizzle_bytes == 64) {
                 // 64B swizzle: 2 chunks fit within swizzle bytes; move on to next every 2 chunks (rows * 64B swizzle bytes)
                 return base_desc + detail::matrix_descriptor_encode((chunk_idx%2)*32 + (chunk_idx/2)*(ST::rows/TILE_ROW_DIM<T>)*1024);
             }
