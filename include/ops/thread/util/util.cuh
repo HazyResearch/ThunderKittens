@@ -210,4 +210,64 @@ template<cache_policy policy> __device__ inline uint64_t make_cache_policy() {
     return cache_policy_val;
 }
 
+/* CLC scheduler operations */
+
+#ifdef KITTENS_BLACKWELL
+
+namespace clc {
+
+struct handle {
+    uint4 internal_value;
+}; // note that this is an opaque type, so the value should not be accessed directly.
+
+struct result {
+    uint32_t success;
+    uint32_t x;
+    uint32_t y;
+    uint32_t z;
+};
+
+/*
+ * @brief Schedules a new threadblock. Must be called by a single thread in the entire CTA cluster.
+ *        The caller must wait on the semaphore with tma::cluster::expect_bytes followed by tma::cluster::wait.
+ * @param h The CLC handle.
+ * @param sem The semaphore that the caller will wait on.
+ */
+__device__ static inline void schedule(handle &h, semaphore &sem) {
+    asm volatile("{fence.proxy.async::generic.acquire.sync_restrict::shared::cluster.cluster;}" ::: "memory");
+    asm volatile("{clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.multicast::cluster::all.b128 [%0], [%1];}"
+        :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&h.internal_value))), "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&sem)))
+        : "memory"
+    );
+}
+
+/*
+ * @brief Queries the result of a schedule operation. Calling this again after failure is undefined behavior.
+ * @param r The result of the query to be filled in.
+ * @param h The CLC handle.
+ */
+__device__ static inline void query(result &r, handle &h) {
+    asm volatile(
+        "{\n"
+        ".reg .pred SUCCESS;\n"
+        ".reg .b128 CLC_HANDLE;\n"
+        ".reg .b32 IGNORE;\n"
+        "ld.shared.b128 CLC_HANDLE, [%4];\n"
+        "clusterlaunchcontrol.query_cancel.is_canceled.pred.b128 SUCCESS, CLC_HANDLE;\n"
+        "selp.u32 %0, 1, 0, SUCCESS;\n"
+        "@!SUCCESS bra.uni DONE;\n"
+        "clusterlaunchcontrol.query_cancel.get_first_ctaid.v4.b32.b128 {%1, %2, %3, IGNORE}, CLC_HANDLE;\n"
+        "fence.proxy.async::generic.release.sync_restrict::shared::cta.cluster;\n" // Release read of result to the async proxy:
+        "DONE:\n"
+        "}"
+        : "=r"(r.success), "=r"(r.x), "=r"(r.y), "=r"(r.z)
+        : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&h.internal_value)))
+        : "memory"
+    );
+}
+
+} // namespace clc
+
+#endif
+
 } // namespace kittens

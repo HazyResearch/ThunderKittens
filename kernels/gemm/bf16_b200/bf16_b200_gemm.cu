@@ -75,7 +75,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
     using d_tt_t = tt<float, Mb, Nb>;
 
     __shared__ int next_tile_idx[CLC_PIPE_DEPTH];
-    __shared__ uint4 clc_handle;
+    __shared__ clc::handle clc_handle;
     __shared__ semaphore clc_arrived, job_arrived[CLC_PIPE_DEPTH], job_finished[CLC_PIPE_DEPTH];
     __shared__ semaphore inputs_arrived[SMEM_PIPE_DEPTH], inputs_finished[SMEM_PIPE_DEPTH], outputs_arrived, outputs_finished[MMA_PIPE_DEPTH];
     uint32_t bitfield = 0xFFFF0000; // ***_finished phase bits start as 1s, ***_arrived phase bits start as 0s
@@ -155,41 +155,17 @@ void matmul(const __grid_constant__ matmul_globals g) {
 
             for(int task_iter = 1; true; task_iter++) {
                 tma::cluster::expect_bytes(clc_arrived, sizeof(clc_handle), ctarank);
-                if (ctarank == 0) {
-                    asm volatile("{fence.proxy.async::generic.acquire.sync_restrict::shared::cluster.cluster;}" ::: "memory");
-                    asm volatile("{clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.multicast::cluster::all.b128 [%0], [%1];}"
-                        :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&clc_handle))), "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&clc_arrived)))
-                        : "memory"
-                    );
-                }
+                if (ctarank == 0)
+                    clc::schedule(clc_handle, clc_arrived);
                 tma::cluster::wait(clc_arrived, get_phasebit<0>(bitfield, 0));
                 update_phasebit<0>(bitfield, 0);
-
-                uint32_t success;
-                int3 next_cta_id;
-                asm volatile(
-                    "{\n"
-                    ".reg .pred SUCCESS;\n"
-                    ".reg .b128 CLC_HANDLE;\n"
-                    ".reg .b32 IGNORE;\n"
-                    "ld.shared.b128 CLC_HANDLE, [%4];\n"
-                    "clusterlaunchcontrol.query_cancel.is_canceled.pred.b128 SUCCESS, CLC_HANDLE;\n"
-                    "selp.u32 %0, 1, 0, SUCCESS;\n"
-                    "@!SUCCESS bra.uni DONE;\n"
-                    "clusterlaunchcontrol.query_cancel.get_first_ctaid.v4.b32.b128 {%1, %2, %3, IGNORE}, CLC_HANDLE;\n"
-                    "fence.proxy.async::generic.release.sync_restrict::shared::cta.cluster;\n" // Release read of result to the async proxy:
-                    "DONE:\n"
-                    "}"
-                    : "=r"(success), "=r"(next_cta_id.x), "=r"(next_cta_id.y), "=r"(next_cta_id.z)
-                    : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&clc_handle)))
-                    : "memory"
-                );
-
+                clc::result clc_result;
+                clc::query(clc_result, clc_handle);
                 wait(job_finished[task_iter%CLC_PIPE_DEPTH], get_phasebit<1>(bitfield, task_iter%CLC_PIPE_DEPTH));
                 update_phasebit<1>(bitfield, task_iter%CLC_PIPE_DEPTH);
-                next_tile_idx[task_iter%CLC_PIPE_DEPTH] = success ? get_task_idx(g, next_cta_id.x + ctarank) : 0xFFFFFFFF;
+                next_tile_idx[task_iter%CLC_PIPE_DEPTH] = clc_result.success ? get_task_idx(g, clc_result.x + ctarank) : 0xFFFFFFFF;
                 arrive(job_arrived[task_iter%CLC_PIPE_DEPTH]);
-                if (!success) break;
+                if (!clc_result.success) break;
             }
         }
     }
@@ -293,8 +269,9 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     CUDACHECK(cudaMemcpy(d_B, h_B_bf16, K*N*2, cudaMemcpyHostToDevice));
     std::cout << "Copied matrices to device" << std::endl;
 
-    // Set kernel dynamic shared memory
+    // Set kernel attributes
     cudaFuncSetAttribute(matmul, cudaFuncAttributeMaxDynamicSharedMemorySize, DYNAMIC_SHARED_MEMORY);
+    cudaFuncSetAttribute(matmul, cudaFuncAttributeNonPortableClusterSizeAllowed, 1); // enable 16-cluster
 
     // Warmup
     for(int i = 0; i < (NCU ? 0 : 500); i++)
