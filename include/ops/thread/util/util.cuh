@@ -230,6 +230,7 @@ struct result {
 /**
  * @brief Schedules a new threadblock. Must be called by a single thread in the entire CTA cluster.
  *        The caller must wait on the semaphore with tma::cluster::expect_bytes followed by tma::cluster::wait.
+ *        The handle is multicasted to all CTAs in the cluster and signals the semaphore of all CTAs in the cluster.
  * @param h The CLC handle.
  * @param sem The semaphore that the caller will wait on.
  */
