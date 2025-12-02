@@ -32,13 +32,13 @@ struct test_load_multicast { // load with TMA, write out normally
         // *************************************************************************************************
         kittens::everyone::tma::cluster::sync(); // ensure everyone has initialized their semaphore
 
-        if(rank == 0 && threadIdx.x == 0) { // only one block issues the multicast load for everyone
-            for(int j = 0; j < 4; j++) { // expect on the whole block
-                if(threadIdx.x == 0) kittens::tma::cluster::expect(smem_semaphore, j, shared_tile);
-            }
-            if(threadIdx.x == 0) kittens::tma::cluster::load_async(shared_tile, input, {0, 0, 0, 0}, smem_semaphore, 0b1111);
-        }
+        if(rank == 0 && threadIdx.x == 0) // only one block issues the multicast load for everyone
+            kittens::tma::cluster::load_async(shared_tile, input, {0, 0, 0, 0}, smem_semaphore, 0b0101);
+        else if(rank == 1 && threadIdx.x == 0)
+            kittens::tma::cluster::load_async(shared_tile, input, {0, 0, 0, 0}, smem_semaphore, 0b1010);
 
+        kittens::warp::tma::cluster::expect(smem_semaphore, shared_tile);
+        __syncwarp();
         kittens::wait(smem_semaphore, 0);
         kittens::warp::store(output, shared_tile, {0, 0, rank, 0});
         kittens::everyone::tma::cluster::sync();
@@ -70,9 +70,9 @@ struct tmamulti_wrapper_2d {
             cudaFuncSetAttribute(
                 tmamulti_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GL, args...>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
-                kittens::MAX_SHARED_MEMORY
+                kittens::MAX_SHARED_MEMORY-1024
             );
-            tmamulti_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GL, args...><<<4, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(input, output);
+            tmamulti_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GL, args...><<<4, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY-1024>>>(input, output);
             // fill in correct results on cpu
             test::template host_func<H, W, NUM_WORKERS, GL, args...>(i_ref, o_ref);
             // check and cleanup

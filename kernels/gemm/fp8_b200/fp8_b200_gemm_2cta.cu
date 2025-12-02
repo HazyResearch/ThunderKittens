@@ -96,7 +96,7 @@ void matmul(const __grid_constant__ matmul_globals g) {
     if(warpgroupid == NUM_CONSUMERS) {
         warpgroup::decrease_registers<56>();
         int ctarank = cluster_ctarank(); 
-        if(warpgroup::warpid() == 3) {
+        if(warpgroup::warpid() == 3 && warp::laneid() == 0) {
             int input_ring = 0; // tracking which input block is being loaded
             for(int task_iter = 0; true; task_iter++) {
                 int2 rowcol = get_task_idx(g, task_iter, false);
@@ -112,7 +112,6 @@ void matmul(const __grid_constant__ matmul_globals g) {
                     tma::cluster::wait(inputs_finished[input_ring], get_phasebit<1>(bitfield, input_ring));
                     update_phasebit<1>(bitfield, input_ring);
                     if(task_iter>0 && idx==PIPE_DEPTH-1 && laneid() == 0) arrive(outputs_arrived); // TODO REVIEW 
-                    warp::tma::cluster::expect(inputs_arrived[input_ring], 0, a_smem[0][0], a_smem[0][1], b_smem[0]);
                     warp::tma::cluster::load_async(a_smem[input_ring][0], g.a, {(rowcol.x+0), idx}, inputs_arrived[input_ring], (uint16_t)(1<<ctarank), 0);
                     warp::tma::cluster::load_async(a_smem[input_ring][1], g.a, {(rowcol.x+1), idx}, inputs_arrived[input_ring], (uint16_t)(1<<ctarank), 0);
                     warp::tma::cluster::load_async(b_smem[input_ring],    g.b, { rowcol.y,    idx}, inputs_arrived[input_ring], (uint16_t)(1<<ctarank), 0);
@@ -120,21 +119,23 @@ void matmul(const __grid_constant__ matmul_globals g) {
                 }
             }
         }
-        else if(ctarank == 0 && (warpgroup::warpid() == 0 || warpgroup::warpid() == 1)) { // launch the MMA's
+        else if(ctarank == 0 && (warpgroup::warpid() == 0 || warpgroup::warpid() == 1) && warp::laneid() == 0) { // launch the MMA's
             d_tt_t d_tt = tm_alloc.allocate<d_tt_t>(warpgroup::warpid()*Nb);
             int input_ring = 0; // tracking which input block is being loaded
             for(int task_iter = 0; true; task_iter++) {
                 int2 rowcol = get_task_idx(g, task_iter, false);
                 if(rowcol.x == -1) break;
                 tma::cluster::wait(outputs_finished[warpgroup::warpid()], (task_iter+1)%2); // make sure tensor memory is ready to be written to.
+                tma::cluster::expect(inputs_arrived[input_ring], a_smem[0][0], a_smem[0][1], b_smem[0]);
                 tma::cluster::wait(inputs_arrived[input_ring], get_phasebit<0>(bitfield, input_ring));
                 update_phasebit<0>(bitfield, input_ring);
-                warp::mm2_ABt(d_tt, a_smem[input_ring][warpgroup::warpid()], b_smem[input_ring], inputs_finished[input_ring]);
+                mm2_ABt(d_tt, a_smem[input_ring][warpgroup::warpid()], b_smem[input_ring], inputs_finished[input_ring]);
                 input_ring=ring_advance<PIPE_DEPTH>(input_ring);
                 for(int idx = 1; idx < iters_per_task; idx++) {
+                    tma::cluster::expect(inputs_arrived[input_ring], a_smem[0][0], a_smem[0][1], b_smem[0]);
                     tma::cluster::wait(inputs_arrived[input_ring], get_phasebit<0>(bitfield, input_ring));
                     update_phasebit<0>(bitfield, input_ring);
-                    warp::mma2_ABt(d_tt, a_smem[input_ring][warpgroup::warpid()], b_smem[input_ring], inputs_finished[input_ring]);
+                    mma2_ABt(d_tt, a_smem[input_ring][warpgroup::warpid()], b_smem[input_ring], inputs_finished[input_ring]);
                     input_ring=ring_advance<PIPE_DEPTH>(input_ring);
                 }
             }

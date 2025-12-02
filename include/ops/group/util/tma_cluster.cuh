@@ -41,9 +41,9 @@ __device__ static inline void wait(semaphore& bar, int kPhaseBit) {
 * @param semaphore Reference to the semaphore variable.
 * @param bytes The number of bytes expected at the semaphore.
 */
-__device__ static inline void expect_bytes(semaphore& bar, uint32_t bytes, int dst_cta) {
+__device__ static inline void expect_bytes(semaphore& bar, uint32_t bytes) {
     if(laneid() == 0) {
-        ::kittens::tma::cluster::expect_bytes(bar, bytes, dst_cta);
+        ::kittens::tma::cluster::expect_bytes(bar, bytes);
     }
 }
 /**
@@ -62,8 +62,8 @@ __device__ static inline void expect_bytes(semaphore& bar, uint32_t bytes, int d
 * This function sets the number of bytes expected at the mbarrier before the transaction arrives.
 */
 template<typename T, typename... args>
-__device__ static inline void expect(semaphore& bar, int dst_cta, const T& _1, const args&... _2) {
-    expect_bytes(bar, size_bytes<T, args...>, dst_cta);
+__device__ static inline void expect(semaphore& bar, const T& _1, const args&... _2) {
+    expect_bytes(bar, size_bytes<T, args...>);
 }
 
 /**

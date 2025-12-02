@@ -130,7 +130,6 @@ __device__ inline void kernel(const globals &G) {
                     tma::cluster::wait(inputs_finished[input_ring], get_phasebit<1>(bitfield, input_ring));
                     update_phasebit<1>(bitfield, input_ring);
                     if(task_iter>0 && idx==PIPE_DEPTH-1 && laneid() == 0) arrive(outputs_arrived); // TODO REVIEW 
-                    tma::cluster::expect(inputs_arrived[input_ring], 0, a_smem[0][0], a_smem[0][1], b_smem[0]);
                     tma::cluster::load_async(a_smem[input_ring][0], G.A, {(rowcol.x+0), idx}, inputs_arrived[input_ring], (uint16_t)(1<<ctarank), 0);
                     tma::cluster::load_async(a_smem[input_ring][1], G.A, {(rowcol.x+1), idx}, inputs_arrived[input_ring], (uint16_t)(1<<ctarank), 0);
                     tma::cluster::load_async(b_smem[input_ring],    G.B, { rowcol.y,    idx}, inputs_arrived[input_ring], (uint16_t)(1<<ctarank), 0);
@@ -145,11 +144,13 @@ __device__ inline void kernel(const globals &G) {
                 int2 rowcol = get_task_idx(G, task_iter, false);
                 if(rowcol.x == -1) break;
                 tma::cluster::wait(outputs_finished[warpgroup::warpid()], (task_iter+1)%2); // make sure tensor memory is ready to be written to.
+                tma::cluster::expect(inputs_arrived[input_ring], a_smem[0][0], a_smem[0][1], b_smem[0]);
                 tma::cluster::wait(inputs_arrived[input_ring], get_phasebit<0>(bitfield, input_ring));
                 update_phasebit<0>(bitfield, input_ring);
                 mm2_ABt(d_tt, a_smem[input_ring][warpgroup::warpid()], b_smem[input_ring], inputs_finished[input_ring]);
                 input_ring=ring_advance<PIPE_DEPTH>(input_ring);
                 for(int idx = 1; idx < iters_per_task; idx++) {
+                    tma::cluster::expect(inputs_arrived[input_ring], a_smem[0][0], a_smem[0][1], b_smem[0]);
                     tma::cluster::wait(inputs_arrived[input_ring], get_phasebit<0>(bitfield, input_ring));
                     update_phasebit<0>(bitfield, input_ring);
                     mma2_ABt(d_tt, a_smem[input_ring][warpgroup::warpid()], b_smem[input_ring], inputs_finished[input_ring]);

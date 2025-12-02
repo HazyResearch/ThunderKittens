@@ -89,10 +89,10 @@ __device__ inline void kernel(const globals &G) {
     if (threadIdx.x == 32) {
         #pragma unroll
         for (int i = 0; i < globals::PIPELINE_STAGES; ++i) {
-            init_semaphore(inputs_arrived[i], 0, config::CLUSTER_SIZE);
-            init_semaphore(scales_sm_arrived[i], 0, config::CLUSTER_SIZE);
-            init_semaphore(scales_tm_arrived[i], 0, 1); // odd CTA
-            init_semaphore(matmul_finished[i], 0, 1); // odd CTA
+            init_semaphore(inputs_arrived[i], 0, 1); // even CTA
+            init_semaphore(scales_sm_arrived[i], 0, 1); // even CTA
+            init_semaphore(scales_tm_arrived[i], 0, 1); // even CTA
+            init_semaphore(matmul_finished[i], 0, 1); // even CTA
         }
         init_semaphore(tensor_finished, 0, config::CLUSTER_SIZE);
         init_semaphore(outputs_arrived, 0, 1); // local
@@ -143,7 +143,6 @@ __device__ inline void kernel(const globals &G) {
                         last_stage = globals::PIPELINE_STAGES;
                     }
 
-                    tma::cluster::expect_bytes(inputs_arrived[stage], sizeof(globals::A_fp8_tile) + sizeof(globals::B_fp8_tile), 0);
                     tma::cluster::load_async(input_tiles[stage].A, G.A, {row_block_idx * 2 + cta_id, i}, inputs_arrived[stage], (uint16_t)(1 << cta_id), 0);
                     tma::cluster::load_async(input_tiles[stage].B, G.B, {col_block_idx * 2 + cta_id, i}, inputs_arrived[stage], (uint16_t)(1 << cta_id), 0);
 
@@ -158,7 +157,6 @@ __device__ inline void kernel(const globals &G) {
                 for (int i = 0; i < num_iters_per_block; ++i) {
                     tma::cluster::wait(scales_tm_arrived[stage], get_phasebit<1>(phasebits, stage));
                     update_phasebit<1>(phasebits, stage);
-                    tma::cluster::expect_bytes(scales_sm_arrived[stage], sizeof(globals::A_sc_tile) + sizeof(globals::B_sc_tile) * 2, 0);
                     tma::cluster::load_async(input_scales[stage].A,    G.A_sc, {row_block_idx * 2 + cta_id, i, 0, 0}, scales_sm_arrived[stage], (uint16_t)(1 << cta_id), 0);
                     tma::cluster::load_async(input_scales[stage].B[0], G.B_sc, {col_block_idx * 2 + 0,      i, 0, 0}, scales_sm_arrived[stage], (uint16_t)(1 << cta_id), 0);
                     tma::cluster::load_async(input_scales[stage].B[1], G.B_sc, {col_block_idx * 2 + 1,      i, 0, 0}, scales_sm_arrived[stage], (uint16_t)(1 << cta_id), 0);
@@ -167,6 +165,7 @@ __device__ inline void kernel(const globals &G) {
             } else if (cta_id == 0 && warp_id == 1 && lane_id == 0) {
                 // Load scale matrices to tensor memory
                 for (int i = 0; i < num_iters_per_block; i++) {
+                    tma::cluster::expect_bytes(scales_sm_arrived[stage], sizeof(globals::A_sc_tile) * 2 + sizeof(globals::B_sc_tile) * 4);
                     tma::cluster::wait(scales_sm_arrived[stage], get_phasebit<0>(phasebits, stage));
                     update_phasebit<0>(phasebits, stage);
                     tma::cluster::wait(matmul_finished[stage], get_phasebit<1>(phasebits, stage));
@@ -186,6 +185,7 @@ __device__ inline void kernel(const globals &G) {
                 tma::cluster::wait(tensor_finished, get_phasebit<1>(phasebits, globals::PIPELINE_STAGES));
                 update_phasebit<1>(phasebits, globals::PIPELINE_STAGES);
                 for (int i = 0; i < num_iters_per_block; i++) {
+                    tma::cluster::expect_bytes(inputs_arrived[stage], (sizeof(globals::A_fp8_tile) + sizeof(globals::B_fp8_tile)) * 2);
                     tma::cluster::wait(inputs_arrived[stage], get_phasebit<0>(phasebits, stage));
                     tma::cluster::wait(scales_tm_arrived[stage], get_phasebit<0>(phasebits, stage));
                     update_phasebit<0>(phasebits, stage);
