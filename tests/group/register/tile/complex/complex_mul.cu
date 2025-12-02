@@ -71,9 +71,9 @@ struct cmplx_mul_wrapper_2d {
             cudaFuncSetAttribute(
                 global_wrapper_2d<test, kittens::bf16, H, W, NUM_WORKERS, CGL, args...>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
-                kittens::MAX_SHARED_MEMORY
+                kittens::MAX_SHARED_MEMORY-1024
             );
-            global_wrapper_2d<test, kittens::bf16, H, W, NUM_WORKERS, CGL, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(
+            global_wrapper_2d<test, kittens::bf16, H, W, NUM_WORKERS, CGL, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY-1024>>>(
                 input, output
             );
 

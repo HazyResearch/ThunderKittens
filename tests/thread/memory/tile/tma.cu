@@ -267,9 +267,9 @@ struct tma_wrapper_2d {
             cudaFuncSetAttribute(
                 tma_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GL, args...>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
-                kittens::MAX_SHARED_MEMORY
+                kittens::MAX_SHARED_MEMORY-1024
             );
-            tma_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GL, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(input, output);
+            tma_global_wrapper_2d<test, dtype, H, W, NUM_WORKERS, GL, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY-1024>>>(input, output);
             // fill in correct results on cpu
             test::template host_func<H, W, NUM_WORKERS, GL, args...>(i_ref, o_ref);
             // check and cleanup

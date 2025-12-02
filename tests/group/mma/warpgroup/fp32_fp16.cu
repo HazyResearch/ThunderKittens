@@ -262,9 +262,9 @@ struct mma_wrapper_2d {
             cudaFuncSetAttribute(
                 mma_global_wrapper_2d<test, kittens::half, H, W, NUM_WORKERS, GTL_A, GTL_B, GTL_C, _K, args...>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
-                kittens::MAX_SHARED_MEMORY
+                kittens::MAX_SHARED_MEMORY-1024
             );
-            mma_global_wrapper_2d<test, kittens::half, H, W, NUM_WORKERS, GTL_A, GTL_B, GTL_C, _K, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(a_input, b_input, c_output);
+            mma_global_wrapper_2d<test, kittens::half, H, W, NUM_WORKERS, GTL_A, GTL_B, GTL_C, _K, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY-1024>>>(a_input, b_input, c_output);
             // fill in correct results on cpu
             test::template host_func<H, W, NUM_WORKERS, GTL_A, GTL_B, GTL_C, _K, args...>(i_ref, o_ref);
             // check and cleanup
