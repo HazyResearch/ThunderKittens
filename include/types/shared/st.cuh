@@ -154,6 +154,7 @@ struct KITTENS_DEFAULT_ALIGN st {
      */
     template<int subtile_cols>
     __device__ inline st<_T, _rows, subtile_cols, _swizzle, swizzle_bytes /*must not use _swizzle_bytes*/> &subtile(int idx) {
+        static_assert(swizzle_bytes > 0, "Parent shared tile must have an explicit swizzle_bytes.");
         constexpr int swizzle_elements = swizzle_bytes / sizeof(T);
         static_assert(subtile_cols >= 0 && subtile_cols % swizzle_elements == 0);
         return *reinterpret_cast<st<_T, _rows, subtile_cols, _swizzle, swizzle_bytes> *>(
