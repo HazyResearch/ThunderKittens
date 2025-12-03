@@ -54,9 +54,9 @@ struct tma_pgl_test_wrapper_2d {
                 cudaFuncSetAttribute(
                     tma_pgl_global_wrapper_2d<test, H, W, NUM_WORKERS, PGL, axis, args...>,
                     cudaFuncAttributeMaxDynamicSharedMemorySize,
-                    kittens::MAX_SHARED_MEMORY
+                    kittens::MAX_SHARED_MEMORY-1024
                 );
-                tma_pgl_global_wrapper_2d<test, H, W, NUM_WORKERS, PGL, axis, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY>>>(input, output, dev_idx);
+                tma_pgl_global_wrapper_2d<test, H, W, NUM_WORKERS, PGL, axis, args...><<<1, NUM_WORKERS*32, kittens::MAX_SHARED_MEMORY-1024>>>(input, output, dev_idx);
             }
 
             // fill in correct results on cpu
