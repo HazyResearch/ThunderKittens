@@ -72,6 +72,7 @@ struct descriptor_dict {
             std::is_same_v<T, std::true_type> && std::is_same_v<T, std::false_type>,
             "SKILL ISSUE: Requested a TMA descriptor for a type not initialized in the global layout."
         );
+        return nullptr;
     }
 #endif
 };
