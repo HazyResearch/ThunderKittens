@@ -38,25 +38,18 @@ struct globals {
 };
 
 template <int SUPER_M>
-__device__ inline int2 get_task_idx(const globals &g, int task_iter, bool is_consumer) {
-    int cluster_x = clusterIdx().x, cta_rank = cluster_ctarank();
-    int task_id = task_iter * (gridDim.x/2) + cluster_x;
+__device__ inline int2 get_task_idx(const globals &g, int task_iter) {
+    int task_id = task_iter * (gridDim.x/CLUSTER_SIZE) + blockIdx.x/CLUSTER_SIZE;
     int Rblocks = g.d.rows() / CLUSTER_M, Cblocks = g.d.cols() / CLUSTER_N;
     int super_rows = (Rblocks/SUPER_M)*SUPER_M,
         final_rows = Rblocks - super_rows,
         super_repeat = SUPER_M*Cblocks;
     if (task_id < super_rows * Cblocks) {
-        return {
-            (SUPER_M*(task_id/super_repeat) + task_id%SUPER_M)*4 + cta_rank*2 + is_consumer*(warpgroup::groupid()),
-            is_consumer ? (task_id%super_repeat)/SUPER_M : 2*((task_id%super_repeat)/SUPER_M) + cta_rank
-        };
+        return { SUPER_M*(task_id/super_repeat) + task_id%SUPER_M, (task_id%super_repeat)/SUPER_M };
     }
     else if (task_id < Rblocks*Cblocks) {
         int remainder_id = task_id - super_rows*Cblocks;
-        return {
-            (super_rows + remainder_id%final_rows)*4 + cta_rank*2 + is_consumer*(warpgroup::groupid()),
-            is_consumer ? remainder_id/final_rows : 2*(remainder_id/final_rows) + cta_rank
-        };
+        return { super_rows + remainder_id%final_rows, remainder_id/final_rows };
     }
     else {
         return { -1, -1 };
@@ -106,7 +99,7 @@ __global__ void kernel(const __grid_constant__ globals g) {
         if(warp::laneid() == 0 && warpgroup::warpid() == 3) {
             int input_ring = 0; // tracking which input block is being loaded
             for(int task_iter = 0; true; task_iter++) {
-                int2 rowcol = get_task_idx<SUPER_M>(g, task_iter, false);
+                int2 rowcol = get_task_idx<SUPER_M>(g, task_iter);
                 if(rowcol.x == -1) {
                     for(int idx = 0; idx < (PIPE_DEPTH); idx++) {
                         tma::cluster::wait(inputs_finished[input_ring], get_phasebit<1>(bitfield, input_ring));
@@ -119,9 +112,9 @@ __global__ void kernel(const __grid_constant__ globals g) {
                     tma::cluster::wait(inputs_finished[input_ring], get_phasebit<1>(bitfield, input_ring));
                     update_phasebit<1>(bitfield, input_ring);
                     if(task_iter>0 && idx==PIPE_DEPTH-1 && laneid() == 0) arrive(outputs_arrived); // TODO REVIEW 
-                    tma::cluster::load_async(a_smem[input_ring][0], g.a, {(rowcol.x+0), idx}, inputs_arrived[input_ring], (uint16_t)(1<<cta_rank), 0);
-                    tma::cluster::load_async(a_smem[input_ring][1], g.a, {(rowcol.x+1), idx}, inputs_arrived[input_ring], (uint16_t)(1<<cta_rank), 0);
-                    tma::cluster::load_async(b_smem[input_ring],    g.b, { rowcol.y,    idx}, inputs_arrived[input_ring], (uint16_t)(1<<cta_rank), 0);
+                    tma::cluster::load_async(a_smem[input_ring][0], g.a, {(rowcol.x*4+cta_rank*2+0), idx}, inputs_arrived[input_ring], (uint16_t)(1<<cta_rank), 0);
+                    tma::cluster::load_async(a_smem[input_ring][1], g.a, {(rowcol.x*4+cta_rank*2+1), idx}, inputs_arrived[input_ring], (uint16_t)(1<<cta_rank), 0);
+                    tma::cluster::load_async(b_smem[input_ring],    g.b, { rowcol.y*2+cta_rank,      idx}, inputs_arrived[input_ring], (uint16_t)(1<<cta_rank), 0);
                     input_ring=ring_advance<PIPE_DEPTH>(input_ring);
                 }
             }
@@ -130,7 +123,7 @@ __global__ void kernel(const __grid_constant__ globals g) {
             d_tt_t d_tt = tm_alloc.allocate<d_tt_t>(warpgroup::warpid()*Nb);
             int input_ring = 0; // tracking which input block is being loaded
             for(int task_iter = 0; true; task_iter++) {
-                int2 rowcol = get_task_idx<SUPER_M>(g, task_iter, false);
+                int2 rowcol = get_task_idx<SUPER_M>(g, task_iter);
                 if(rowcol.x == -1) break;
                 tma::cluster::wait(outputs_finished[warpgroup::warpid()], (task_iter+1)%2); // make sure tensor memory is ready to be written to.
                 tma::cluster::expect_bytes(inputs_arrived[input_ring], sizeof(a_smem[0][0]) + sizeof(a_smem[0][1]) + sizeof(b_smem[0]));
@@ -152,7 +145,7 @@ __global__ void kernel(const __grid_constant__ globals g) {
         warpgroup::increase_registers<224>();
         d_tt_t d_tt = tm_alloc.allocate<d_tt_t>(warpgroupid*Nb);
         for(int task_iter = 0; true; task_iter++) {
-            int2 rowcol = get_task_idx<SUPER_M>(g, task_iter, true);
+            int2 rowcol = get_task_idx<SUPER_M>(g, task_iter);
             if(rowcol.x == -1) break;
             wait(outputs_arrived, task_iter%2);
             rt_bf<Mb/4, d_tile::cols> d_reg[4];
@@ -168,14 +161,14 @@ __global__ void kernel(const __grid_constant__ globals g) {
             if(warpgroupid == 1) group<8>::sync(14);
             warpgroup::store(d_smem, d_reg[0]);
             warpgroup::sync(warpgroupid);
-            warpgroup::tma::store_async(g.d, d_smem, {rowcol.x, 4*rowcol.y+0});
+            warpgroup::tma::store_async(g.d, d_smem, {4*rowcol.x+2*cta_rank+warpgroupid, 4*rowcol.y+0});
             #pragma unroll
             for(int i = 1; i < Nb/d_tile::cols; i++) {
                 tma::store_async_read_wait();
                 warpgroup::sync(warpgroupid);
                 warpgroup::store(d_smem, d_reg[i]);
                 warpgroup::sync(warpgroupid);
-                warpgroup::tma::store_async(g.d, d_smem, {rowcol.x, 4*rowcol.y+i});
+                warpgroup::tma::store_async(g.d, d_smem, {4*rowcol.x+2*cta_rank+warpgroupid, 4*rowcol.y+i});
             }
             tma::store_async_read_wait();
             if(warpgroupid == 0) group<8>::sync(14);
