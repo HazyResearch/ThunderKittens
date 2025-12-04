@@ -124,7 +124,7 @@ __global__ void kernel(const __grid_constant__ G g) {
         else if (cta_rank == 0 && warp::laneid() == 0 && warpgroup::warpid() == 0) {
             d_tt_t d_tt[G::MMA_PIPE_DEPTH];
             #pragma unroll
-            for (int i = 0; i < 2; i++) {
+            for (int i = 0; i < G::MMA_PIPE_DEPTH; i++) {
                 if constexpr(G::Mb == 128)
                     d_tt[i] = tm_alloc.allocate<d_tt_t>(i*G::Nb);
                 else
@@ -134,17 +134,17 @@ __global__ void kernel(const __grid_constant__ G g) {
             for(int task_iter = 0; true; task_iter++) {
                 int2 rowcol = get_task_idx(task_iter);
                 if(rowcol.x == -1) break;
-                tma::cluster::wait(outputs_finished[task_iter%2], ((task_iter+2)/2)%2);
+                tma::cluster::wait(outputs_finished[task_iter%G::MMA_PIPE_DEPTH], ((task_iter+G::MMA_PIPE_DEPTH)/G::MMA_PIPE_DEPTH)%2);
                 tma::cluster::expect_bytes(inputs_arrived[input_ring], 2*sizeof(G::a_tile) + 2*sizeof(G::b_tile));
                 tma::cluster::wait(inputs_arrived[input_ring], get_phasebit<0>(bitfield, input_ring));
                 update_phasebit<0>(bitfield, input_ring);
-                mm2_ABt(d_tt[task_iter%2], a_smem[input_ring], b_smem[input_ring], inputs_finished[input_ring]);
+                mm2_ABt(d_tt[task_iter%G::MMA_PIPE_DEPTH], a_smem[input_ring], b_smem[input_ring], inputs_finished[input_ring]);
                 input_ring=ring_advance<G::SMEM_PIPE_DEPTH>(input_ring);
                 for(int idx = 1; idx < iters_per_task; idx++) {
                     tma::cluster::expect_bytes(inputs_arrived[input_ring], 2*sizeof(G::a_tile) + 2*sizeof(G::b_tile));
                     tma::cluster::wait(inputs_arrived[input_ring], get_phasebit<0>(bitfield, input_ring));
                     update_phasebit<0>(bitfield, input_ring);
-                    mma2_ABt(d_tt[task_iter%2], a_smem[input_ring], b_smem[input_ring], inputs_finished[input_ring]);
+                    mma2_ABt(d_tt[task_iter%G::MMA_PIPE_DEPTH], a_smem[input_ring], b_smem[input_ring], inputs_finished[input_ring]);
                     input_ring=ring_advance<G::SMEM_PIPE_DEPTH>(input_ring);
                 }
             }
@@ -154,7 +154,7 @@ __global__ void kernel(const __grid_constant__ G g) {
         warpgroup::increase_registers<256>();
         d_tt_t d_tt[G::MMA_PIPE_DEPTH];
         #pragma unroll
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < G::MMA_PIPE_DEPTH; i++) {
             if constexpr(G::Mb == 128)
                 d_tt[i] = tm_alloc.allocate<d_tt_t>(i*G::Nb);
             else
@@ -167,7 +167,7 @@ __global__ void kernel(const __grid_constant__ G g) {
             rt_bf<G::Mb/4, G::Nb/G::TMEM_PIPE_DEPTH> d_reg[G::TMEM_PIPE_DEPTH];
             #pragma unroll
             for(int i = 0; i < G::TMEM_PIPE_DEPTH; i++) {
-                warpgroup::load_async(d_reg[i], d_tt[task_iter%2].template subtile<tt<float, G::Mb, G::Nb/G::TMEM_PIPE_DEPTH>>(0, G::Nb/G::TMEM_PIPE_DEPTH*i));
+                warpgroup::load_async(d_reg[i], d_tt[task_iter%G::MMA_PIPE_DEPTH].template subtile<tt<float, G::Mb, G::Nb/G::TMEM_PIPE_DEPTH>>(0, G::Nb/G::TMEM_PIPE_DEPTH*i));
                 tensor_load_wait();
                 warpgroup::tma::store_async_read_wait<1>();
                 warpgroup::sync(1);
@@ -176,7 +176,7 @@ __global__ void kernel(const __grid_constant__ G g) {
                 warpgroup::tma::store_async(g.d, d_smem[i%2], {2*rowcol.x+cta_rank, G::TMEM_PIPE_DEPTH*rowcol.y+i});
             }
             warpgroup::tma::store_async_read_wait();
-            warpgroup::tma::cluster::arrive(outputs_finished[task_iter%2], 0);
+            warpgroup::tma::cluster::arrive(outputs_finished[task_iter%G::MMA_PIPE_DEPTH], 0);
         }
     }
 }
@@ -191,6 +191,9 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool check_correctne
                  " SMEM_PIPE_DEPTH=" << G::SMEM_PIPE_DEPTH << " MMA_PIPE_DEPTH=" << G::MMA_PIPE_DEPTH << " TMEM_PIPE_DEPTH=" << G::TMEM_PIPE_DEPTH << "\n";
     std::cout << "Total number of tasks: " << (M / G::Mb * N / G::Nb) << "\n";
     std::cout << "Number of iterations per task: " << (K / G::Kb) << "\n";
+
+    // Sleep for 50 ms to limit power consumption and thermals
+    usleep(50000);
 
     // Allocate host memory
     float *h_A = new float[M * K];
@@ -330,18 +333,17 @@ __host__ int main() {
     bool check_correctness = false;
     bool ncu = false;
 
-    // Template order: SUPER_M, Mb, Nb, Kb, SMEM_PIPE_DEPTH, MMA_PIPE_DEPTH, TMEM_PIPE_DEPTH
+    // Template parameters: SUPER_M, Mb, Nb, Kb, SMEM_PIPE_DEPTH, MMA_PIPE_DEPTH, TMEM_PIPE_DEPTH
     N = 1024;
-    run_benchmark<globals<4, 64, 128, 64, 13, 2, 2>>(N, N, N, check_correctness, ncu);
+    run_benchmark<globals<4, 64, 128, 128, 4, 2, 2>>(N, N, N, check_correctness, ncu);\
     N = 2048;
     run_benchmark<globals<4, 128, 256, 64, 4, 2, 8>>(N, N, N, check_correctness, ncu);
     N = 4096;
     run_benchmark<globals<4, 128, 256, 64, 5, 2, 2>>(N, N, N, check_correctness, ncu);
-
-    // N = 8192;
-    // run_benchmark<globals<8, 128, 256, 64, 5, 2, 8>>(N, N, N, check_correctness, ncu);
-    // N = 16384;
-    // run_benchmark<globals<8, 128, 256, 64, 4, 2, 8>>(N, N, N, check_correctness, ncu);
+    N = 8192;
+    run_benchmark<globals<8, 128, 256, 64, 6, 2, 8>>(N, N, N, check_correctness, ncu);
+    N = 16384;
+    run_benchmark<globals<8, 128, 256, 64, 4, 2, 8>>(N, N, N, check_correctness, ncu);
 
     return 0;
 }
