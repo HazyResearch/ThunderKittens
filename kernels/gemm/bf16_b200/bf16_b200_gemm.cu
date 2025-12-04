@@ -103,18 +103,10 @@ __global__ void kernel(const __grid_constant__ G g) {
             int input_ring = 0;
             for (int task_iter = 0; true; task_iter++) {
                 int2 rowcol = get_task_idx(task_iter);
-                if (rowcol.x == -1) {
-                    for(int idx = 0; idx < (G::SMEM_PIPE_DEPTH); idx++) {
-                        tma::cluster::wait(inputs_finished[input_ring], get_phasebit<1>(bitfield, input_ring));
-                        input_ring=ring_advance<G::SMEM_PIPE_DEPTH>(input_ring);
-                    }
-                    arrive(outputs_arrived);
-                    break;
-                }
+                if (rowcol.x == -1) break;
                 for (int idx = 0; idx < iters_per_task; idx++) {
                     tma::cluster::wait(inputs_finished[input_ring], get_phasebit<1>(bitfield, input_ring));
                     update_phasebit<1>(bitfield, input_ring);
-                    if(task_iter>0 && idx==G::SMEM_PIPE_DEPTH-1 && laneid() == 0) arrive(outputs_arrived); // TODO REVIEW 
                     tma::cluster::load_async(a_smem[input_ring], g.a, {rowcol.x*2+cta_rank, idx}, inputs_arrived[input_ring], (uint16_t)(1<<cta_rank), 0);
                     tma::cluster::load_async(b_smem[input_ring], g.b, {rowcol.y*2+cta_rank, idx}, inputs_arrived[input_ring], (uint16_t)(1<<cta_rank), 0);
                     input_ring=ring_advance<G::SMEM_PIPE_DEPTH>(input_ring);
@@ -147,6 +139,7 @@ __global__ void kernel(const __grid_constant__ G g) {
                     mma2_ABt(d_tt[task_iter%G::MMA_PIPE_DEPTH], a_smem[input_ring], b_smem[input_ring], inputs_finished[input_ring]);
                     input_ring=ring_advance<G::SMEM_PIPE_DEPTH>(input_ring);
                 }
+                detail::tcgen05::commit<CLUSTER_SIZE>(outputs_arrived);
             }
         }
     }
