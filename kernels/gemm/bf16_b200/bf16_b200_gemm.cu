@@ -24,6 +24,8 @@ struct globals {
     static constexpr int MMA_PIPE_DEPTH = _MMA_PIPE_DEPTH;
     static constexpr int TMEM_PIPE_DEPTH = _TMEM_PIPE_DEPTH;
 
+    static constexpr int NUM_D_TILES = TMEM_PIPE_DEPTH > 1 ? 2 : 1;
+
     using a_tile = st_bf<Mb, Kb>;
     using b_tile = st_bf<Nb/2, Kb>;
     using d_tile = st_bf<Mb, Nb/TMEM_PIPE_DEPTH>;
@@ -70,10 +72,10 @@ __global__ void kernel(const __grid_constant__ G g) {
 
     static_assert(sizeof(G::a_tile) * G::SMEM_PIPE_DEPTH +
                   sizeof(G::b_tile) * G::SMEM_PIPE_DEPTH +
-                  sizeof(G::d_tile) * 2 <= DYNAMIC_SHARED_MEMORY);
+                  sizeof(G::d_tile) * G::NUM_D_TILES <= DYNAMIC_SHARED_MEMORY);
     typename G::a_tile (&a_smem)[G::SMEM_PIPE_DEPTH] = al.allocate<G::a_tile, G::SMEM_PIPE_DEPTH>();
     typename G::b_tile (&b_smem)[G::SMEM_PIPE_DEPTH] = al.allocate<G::b_tile, G::SMEM_PIPE_DEPTH>();
-    typename G::d_tile (&d_smem)[2]                  = al.allocate<G::d_tile, 2>();
+    typename G::d_tile (&d_smem)[G::NUM_D_TILES]     = al.allocate<G::d_tile, G::NUM_D_TILES>();
 
     tensor_allocator<1, 2> tm_alloc{};
     using d_tt_t = tt<float, G::Mb, G::Nb>;
@@ -182,19 +184,6 @@ __global__ void kernel(const __grid_constant__ G g) {
 #include <random>
 #include <omp.h>
 
-void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
-    #pragma omp parallel for collapse(2) // otherwise the CPU version takes for everrrrrr
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            float sum = 0.0f;
-            for (int k = 0; k < K; k++) {
-                sum += a[i * K + k] * b[j * K + k];
-            }
-            c[i * N + j] = sum;
-        }
-    }
-}
-
 template <typename G>
 __host__ double run_benchmark(size_t M, size_t N, size_t K, bool check_correctness = false, bool ncu = false) {
     std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
@@ -223,7 +212,16 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool check_correctne
 
     // Perform CPU matrix multiplication for reference
     if (check_correctness) {
-        cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
+        #pragma omp parallel for collapse(2) // otherwise the CPU version takes for everrrrrr
+        for (int i = 0; i < M; i++) {
+            for (int j = 0; j < N; j++) {
+                float sum = 0.0f;
+                for (int k = 0; k < K; k++) {
+                    sum += h_A[i * K + k] * h_B[j * K + k];
+                }
+                h_C_ref[i * N + j] = sum;
+            }
+        }
         std::cout << "Performed CPU matrix multiplication" << std::endl;
     }
 
@@ -334,7 +332,7 @@ __host__ int main() {
 
     // Template order: SUPER_M, Mb, Nb, Kb, SMEM_PIPE_DEPTH, MMA_PIPE_DEPTH, TMEM_PIPE_DEPTH
     N = 1024;
-    run_benchmark<globals<4, 64, 128, 128, 4, 2, 2>>(N, N, N, check_correctness, ncu);
+    run_benchmark<globals<4, 64, 128, 64, 13, 2, 2>>(N, N, N, check_correctness, ncu);
     N = 2048;
     run_benchmark<globals<4, 128, 256, 64, 4, 2, 8>>(N, N, N, check_correctness, ncu);
     N = 4096;
