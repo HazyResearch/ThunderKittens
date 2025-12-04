@@ -9,9 +9,9 @@ static constexpr int NUM_WORKERS = (NUM_CONSUMERS + NUM_PRODUCERS) * 4;
 static constexpr int NUM_THREADS = NUM_WORKERS * WARP_THREADS;
 static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - 1024;
 
-template <int _SUPER_M, int _Mb, int _Nb, int _Kb, int _SMEM_PIPE_DEPTH, int _MMA_PIPE_DEPTH, int _TMEM_PIPE_DEPTH>
+template <int _SUPERGROUP_SIZE, int _Mb, int _Nb, int _Kb, int _SMEM_PIPE_DEPTH, int _MMA_PIPE_DEPTH, int _TMEM_PIPE_DEPTH>
 struct globals {
-    static constexpr int SUPER_M = _SUPER_M;
+    static constexpr int SUPERGROUP_SIZE = _SUPERGROUP_SIZE;
 
     static constexpr int Mb = _Mb;
     static constexpr int Nb = _Nb;
@@ -50,17 +50,22 @@ __global__ void kernel(const __grid_constant__ G g) {
     const int iters_per_task = g.a.cols() / G::Kb;
 
     auto get_task_idx = [&](int task_iter) -> int2 {
-        int task_id = task_iter * (gridDim.x/CLUSTER_SIZE) + blockIdx.x/CLUSTER_SIZE;
-        int Rblocks = g.d.rows() / G::CLUSTER_M, Cblocks = g.d.cols() / G::CLUSTER_N;
-        int super_rows = (Rblocks/G::SUPER_M)*G::SUPER_M,
-            final_rows = Rblocks - super_rows,
-            super_repeat = G::SUPER_M*Cblocks;
-        if (task_id < super_rows * Cblocks) {
-            return { G::SUPER_M*(task_id/super_repeat) + task_id%G::SUPER_M, (task_id%super_repeat)/G::SUPER_M };
+        const int rblks = g.d.rows() / G::CLUSTER_M;
+        const int cblks = g.d.cols() / G::CLUSTER_N;
+        const int task_id = task_iter * (gridDim.x/CLUSTER_SIZE) + blockIdx.x/CLUSTER_SIZE;
+        const int supergroup_cblks = (cblks/G::SUPERGROUP_SIZE)*G::SUPERGROUP_SIZE;
+        const int finalgroup_cblks = cblks-supergroup_cblks;
+        const int supergroup_numel = G::SUPERGROUP_SIZE*rblks;
+        if (task_id < rblks*supergroup_cblks) {
+            const int supergroup_idx = task_id/supergroup_numel;
+            const int rblk_idx = (task_id%supergroup_numel)/G::SUPERGROUP_SIZE;
+            return { (supergroup_idx&1) ? rblks-rblk_idx-1 : rblk_idx, G::SUPERGROUP_SIZE*supergroup_idx + task_id%G::SUPERGROUP_SIZE };
         }
-        else if (task_id < Rblocks*Cblocks) {
-            int remainder_id = task_id - super_rows*Cblocks;
-            return { super_rows + remainder_id%final_rows, remainder_id/final_rows };
+        else if (task_id < rblks*cblks) {
+            const int supergroup_idx = task_id/supergroup_numel;
+            const int remainder_task_id = task_id - supergroup_cblks*cblks;
+            const int rblk_idx = remainder_task_id/finalgroup_cblks;
+            return { (supergroup_idx&1) ? rblks-rblk_idx-1 : rblk_idx, supergroup_cblks + remainder_task_id%finalgroup_cblks };
         }
         else {
             return { -1, -1 };
@@ -180,7 +185,7 @@ __global__ void kernel(const __grid_constant__ G g) {
 template <typename G>
 __host__ double run_benchmark(size_t M, size_t N, size_t K, bool check_correctness = false, bool ncu = false) {
     std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
-    std::cout << "Template: SUPER_M=" << G::SUPER_M << " Mb=" << G::Mb << " Nb=" << G::Nb << " Kb=" << G::Kb << 
+    std::cout << "Template: SUPERGROUP_SIZE=" << G::SUPERGROUP_SIZE << " Mb=" << G::Mb << " Nb=" << G::Nb << " Kb=" << G::Kb << 
                  " SMEM_PIPE_DEPTH=" << G::SMEM_PIPE_DEPTH << " MMA_PIPE_DEPTH=" << G::MMA_PIPE_DEPTH << " TMEM_PIPE_DEPTH=" << G::TMEM_PIPE_DEPTH << "\n";
     std::cout << "Total number of tasks: " << (M / G::Mb * N / G::Nb) << "\n";
     std::cout << "Number of iterations per task: " << (K / G::Kb) << "\n";
@@ -326,7 +331,7 @@ __host__ int main() {
     bool check_correctness = false;
     bool ncu = false;
 
-    // Template parameters: SUPER_M, Mb, Nb, Kb, SMEM_PIPE_DEPTH, MMA_PIPE_DEPTH, TMEM_PIPE_DEPTH
+    // Template parameters: SUPERGROUP_SIZE, Mb, Nb, Kb, SMEM_PIPE_DEPTH, MMA_PIPE_DEPTH, TMEM_PIPE_DEPTH
     N = 1024;
     run_benchmark<globals<4, 128, 128, 128, 4, 2, 2>>(N, N, N, check_correctness, ncu);
     N = 2048;
