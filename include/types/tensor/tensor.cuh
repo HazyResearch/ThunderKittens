@@ -111,14 +111,6 @@ template<int _nblocks_per_sm, int _ncta> struct tensor_allocator {
     }
 
     __device__ inline ~tensor_allocator() {
-        if constexpr (ncta == 1)
-            __syncthreads();
-        else if constexpr (ncta == 2) {
-            // Sync all threads in the cluster
-            asm volatile ("barrier.cluster.arrive.release.aligned;\n");
-            asm volatile ("barrier.cluster.wait.acquire.aligned;\n");
-        }
-
         if constexpr (ncta == 1) {
             if(warpid() == 0) {
                 asm volatile("tcgen05.dealloc.cta_group::1.sync.aligned.b32  %0, %1;\n"
@@ -127,6 +119,8 @@ template<int _nblocks_per_sm, int _ncta> struct tensor_allocator {
             }
         } else {
             if(warpid() == 0) {
+                asm volatile ("barrier.cluster.arrive.release.aligned;\n");
+                asm volatile ("barrier.cluster.wait.acquire.aligned;\n");
                 asm volatile("tcgen05.dealloc.cta_group::2.sync.aligned.b32  %0, %1;\n"
                 ::  "r"(addr), "n"(cols)
                 );
