@@ -252,13 +252,12 @@ __device__ static inline void query(result &r, handle &h) {
         "{\n"
         ".reg .pred SUCCESS;\n"
         ".reg .b128 CLC_HANDLE;\n"
-        ".reg .b32 IGNORE;\n"
         "ld.shared.b128 CLC_HANDLE, [%4];\n"
         "clusterlaunchcontrol.query_cancel.is_canceled.pred.b128 SUCCESS, CLC_HANDLE;\n"
         "selp.u32 %0, 1, 0, SUCCESS;\n"
         "@!SUCCESS bra.uni DONE;\n"
-        "clusterlaunchcontrol.query_cancel.get_first_ctaid.v4.b32.b128 {%1, %2, %3, IGNORE}, CLC_HANDLE;\n"
-        "fence.proxy.async::generic.release.sync_restrict::shared::cta.cluster;\n" // Release read of result to the async proxy:
+        "clusterlaunchcontrol.query_cancel.get_first_ctaid.v4.b32.b128 {%1, %2, %3, _}, CLC_HANDLE;\n"
+        "fence.proxy.async.shared::cta;\n"
         "DONE:\n"
         "}"
         : "=r"(r.success), "=r"(r.x), "=r"(r.y), "=r"(r.z)
