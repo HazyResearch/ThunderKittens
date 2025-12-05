@@ -270,4 +270,18 @@ __device__ static inline result query(handle &h) {
 
 #endif
 
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
+__device__ static inline bool elect_warp_leader() {
+    uint32_t elected = 0;
+    asm volatile(
+        "{.reg .pred P;\n"
+        " elect.sync _|P, %1;\n"
+        " selp.u32 %0, 1, 0, P;}\n"
+        : "+r"(elected)
+        : "r"(0xFFFFFFFF)
+    );
+    return static_cast<bool>(elected);
+}
+#endif
+
 } // namespace kittens
