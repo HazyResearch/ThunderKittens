@@ -144,6 +144,27 @@ __device__ static inline void wait(semaphore& sem, int kPhaseBit) {
 #endif
 }
 
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
+__device__ static inline bool try_wait(semaphore &sem, int kPhaseBit) {
+    void const* const ptr = &sem;
+    uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
+    uint32_t success;
+
+    asm volatile(
+        "{\n"
+        ".reg .pred P1; \n"
+        "mbarrier.try_wait.parity.shared::cta.b64 P1, [%1], %2; \n"
+        "selp.b32 %0, 1, 0, P1; \n"
+        "}\n"
+        : "=r"(success)
+        : "r"(mbar_ptr), "r"(kPhaseBit)
+        : "memory"
+    );
+
+    return static_cast<bool>(success);
+}
+#endif
+
 /**
 * @brief Checks if the requested semaphore phase is ready.
 *
