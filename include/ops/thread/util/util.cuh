@@ -243,10 +243,10 @@ __device__ static inline void schedule(handle &h, semaphore &sem) {
 
 /**
  * @brief Queries the result of a schedule operation. Calling this again after failure is undefined behavior.
- * @param r The result of the query to be filled in.
  * @param h The CLC handle.
  */
-__device__ static inline void query(result &r, handle &h) {
+__device__ static inline result query(handle &h) {
+    result r;
     asm volatile(
         "{\n"
         ".reg .pred SUCCESS;\n"
@@ -263,6 +263,7 @@ __device__ static inline void query(result &r, handle &h) {
         : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&h.internal_value)))
         : "memory"
     );
+    return r;
 }
 
 } // namespace clc
