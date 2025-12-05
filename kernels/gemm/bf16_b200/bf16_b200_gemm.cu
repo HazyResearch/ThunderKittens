@@ -179,8 +179,9 @@ __global__ void kernel(const __grid_constant__ G g) {
     }
 }
 
-#include <random>
 #include <omp.h>
+#include <random>
+#include <vector>
 
 template <typename G>
 __host__ double run_benchmark(size_t M, size_t N, size_t K, bool check_correctness = false, bool ncu = false) {
@@ -193,12 +194,16 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool check_correctne
     // Sleep for 50 ms to limit power consumption and thermals
     usleep(50000);
 
+    // Calculate arg_group_size
+    const int arg_size = 2 * (M * K + N * K + M * N);
+    const int l2_cache_size = 128 * 1024 * 1024;
+    const int ideal_arg_size = l2_cache_size * 3;
+    const int arg_group_count = arg_size > ideal_arg_size ? 1 : (ideal_arg_size / arg_size) + 1;
+
     // Allocate host memory
-    float *h_A = new float[M * K];
-    float *h_B = new float[K * N];
-    float *h_C = new float[M * N];
-    float *h_C_ref = new float[M * N];
-    __nv_bfloat16 *h_C_bf16 = new __nv_bfloat16[M * N];
+    std::vector<float> h_A(M * K * arg_group_count);
+    std::vector<float> h_B(K * N * arg_group_count);
+    std::vector<float> h_C_ref(M * N);
     std::cout << "Allocated host memory" << std::endl;
 
     // Initialize random number generator
@@ -207,19 +212,18 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool check_correctne
     std::uniform_real_distribution<> dis(-0.5, 0.5);
 
     // Initialize matrices with random values
-    for (int i = 0; i < M * K; ++i) h_A[i] = dis(gen);
-    for (int i = 0; i < K * N; ++i) h_B[i] = dis(gen);
+    for (int i = 0; i < M * K * arg_group_count; ++i) h_A[i] = dis(gen);
+    for (int i = 0; i < K * N * arg_group_count; ++i) h_B[i] = dis(gen);
     std::cout << "Initialized matrices" << std::endl;
 
     // Perform CPU matrix multiplication for reference
     if (check_correctness) {
-        #pragma omp parallel for collapse(2) // otherwise the CPU version takes for everrrrrr
+        #pragma omp parallel for collapse(2)
         for (int i = 0; i < M; i++) {
             for (int j = 0; j < N; j++) {
                 float sum = 0.0f;
-                for (int k = 0; k < K; k++) {
+                for (int k = 0; k < K; k++)
                     sum += h_A[i * K + k] * h_B[j * K + k];
-                }
                 h_C_ref[i * N + j] = sum;
             }
         }
@@ -227,37 +231,48 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool check_correctne
     }
 
     // Allocate device memory
-    __nv_bfloat16 *d_A, *d_B, *d_C;
-    CUDACHECK(cudaMalloc(&d_A, M*K*sizeof(__nv_bfloat16)));
-    CUDACHECK(cudaMalloc(&d_B, K*N*sizeof(__nv_bfloat16)));
-    CUDACHECK(cudaMalloc(&d_C, M*N*sizeof(__nv_bfloat16)));
+    std::vector<__nv_bfloat16*> d_A(arg_group_count);
+    std::vector<__nv_bfloat16*> d_B(arg_group_count);
+    std::vector<__nv_bfloat16*> d_C(arg_group_count);
+    for (int i = 0; i < arg_group_count; i++) {
+        CUDACHECK(cudaMalloc(&d_A[i], M*K*sizeof(__nv_bfloat16)));
+        CUDACHECK(cudaMalloc(&d_B[i], K*N*sizeof(__nv_bfloat16)));
+        CUDACHECK(cudaMalloc(&d_C[i], M*N*sizeof(__nv_bfloat16)));
+    }
     std::cout << "Allocated device memory" << std::endl;
 
     // Convert to __nv_bfloat16 and copy to device
-    __nv_bfloat16 *h_A_bf16 = new __nv_bfloat16[M * K];
-    __nv_bfloat16 *h_B_bf16 = new __nv_bfloat16[K * N];
-    for (int i = 0; i < M * K; ++i) h_A_bf16[i] = __float2bfloat16(h_A[i]);
-    for (int i = 0; i < K * N; ++i) h_B_bf16[i] = __float2bfloat16(h_B[i]);
-    CUDACHECK(cudaMemcpy(d_A, h_A_bf16, M*K*2, cudaMemcpyHostToDevice));
-    CUDACHECK(cudaMemcpy(d_B, h_B_bf16, K*N*2, cudaMemcpyHostToDevice));
+    std::vector<__nv_bfloat16> h_A_bf16(M * K * arg_group_count);
+    std::vector<__nv_bfloat16> h_B_bf16(K * N * arg_group_count);
+    for (int i = 0; i < M * K * arg_group_count; ++i) h_A_bf16[i] = __float2bfloat16(h_A[i]);
+    for (int i = 0; i < K * N * arg_group_count; ++i) h_B_bf16[i] = __float2bfloat16(h_B[i]);
+    for (int i = 0; i < arg_group_count; i++) {
+        CUDACHECK(cudaMemcpy(d_A[i], &h_A_bf16[i*M*K], M*K*sizeof(__nv_bfloat16), cudaMemcpyHostToDevice));
+        CUDACHECK(cudaMemcpy(d_B[i], &h_B_bf16[i*N*K], N*K*sizeof(__nv_bfloat16), cudaMemcpyHostToDevice));
+    }
     std::cout << "Copied matrices to device" << std::endl;
 
     // Prepare kernel inputs
-    typename G::a_gl Ag{d_A, nullptr, nullptr, M, K};
-    typename G::b_gl Bg{d_B, nullptr, nullptr, N, K};
-    typename G::d_gl Dg{d_C, nullptr, nullptr, M, N};
-    G g{Ag, Bg, Dg};
+    std::vector<G> g;
+    for (int i = 0; i < arg_group_count; i++) {
+        typename G::a_gl Ag{d_A[i], nullptr, nullptr, M, K};
+        typename G::b_gl Bg{d_B[i], nullptr, nullptr, N, K};
+        typename G::d_gl Dg{d_C[i], nullptr, nullptr, M, N};
+        g.push_back(G{Ag, Bg, Dg});
+    }
 
     // Set kernel attributes
-    cudaFuncSetAttribute(kernel<G>, cudaFuncAttributeMaxDynamicSharedMemorySize, g.dynamic_shared_memory());
+    CUDACHECK(cudaFuncSetAttribute(kernel<G>, cudaFuncAttributeMaxDynamicSharedMemorySize, g[0].dynamic_shared_memory()));
 
     // Number of iterations
     int num_warmups = ncu ? 0 : 500;
     int num_iters = ncu ? 1 : 100;
 
     // Warmup
-    for(int i = 0; i < num_warmups; i++)
-        kernel<G><<<g.grid(), g.block(), g.dynamic_shared_memory()>>>(g);
+    for(int i = 0; i < num_warmups; i++) {
+        int idx = i % arg_group_count;
+        kernel<G><<<g[idx].grid(), g[idx].block(), g[idx].dynamic_shared_memory()>>>(g[idx]);
+    }
 
     // Benchmark
     cudaEvent_t start, stop;
@@ -265,26 +280,30 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool check_correctne
     CUDACHECK(cudaEventCreate(&stop));
     CUDACHECK(cudaDeviceSynchronize());
     CUDACHECK(cudaEventRecord(start));
-    for(int i = 0; i < num_iters; i++)
-        kernel<G><<<g.grid(), g.block(), g.dynamic_shared_memory()>>>(g);
+    for(int i = 0; i < num_iters; i++) {
+        int idx = i % arg_group_count;
+        kernel<G><<<g[idx].grid(), g[idx].block(), g[idx].dynamic_shared_memory()>>>(g[idx]);
+    }
     CUDACHECK(cudaEventRecord(stop));
     CUDACHECK(cudaEventSynchronize(stop));
 
     // Calculate duration and TFLOPs
     float milliseconds;
     cudaEventElapsedTime(&milliseconds, start, stop);
-    double useconds = milliseconds * 1000.0 / num_iters;
-    double flops = double(2.0) * M * N * K; // 2 FLOPs per multiply-add
-    double tflops = (flops / useconds) / 1e6;
-    std::cout << "Avg Kernel execution time: " << useconds << " us\n";
+    double microseconds = milliseconds * 1000.0 / num_iters;
+    double flops = double(2.0) * M * N * K;
+    double tflops = (flops / microseconds) / 1e6;
+    std::cout << "Average kernel execution time: " << microseconds << " us\n";
     std::cout << "Achieved performance: " << tflops << " TFLOPs\n";
 
     if (check_correctness) {
         // Copy result back to host
-        CUDACHECK(cudaMemcpy(h_C_bf16, d_C, M*N*2, cudaMemcpyDeviceToHost));
+        std::vector<__nv_bfloat16> h_C_bf16(M * N);
+        CUDACHECK(cudaMemcpy(&h_C_bf16[0], d_C[0], M*N*sizeof(__nv_bfloat16), cudaMemcpyDeviceToHost));
         std::cout << "Copied result back to host" << std::endl;
 
         // Convert result back to float for comparison
+        std::vector<float> h_C(M * N);
         for (int i = 0; i < M * N; ++i) h_C[i] = __bfloat162float(h_C_bf16[i]);
         std::cout << "Converted result back to float" << std::endl;
 
@@ -310,16 +329,11 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool check_correctne
     }
 
     // Clean up
-    delete[] h_A;
-    delete[] h_B;
-    delete[] h_C;
-    delete[] h_C_ref;
-    delete[] h_A_bf16;
-    delete[] h_B_bf16;
-    delete[] h_C_bf16;
-    cudaFree(d_A);
-    cudaFree(d_B);
-    cudaFree(d_C);
+    for (int i = 0; i < arg_group_count; i++) {
+        cudaFree(d_A[i]);
+        cudaFree(d_B[i]);
+        cudaFree(d_C[i]);
+    }
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
 
