@@ -79,8 +79,12 @@ struct KITTENS_DEFAULT_ALIGN st {
     static_assert((swizzle && (rows % kittens::TILE_ROW_DIM<T> == 0)) || (!swizzle && (rows % kittens::BASE_TILE_DIM == 0)), "Rows must be divisible by the tile dimension");
     static_assert((swizzle && (cols % kittens::TILE_COL_DIM<T> == 0)) || (!swizzle && (cols % kittens::BASE_TILE_DIM == 0)), "Cols must be divisible by the tile dimension");
 
+#ifdef KITTENS_BLACKWELL
     // Must be a 1-packed type (e.g. float, bf16, etc) unless fp4
     static_assert(base_types::packing<dtype>::num() == 1 || std::is_same_v<dtype, fp4e2m1_2>); 
+#else
+    static_assert(base_types::packing<dtype>::num() == 1); 
+#endif
 
     // If a user specifies a swizzle bytes value, the column byte size must be a multiple of the swizzle bytes.
     static_assert(_swizzle_bytes == 0 || _swizzle_bytes == 32 || _swizzle_bytes == 64 || _swizzle_bytes == 128);
