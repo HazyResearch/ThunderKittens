@@ -152,6 +152,10 @@ struct gl {
     template<typename U, int axis> __device__ inline const CUtensorMap* get_tma() const {
         return tma_descs.template get<U, axis>();
     }
+    template<typename U, int axis> __device__ inline const void prefetch_tma() const {
+        CUtensorMap *tma_desc = tma_descs.template get<U, axis>();
+        asm volatile ("{prefetch.tensormap [%0];}" :: "l"(reinterpret_cast<uint64_t>(tma_desc)) : "memory");
+    }
 #endif
     __device__ inline T& operator[](const coord<ducks::default_type> &idx) const { // yes I am abusing the const qualifier here a bit.
         return raw_ptr[(((size_t)idx.b*depth() + idx.d)*rows() + idx.r)*cols() + idx.c];
