@@ -152,8 +152,8 @@ struct gl {
     template<typename U, int axis> __device__ inline const CUtensorMap* get_tma() const {
         return tma_descs.template get<U, axis>();
     }
-    template<typename U, int axis=2> __device__ inline const void prefetch_tma() const {
-        CUtensorMap *tma_desc = tma_descs.template get<U, axis>();
+    template<typename U, int axis=2> __device__ inline void prefetch_tma() const {
+        const CUtensorMap *tma_desc = tma_descs.template get<U, axis>();
         asm volatile ("{prefetch.tensormap [%0];}" :: "l"(reinterpret_cast<uint64_t>(tma_desc)) : "memory"); // must be called by a single thread
     }
 #endif

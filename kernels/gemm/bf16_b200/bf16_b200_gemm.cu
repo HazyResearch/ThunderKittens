@@ -47,6 +47,12 @@ struct globals {
 template <typename G>
 __cluster_dims__(CLUSTER_SIZE, 1, 1) __launch_bounds__(NUM_THREADS, 1)
 __global__ void kernel(const __grid_constant__ G g) {
+    if (threadIdx.x == 0) {
+        g.a.template prefetch_tma<typename G::a_tile>();
+        g.b.template prefetch_tma<typename G::b_tile>();
+        g.d.template prefetch_tma<typename G::d_tile>();
+    }
+
     const int cta_rank = cluster_ctarank();
     const int iters_per_task = g.a.cols() / G::Kb;
 
