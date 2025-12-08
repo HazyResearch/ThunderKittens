@@ -77,7 +77,11 @@ struct KITTENS_DEFAULT_ALIGN st {
     static constexpr int width               = _cols / kittens::TILE_COL_DIM<T>; ///< Width of the tile in terms of 16-element subtiles.
     static constexpr int num_elements        = rows * cols; ///< Total number of elements in the tile.
 
+    #ifdef KITTENS_BLACKWELL
     static_assert(base_types::packing<dtype>::num() == 1 || std::is_same_v<dtype, fp4_2>); // must be a 1-packed type (e.g. float, bf16, etc)
+    #else
+    static_assert(base_types::packing<dtype>::num() == 1); // must be a 1-packed type (e.g. float, bf16, etc)
+    #endif
 
     static constexpr int swizzle_bytes = (
         sizeof(dtype) == 1 ? (  // Add FP8 case
