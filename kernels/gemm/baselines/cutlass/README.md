@@ -47,6 +47,14 @@ Here, we describe how we benchmarked the [CUTLASS](https://github.com/NVIDIA/cut
         -DCUTLASS_ENABLE_TESTS=OFF \
         -DCUTLASS_ENABLE_EXAMPLES=OFF \
         -DCUTLASS_LIBRARY_KERNELS=cutlass3x_sm100_bstensorop_gemm_ue4m3xe2m1_ue4m3xe2m1_f32_void_f32*_tnt_* # as of now, CUTLASS does not provide BF16 output kernel
+    
+    # All at once
+    cmake .. \
+      -DCUTLASS_NVCC_ARCHS=100a \
+      -DCUTLASS_UNITY_BUILD_ENABLED=OFF \
+      -DCUTLASS_ENABLE_TESTS=OFF \
+      -DCUTLASS_ENABLE_EXAMPLES=OFF \
+      -DCUTLASS_LIBRARY_KERNELS="cutlass3x_sm100_tensorop_gemm_bf16_bf16_f32_void_bf16*_tnt_*;cutlass3x_sm100_bstensorop_gemm_ue8m0xe4m3_ue8m0xe4m3_f32_void_bf16*_tnt_*;cutlass3x_sm100_bstensorop_gemm_ue4m3xe2m1_ue4m3xe2m1_f32_void_f32*_tnt_*"
     ```
 
 5. Compile CUTLASS profiler. This will take a while.
