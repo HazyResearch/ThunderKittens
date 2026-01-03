@@ -117,7 +117,7 @@ python3 <<EOF
 import glob
 import pandas as pd
 
-for f in glob.glob("*.csv"):
+for f in sorted(glob.glob("*.csv")):
     df = pd.read_csv(f)
     df = df[df["Status"].str.contains("success", na=False)]
     df = df[df["OperationKind"].str.contains("gemm", na=False)]
