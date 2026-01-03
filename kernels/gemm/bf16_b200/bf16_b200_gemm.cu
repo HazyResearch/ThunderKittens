@@ -236,7 +236,7 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool check_correctne
     // Initialize random number generator
     std::random_device rd;
     std::mt19937 gen(42);
-    std::uniform_real_distribution<> dis(-0.5, 0.5);
+    std::uniform_real_distribution<> dis(-.5, .5);
 
     // Initialize matrices with random values
     for (int i = 0; i < M * K * arg_group_count; ++i) h_A[i] = dis(gen);
@@ -335,24 +335,25 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool check_correctne
         std::cout << "Converted result back to float" << std::endl;
 
         // Check result
+        float max = 0.0f;
+        float avg = 0.0f;
         float max_error = 0.0f;
-        float average_error = 0.0f;
-        int error_count = 0;
+        float avg_error = 0.0f;
+        // int error_count = 0;
         for (int i = 0; i < M * N; ++i) {
+            max = std::max(max, std::abs(h_C_ref[i]));
+            avg += std::abs(h_C_ref[i]);
             float error = std::abs(h_C[i] - h_C_ref[i]);
-            if(error > .5f) { // large because of bf16 vs fp32 numerics
-                if(error_count < 20) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
-                else if(error_count == 21) std::cout << "Too many errors to show them all.\n";
-                error_count++;
-            }
             max_error = std::max(max_error, error);
-            average_error += error;
+            avg_error += error;
         }
-        average_error /= M*N;
+        avg /= M*N;
+        avg_error /= M*N;
 
+        std::cout << "Abs max:   " << max << std::endl;
+        std::cout << "Abs avg:   " << avg << std::endl;
         std::cout << "Max error: " << max_error << std::endl;
-        std::cout << "Average error: " << average_error << std::endl;
-        std::cout << "Error count: " << error_count << std::endl;
+        std::cout << "Avg error: " << avg_error << std::endl;
     }
 
     // Clean up
@@ -369,20 +370,20 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool check_correctne
 
 __host__ int main() {
     int N;
-    bool check_correctness = false;
+    bool check_correctness = true;
     bool ncu = false;
 
     // Template parameters: SUPERGROUP_SIZE, Mb, Nb, Kb, SMEM_PIPE_DEPTH, MMA_PIPE_DEPTH, TMEM_PIPE_DEPTH
-    N = 1024;
-    run_benchmark<globals<4, 128, 128, 128, 4, 2, 2>>(N, N, N, check_correctness, ncu);
-    N = 2048;
-    run_benchmark<globals<4, 128, 256, 64, 4, 2, 8>>(N, N, N, check_correctness, ncu);
+    // N = 1024;
+    // run_benchmark<globals<4, 128, 128, 128, 4, 2, 2>>(N, N, N, check_correctness, ncu);
+    // N = 2048;
+    // run_benchmark<globals<4, 128, 256, 64, 4, 2, 8>>(N, N, N, check_correctness, ncu);
     N = 4096;
     run_benchmark<globals<4, 128, 256, 64, 5, 2, 2>>(N, N, N, check_correctness, ncu);
-    N = 8192;
-    run_benchmark<globals<8, 128, 256, 64, 6, 2, 8>>(N, N, N, check_correctness, ncu);
-    N = 16384;
-    run_benchmark<globals<8, 128, 256, 64, 4, 2, 8>>(N, N, N, check_correctness, ncu);
+    // N = 8192;
+    // run_benchmark<globals<8, 128, 256, 64, 6, 2, 8>>(N, N, N, check_correctness, ncu);
+    // N = 16384;
+    // run_benchmark<globals<8, 128, 256, 64, 4, 2, 8>>(N, N, N, check_correctness, ncu);
 
     return 0;
 }
