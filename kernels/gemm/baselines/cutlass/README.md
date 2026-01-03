@@ -116,6 +116,12 @@ Here, we describe how we benchmarked the [CUTLASS](https://github.com/NVIDIA/cut
     done
     ```
 
+Some additional notes on the `cutlass_profiler` options:
+
+* Extremely important to set `scale:-1`. Otherwise inputs are quantized, which is useful for verification but horrible for accurate benchmarking. Input distribution affects power throttling and thus TFLOPs measured: https://www.thonking.ai/p/strangely-matrix-multiplications
+* For the same reason, it's very important to use consistent input distribution throughout benchmarks, ideally using the same exact inputs.
+* Also very important to set `--enable-best-kernel-for-fixed-shape=true`; otherwise the profiler does not experiment with different threadblock swizzling configurations.
+
 (Optional) Use the below command to quickly find best configuration / TFLOPs number per shape:
 
 ```bash
