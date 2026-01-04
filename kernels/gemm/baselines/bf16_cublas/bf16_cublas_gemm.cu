@@ -57,11 +57,11 @@ __global__ void reference_gemm_kernel(
   if (row < M && col < N) {
     float acc = 0.0f;
     for (int k = 0; k < K; ++k) {
-      float a = __bfloat162float(A[row * K + k]);      // A[row, k]
-      float b = __bfloat162float(B[col + k * N]);      // B[col, k]
+      float a = __bfloat162float(A[row * K + k]);      // A[row, k] - RowMajor MxK
+      float b = __bfloat162float(B[col * K + k]);      // B[col, k] - ColMajor NxK (N rows of K elements)
       acc += a * b;
     }
-    D[row * N + col] = __float2bfloat16(acc);          // D[row, col]
+    D[row * N + col] = __float2bfloat16(acc);          // D[row, col] - RowMajor MxN
   }
 }
 
@@ -158,18 +158,19 @@ void cublas_gemm(
   const float alpha = 1.0f;
   const float beta = 0.0f;
 
-  // A: RowMajor MxK, B: ColMajor NxK, D: RowMajor MxN
-  // D = A * B  =>  D^T = B^T * A^T  (for row-major A/D with col-major cuBLAS)
+  // A: RowMajor MxK (= ColMajor KxM), B: ColMajor NxK (= RowMajor NxK), D: RowMajor MxN (= ColMajor NxM)
+  // D[m,n] = sum_k A[m,k] * B[n,k]
+  // In col-major: D' = B'^T * A' where B' is KxN, A' is KxM, D' is NxM
   CHECK_CUBLAS(cublasGemmEx(
       handle,
-      CUBLAS_OP_N,    // B (NxK) as-is gives NxK
-      CUBLAS_OP_N,    // A seen as col-major KxM, as-is gives KxM
+      CUBLAS_OP_T,    // B' (KxN) transposed gives NxK
+      CUBLAS_OP_N,    // A' (KxM) as-is gives KxM
       N, M, K,        // output NxM (= row-major MxN)
       &alpha,
-      B, CUDA_R_16BF, N,   // B: ColMajor NxK, ldb = N
-      A, CUDA_R_16BF, K,   // A: RowMajor MxK = ColMajor KxM, lda = K
+      B, CUDA_R_16BF, K,   // B: RowMajor NxK = ColMajor KxN, ld = K
+      A, CUDA_R_16BF, K,   // A: RowMajor MxK = ColMajor KxM, ld = K
       &beta,
-      D, CUDA_R_16BF, N,   // D: RowMajor MxN = ColMajor NxM, ldd = N
+      D, CUDA_R_16BF, N,   // D: RowMajor MxN = ColMajor NxM, ld = N
       CUBLAS_COMPUTE_32F,
       CUBLAS_GEMM_DEFAULT_TENSOR_OP));
 }

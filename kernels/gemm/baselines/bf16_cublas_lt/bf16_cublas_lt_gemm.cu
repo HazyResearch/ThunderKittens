@@ -54,11 +54,11 @@ __global__ void reference_gemm_kernel(
   if (row < M && col < N) {
     float acc = 0.0f;
     for (int k = 0; k < K; ++k) {
-      float a = __bfloat162float(A[row * K + k]);      // A[row, k]
-      float b = __bfloat162float(B[col + k * N]);      // B[col, k]
+      float a = __bfloat162float(A[row * K + k]);      // A[row, k] - RowMajor MxK
+      float b = __bfloat162float(B[col * K + k]);      // B[col, k] - ColMajor NxK (N rows of K elements)
       acc += a * b;
     }
-    D[row * N + col] = __float2bfloat16(acc);          // D[row, col]
+    D[row * N + col] = __float2bfloat16(acc);          // D[row, col] - RowMajor MxN
   }
 }
 
@@ -160,17 +160,18 @@ struct CublasLtGemm {
     // Create matmul descriptor
     CHECK_CUBLAS(cublasLtMatmulDescCreate(&matmulDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
 
-    // Set transpose operations: we compute D^T = B^T * A^T for row-major A/D
-    cublasOperation_t transA = CUBLAS_OP_N;  // B (NxK) used as-is
-    cublasOperation_t transB = CUBLAS_OP_N;  // A seen as col-major KxM
+    // D[m,n] = sum_k A[m,k] * B[n,k]
+    // A: RowMajor MxK = ColMajor KxM, B: ColMajor NxK = RowMajor NxK = ColMajor KxN
+    // D: RowMajor MxN = ColMajor NxM
+    // In col-major: D' = B'^T * A' where B' is KxN, A' is KxM, D' is NxM
+    cublasOperation_t transA = CUBLAS_OP_T;  // B' (KxN) transposed gives NxK
+    cublasOperation_t transB = CUBLAS_OP_N;  // A' (KxM) as-is gives KxM
     CHECK_CUBLAS(cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_TRANSA, &transA, sizeof(transA)));
     CHECK_CUBLAS(cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_TRANSB, &transB, sizeof(transB)));
 
-    // A: RowMajor MxK = ColMajor KxM, so we describe it as KxM with ld=K
-    // But in the matmul D^T = B * A^T, the "A" argument is actually our B, "B" argument is our A
-    // Layout for B (our first arg): ColMajor NxK, ld=N
-    CHECK_CUBLAS(cublasLtMatrixLayoutCreate(&layoutA, CUDA_R_16BF, N, K, N));
-    // Layout for A (our second arg): RowMajor MxK = ColMajor KxM, ld=K
+    // Layout for B (cuBLAS "A"): RowMajor NxK = ColMajor KxN, ld=K
+    CHECK_CUBLAS(cublasLtMatrixLayoutCreate(&layoutA, CUDA_R_16BF, K, N, K));
+    // Layout for A (cuBLAS "B"): RowMajor MxK = ColMajor KxM, ld=K
     CHECK_CUBLAS(cublasLtMatrixLayoutCreate(&layoutB, CUDA_R_16BF, K, M, K));
     // Layout for D: RowMajor MxN = ColMajor NxM, ld=N
     CHECK_CUBLAS(cublasLtMatrixLayoutCreate(&layoutD, CUDA_R_16BF, N, M, N));
