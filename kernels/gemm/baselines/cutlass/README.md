@@ -120,6 +120,7 @@ Some additional notes on the `cutlass_profiler` options:
 
 * Extremely important to set `scale:-1`. Otherwise inputs are quantized, which is useful for verification but horrible for accurate benchmarking. Input distribution affects power throttling and thus TFLOPs measured: https://www.thonking.ai/p/strangely-matrix-multiplications
 * For the same reason, it's very important to use consistent input distribution throughout benchmarks, ideally using the same exact inputs.
+* Quirks on MX/NV input generation: The `--dist` option you specify directly applies to the post-quantized FP4/FP8 values, not pre-quantized FP32 values, and the scales themselves. Unfortunately, CUTLASS profiler does not provide a way for users to specify different distributions for input operands and the scales (either one has to end up with skewed distribution). Thus, for MX/NV GEMMs, you should really only use CUTLASS profiler to find the best kernel configuration, and benchmark them separately on your own.
 * Also very important to set `--enable-best-kernel-for-fixed-shape=true`; otherwise the profiler does not experiment with different threadblock swizzling configurations.
 
 (Optional) Use the below command to quickly find best configuration / TFLOPs number per shape:
