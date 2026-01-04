@@ -374,16 +374,16 @@ __host__ int main() {
     bool ncu = false;
 
     // Template parameters: SUPERGROUP_SIZE, Mb, Nb, Kb, SMEM_PIPE_DEPTH, MMA_PIPE_DEPTH, TMEM_PIPE_DEPTH
-    // N = 1024;
-    // run_benchmark<globals<4, 128, 128, 128, 4, 2, 2>>(N, N, N, check_correctness, ncu);
-    // N = 2048;
-    // run_benchmark<globals<4, 128, 256, 64, 4, 2, 8>>(N, N, N, check_correctness, ncu);
+    N = 1024;
+    run_benchmark<globals<4, 128, 128, 128, 4, 2, 2>>(N, N, N, check_correctness, ncu);
+    N = 2048;
+    run_benchmark<globals<4, 128, 256, 64, 4, 2, 8>>(N, N, N, check_correctness, ncu);
     N = 4096;
     run_benchmark<globals<4, 128, 256, 64, 5, 2, 2>>(N, N, N, check_correctness, ncu);
-    // N = 8192;
-    // run_benchmark<globals<8, 128, 256, 64, 6, 2, 8>>(N, N, N, check_correctness, ncu);
-    // N = 16384;
-    // run_benchmark<globals<8, 128, 256, 64, 4, 2, 8>>(N, N, N, check_correctness, ncu);
+    N = 8192;
+    run_benchmark<globals<8, 128, 256, 64, 6, 2, 8>>(N, N, N, check_correctness, ncu);
+    N = 16384;
+    run_benchmark<globals<8, 128, 256, 64, 4, 2, 8>>(N, N, N, check_correctness, ncu);
 
     return 0;
 }
