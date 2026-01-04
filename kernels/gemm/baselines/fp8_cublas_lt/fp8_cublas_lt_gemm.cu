@@ -8,13 +8,14 @@
 
 #include <iostream>
 #include <vector>
-#include <cmath>
 #include <thread>
 #include <chrono>
 #include <cuda_runtime.h>
 #include <cublasLt.h>
 #include <cuda_fp8.h>
 #include <cuda_bf16.h>
+
+#include "../../common.cuh"
 
 #define CHECK_CUDA(call) \
     do { \
@@ -36,110 +37,6 @@
 
 static constexpr int warmup_iters = 500;
 static constexpr int profiling_iters = 100;
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-// Simple reference GEMM: D = A * B
-// A: RowMajor (M x K), B: ColMajor (N x K), D: RowMajor (M x N)
-// Each thread computes one output element
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-__global__ void reference_gemm_kernel(
-    __nv_bfloat16* D,
-    __nv_fp8_e4m3 const* A,
-    __nv_fp8_e4m3 const* B,
-    int M, int N, int K) {
-
-  int row = blockIdx.y * blockDim.y + threadIdx.y;
-  int col = blockIdx.x * blockDim.x + threadIdx.x;
-
-  if (row < M && col < N) {
-    float acc = 0.0f;
-    for (int k = 0; k < K; ++k) {
-      float a = float(A[row * K + k]);      // A[row, k] - RowMajor MxK
-      float b = float(B[col * K + k]);      // B[col, k] - ColMajor NxK (N rows of K elements)
-      acc += a * b;
-    }
-    D[row * N + col] = __float2bfloat16(acc);          // D[row, col] - RowMajor MxN
-  }
-}
-
-void launch_reference_gemm(__nv_bfloat16* D, __nv_fp8_e4m3 const* A,
-                           __nv_fp8_e4m3 const* B, int M, int N, int K) {
-  dim3 block(16, 16);
-  dim3 grid((N + 15) / 16, (M + 15) / 16);
-  reference_gemm_kernel<<<grid, block>>>(D, A, B, M, N, K);
-}
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-// Initialization kernel - uniform distribution [-448, 448] (FP8 E4M3 range)
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-__global__ void init_random_kernel(__nv_fp8_e4m3* data, size_t count, uint64_t seed) {
-  size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx < count) {
-    // Splitmix64 hash for uniform random bits
-    uint64_t x = seed + idx;
-    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
-    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
-    x = x ^ (x >> 31);
-    // Upper 24 bits to float in [0,1), then scale to [-448, 448]
-    float u = (float)(x >> 40) * (1.0f / 16777216.0f);
-    float val = u * 896.0f - 448.0f;
-    data[idx] = __nv_fp8_e4m3(val);
-  }
-}
-
-void init_random(__nv_fp8_e4m3* data, size_t count, uint64_t seed) {
-  dim3 block(256);
-  dim3 grid((count + 255) / 256);
-  init_random_kernel<<<grid, block>>>(data, count, seed);
-}
-
-__global__ void fill_zero_kernel(__nv_bfloat16* data, size_t count) {
-  size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx < count) {
-    data[idx] = __float2bfloat16(0.0f);
-  }
-}
-
-void fill_zero(__nv_bfloat16* data, size_t count) {
-  dim3 block(256);
-  dim3 grid((count + 255) / 256);
-  fill_zero_kernel<<<grid, block>>>(data, count);
-}
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-// Correctness verification
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-void verify_gemm(__nv_bfloat16 const* d_D, __nv_bfloat16 const* d_D_ref, int M, int N) {
-  size_t count = size_t(M) * N;
-  std::vector<__nv_bfloat16> h_D(count);
-  std::vector<__nv_bfloat16> h_D_ref(count);
-
-  cudaMemcpy(h_D.data(), d_D, count * sizeof(__nv_bfloat16), cudaMemcpyDeviceToHost);
-  cudaMemcpy(h_D_ref.data(), d_D_ref, count * sizeof(__nv_bfloat16), cudaMemcpyDeviceToHost);
-
-  double abs_sum = 0.0, abs_max = 0.0;
-  double err_sum = 0.0, err_max = 0.0;
-
-  for (size_t i = 0; i < count; ++i) {
-    float val = std::abs(__bfloat162float(h_D[i]));
-    float ref = std::abs(__bfloat162float(h_D_ref[i]));
-    float err = std::abs(__bfloat162float(h_D[i]) - __bfloat162float(h_D_ref[i]));
-
-    abs_sum += val;
-    abs_max = std::max(abs_max, (double)val);
-    err_sum += err;
-    err_max = std::max(err_max, (double)err);
-  }
-
-  double abs_mean = abs_sum / count;
-  double err_mean = err_sum / count;
-
-  std::cout << "abs mean: " << abs_mean << ", abs max: " << abs_max
-            << ", err mean: " << err_mean << ", err max: " << err_max << std::endl;
-}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // cuBLASLt GEMM: D = A * B
@@ -258,15 +155,15 @@ void benchmark(int M, int N, int K) {
     CHECK_CUDA(cudaMalloc(&blocks_B[i], size_B * sizeof(__nv_fp8_e4m3)));
     CHECK_CUDA(cudaMalloc(&blocks_D[i], size_D * sizeof(__nv_bfloat16)));
 
-    init_random(blocks_A[i], size_A, seed + i * 100);
-    init_random(blocks_B[i], size_B, seed + i * 100 + 1);
-    fill_zero(blocks_D[i], size_D);
+    fill<__nv_fp8_e4m3, FillMode::RANDOM>(blocks_A[i], size_A, seed + i * 100, -448.0f, 448.0f);
+    fill<__nv_fp8_e4m3, FillMode::RANDOM>(blocks_B[i], size_B, seed + i * 100 + 1, -448.0f, 448.0f);
+    fill<__nv_bfloat16, FillMode::CONSTANT>(blocks_D[i], size_D, 0.0f);
   }
-  fill_zero(block_D_ref, size_D);
+  fill<__nv_bfloat16, FillMode::CONSTANT>(block_D_ref, size_D, 0.0f);
   CHECK_CUDA(cudaDeviceSynchronize());
 
   // Compute reference GEMM
-  launch_reference_gemm(block_D_ref, blocks_A[0], blocks_B[0], M, N, K);
+  reference_gemm<__nv_fp8_e4m3, __nv_bfloat16>(block_D_ref, blocks_A[0], blocks_B[0], M, N, K);
   CHECK_CUDA(cudaDeviceSynchronize());
 
   // Initialize cuBLASLt
@@ -307,10 +204,10 @@ void benchmark(int M, int N, int K) {
   std::cout << "Performance: " << tflops << " TFLOP/s" << std::endl;
 
   // Verify correctness
-  fill_zero(blocks_D[0], size_D);
+  fill<__nv_bfloat16, FillMode::CONSTANT>(blocks_D[0], size_D, 0.0f);
   gemm.run(blocks_A[0], blocks_B[0], blocks_D[0], stream);
   CHECK_CUDA(cudaStreamSynchronize(stream));
-  verify_gemm(blocks_D[0], block_D_ref, M, N);
+  check_correctness(blocks_D[0], block_D_ref, size_D);
 
   // Cleanup
   CHECK_CUDA(cudaEventDestroy(start));
