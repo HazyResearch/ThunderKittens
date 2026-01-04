@@ -1,11 +1,20 @@
+/***************************************************************************************************
+ * cuBLAS BF16 GEMM Benchmark
+ *
+ * D = A * B (no alpha/beta scaling, no C input)
+ * A: RowMajor (M x K), B: ColMajor (N x K), D: RowMajor (M x N)
+ * Accumulator: FP32, Output: BF16
+ **************************************************************************************************/
+
 #include <iostream>
 #include <vector>
-#include <chrono>
+#include <random>
+#include <cmath>
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 #include <cuda_bf16.h>
 
-// Error checking macro
+// Error checking macros
 #define CHECK_CUDA(call) \
     do { \
         cudaError_t err = call; \
@@ -15,108 +24,271 @@
         } \
     } while(0)
 
-// Function to initialize a matrix with random values
-void initMatrix(std::vector<float>& matrix, int rows, int cols) {
-    for (int i = 0; i < rows * cols; ++i) {
-        matrix[i] = static_cast<float>(rand()) / RAND_MAX;
+#define CHECK_CUBLAS(call) \
+    do { \
+        cublasStatus_t status = call; \
+        if (status != CUBLAS_STATUS_SUCCESS) { \
+            std::cerr << "cuBLAS error in " << __FILE__ << " line " << __LINE__ << ": " << status << std::endl; \
+            exit(EXIT_FAILURE); \
+        } \
+    } while(0)
+
+// Fixed iteration counts
+static constexpr int warmup_iters = 500;
+static constexpr int profiling_iters = 100;
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Simple reference GEMM: D = A * B
+// A: RowMajor (M x K), B: ColMajor (N x K), D: RowMajor (M x N)
+// Each thread computes one output element
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+__global__ void reference_gemm_kernel(
+    __nv_bfloat16* D,
+    __nv_bfloat16 const* A,
+    __nv_bfloat16 const* B,
+    int M, int N, int K) {
+
+  int row = blockIdx.y * blockDim.y + threadIdx.y;
+  int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (row < M && col < N) {
+    float acc = 0.0f;
+    for (int k = 0; k < K; ++k) {
+      float a = __bfloat162float(A[row * K + k]);      // A[row, k]
+      float b = __bfloat162float(B[col + k * N]);      // B[col, k]
+      acc += a * b;
     }
+    D[row * N + col] = __float2bfloat16(acc);          // D[row, col]
+  }
 }
 
-// Function to convert float to __nv_bfloat16
-void convertFloatToBF16(const std::vector<float>& src, std::vector<__nv_bfloat16>& dst) {
-    for (size_t i = 0; i < src.size(); ++i) {
-        dst[i] = __float2bfloat16(src[i]);
-    }
+void launch_reference_gemm(__nv_bfloat16* D, __nv_bfloat16 const* A,
+                           __nv_bfloat16 const* B, int M, int N, int K) {
+  dim3 block(16, 16);
+  dim3 grid((N + 15) / 16, (M + 15) / 16);
+  reference_gemm_kernel<<<grid, block>>>(D, A, B, M, N, K);
 }
 
-// Function to perform mixed-precision matrix multiplication using cuBLAS
-void matrixMultiplyMixedPrecision(cublasHandle_t handle, const __nv_bfloat16* A, const __nv_bfloat16* B, float* C, int m, int n, int k) {
-    const float alpha = 1.0f;
-    const float beta = 0.0f;
-    cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k,
-                 &alpha, A, CUDA_R_16BF, m,
-                 B, CUDA_R_16BF, k,
-                 &beta, C, CUDA_R_32F, m,
-                 CUDA_R_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Initialization kernel - uniform distribution [-1, 1]
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+__global__ void init_random_kernel(__nv_bfloat16* data, size_t count, uint64_t seed) {
+  size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < count) {
+    // Splitmix64 hash for uniform random bits
+    uint64_t x = seed + idx;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    x = x ^ (x >> 31);
+    // Upper 24 bits to float in [0,1), then scale to [-1,1)
+    float u = (float)(x >> 40) * (1.0f / 16777216.0f);  // 2^24 = 16777216
+    float val = u * 2.0f - 1.0f;
+    data[idx] = __float2bfloat16(val);
+  }
 }
 
+void init_random(__nv_bfloat16* data, size_t count, uint64_t seed) {
+  dim3 block(256);
+  dim3 grid((count + 255) / 256);
+  init_random_kernel<<<grid, block>>>(data, count, seed);
+}
+
+__global__ void fill_zero_kernel(__nv_bfloat16* data, size_t count) {
+  size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < count) {
+    data[idx] = __float2bfloat16(0.0f);
+  }
+}
+
+void fill_zero(__nv_bfloat16* data, size_t count) {
+  int block_size = 256;
+  int grid_size = (count + block_size - 1) / block_size;
+  fill_zero_kernel<<<grid_size, block_size>>>(data, count);
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Correctness verification
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+void verify_gemm(__nv_bfloat16 const* d_D, __nv_bfloat16 const* d_D_ref, int M, int N) {
+  size_t count = size_t(M) * N;
+  std::vector<__nv_bfloat16> h_D(count);
+  std::vector<__nv_bfloat16> h_D_ref(count);
+
+  cudaMemcpy(h_D.data(), d_D, count * sizeof(__nv_bfloat16), cudaMemcpyDeviceToHost);
+  cudaMemcpy(h_D_ref.data(), d_D_ref, count * sizeof(__nv_bfloat16), cudaMemcpyDeviceToHost);
+
+  double abs_sum = 0.0, abs_max = 0.0;
+  double err_sum = 0.0, err_max = 0.0;
+
+  for (size_t i = 0; i < count; ++i) {
+    float val = std::abs(__bfloat162float(h_D[i]));
+    float ref = std::abs(__bfloat162float(h_D_ref[i]));
+    float err = std::abs(val - ref);
+
+    abs_sum += val;
+    abs_max = std::max(abs_max, (double)val);
+    err_sum += err;
+    err_max = std::max(err_max, (double)err);
+  }
+
+  double abs_mean = abs_sum / count;
+  double err_mean = err_sum / count;
+
+  std::cout << "abs mean: " << abs_mean << ", abs max: " << abs_max
+            << ", err mean: " << err_mean << ", err max: " << err_max << std::endl;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// cuBLAS GEMM: D = A * B
+// A: RowMajor (M x K), B: ColMajor (N x K), D: RowMajor (M x N)
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+void cublas_gemm(
+    cublasHandle_t handle,
+    __nv_bfloat16 const* A,
+    __nv_bfloat16 const* B,
+    __nv_bfloat16* D,
+    int M, int N, int K) {
+
+  const float alpha = 1.0f;
+  const float beta = 0.0f;
+
+  // A: RowMajor MxK, B: ColMajor NxK, D: RowMajor MxN
+  // D = A * B  =>  D^T = B^T * A^T  (for row-major A/D with col-major cuBLAS)
+  CHECK_CUBLAS(cublasGemmEx(
+      handle,
+      CUBLAS_OP_N,    // B (NxK) as-is gives NxK
+      CUBLAS_OP_N,    // A seen as col-major KxM, as-is gives KxM
+      N, M, K,        // output NxM (= row-major MxN)
+      &alpha,
+      B, CUDA_R_16BF, N,   // B: ColMajor NxK, ldb = N
+      A, CUDA_R_16BF, K,   // A: RowMajor MxK = ColMajor KxM, lda = K
+      &beta,
+      D, CUDA_R_16BF, N,   // D: RowMajor MxN = ColMajor NxM, ldd = N
+      CUBLAS_COMPUTE_32F,
+      CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 // Benchmark function
-void benchmark(int m, int n, int k) {
-    cublasHandle_t handle;
-    cublasCreate(&handle);
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
-    // Allocate host memory
-    std::vector<float> h_A_float(m * k);
-    std::vector<float> h_B_float(k * n);
-    std::vector<float> h_C(m * n);
-    std::vector<__nv_bfloat16> h_A_bf16(m * k);
-    std::vector<__nv_bfloat16> h_B_bf16(k * n);
+void benchmark(int M, int N, int K) {
+  cublasHandle_t handle;
+  CHECK_CUBLAS(cublasCreate(&handle));
 
-    // Initialize matrices
-    initMatrix(h_A_float, m, k);
-    initMatrix(h_B_float, k, n);
+  std::cout << "\n----------------------------------------" << std::endl;
+  std::cout << "Problem size: M=" << M << ", N=" << N << ", K=" << K << std::endl;
 
-    // Convert to BF16
-    convertFloatToBF16(h_A_float, h_A_bf16);
-    convertFloatToBF16(h_B_float, h_B_bf16);
+  // L2 cache eviction - multiple buffer groups
+  int l2_cache_size;
+  cudaDeviceGetAttribute(&l2_cache_size, cudaDevAttrL2CacheSize, 0);
+  const size_t arg_size = 2 * (size_t(M) * K + size_t(N) * K + size_t(M) * N);  // bytes for bf16
+  const size_t ideal_arg_size = size_t(l2_cache_size) * 3;
+  const int arg_group_count = (arg_size > ideal_arg_size) ? 1 : int(ideal_arg_size / arg_size) + 1;
 
-    // Allocate device memory
-    __nv_bfloat16 *d_A, *d_B;
-    float *d_C;
-    CHECK_CUDA(cudaMalloc(&d_A, m * k * sizeof(__nv_bfloat16)));
-    CHECK_CUDA(cudaMalloc(&d_B, k * n * sizeof(__nv_bfloat16)));
-    CHECK_CUDA(cudaMalloc(&d_C, m * n * sizeof(float)));
+  // Allocate buffer groups
+  std::vector<__nv_bfloat16*> blocks_A(arg_group_count);
+  std::vector<__nv_bfloat16*> blocks_B(arg_group_count);
+  std::vector<__nv_bfloat16*> blocks_D(arg_group_count);
+  __nv_bfloat16* block_D_ref;
 
-    // Copy data to device
-    CHECK_CUDA(cudaMemcpy(d_A, h_A_bf16.data(), m * k * sizeof(__nv_bfloat16), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_B, h_B_bf16.data(), k * n * sizeof(__nv_bfloat16), cudaMemcpyHostToDevice));
+  size_t size_A = size_t(M) * K;
+  size_t size_B = size_t(K) * N;
+  size_t size_D = size_t(M) * N;
 
-    // Warm-up run
-    for (int i = 0; i < 10; ++i) {
-        matrixMultiplyMixedPrecision(handle, d_A, d_B, d_C, m, n, k);
-    }
-    CHECK_CUDA(cudaDeviceSynchronize());
+  CHECK_CUDA(cudaMalloc(&block_D_ref, size_D * sizeof(__nv_bfloat16)));
 
-    // Benchmark
-    const int NUM_ITERATIONS = 10;
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
+  uint64_t seed = 2024;
+  for (int i = 0; i < arg_group_count; ++i) {
+    CHECK_CUDA(cudaMalloc(&blocks_A[i], size_A * sizeof(__nv_bfloat16)));
+    CHECK_CUDA(cudaMalloc(&blocks_B[i], size_B * sizeof(__nv_bfloat16)));
+    CHECK_CUDA(cudaMalloc(&blocks_D[i], size_D * sizeof(__nv_bfloat16)));
 
-    cudaEventRecord(start);
-    for (int i = 0; i < NUM_ITERATIONS; ++i) {
-        matrixMultiplyMixedPrecision(handle, d_A, d_B, d_C, m, n, k);
-    }
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
+    // Initialize with uniform random [-1, 1]
+    init_random(blocks_A[i], size_A, seed + i * 100);
+    init_random(blocks_B[i], size_B, seed + i * 100 + 1);
+    fill_zero(blocks_D[i], size_D);
+  }
+  fill_zero(block_D_ref, size_D);
+  CHECK_CUDA(cudaDeviceSynchronize());
 
-    float milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
-    float avg_time = milliseconds / NUM_ITERATIONS;
+  // Compute reference GEMM
+  launch_reference_gemm(block_D_ref, blocks_A[0], blocks_B[0], M, N, K);
+  CHECK_CUDA(cudaDeviceSynchronize());
 
-    // Calculate GFLOPS
-    double gflops = (2.0 * m * n * k) / (avg_time * 1e9);
+  // cuBLAS Benchmark
+  cudaStream_t stream;
+  CHECK_CUDA(cudaStreamCreate(&stream));
+  CHECK_CUBLAS(cublasSetStream(handle, stream));
 
-    std::cout << "Matrix size: " << m << "x" << n << "x" << k << std::endl;
-    std::cout << "Average time: " << avg_time << " ms" << std::endl;
-    std::cout << "Performance: " << gflops << " GFLOPS" << std::endl << std::endl;
+  // Warmup
+  for (int i = 0; i < warmup_iters; ++i) {
+    int idx = i % arg_group_count;
+    cublas_gemm(handle, blocks_A[idx], blocks_B[idx], blocks_D[idx], M, N, K);
+  }
+  CHECK_CUDA(cudaStreamSynchronize(stream));
 
-    // Clean up
-    CHECK_CUDA(cudaFree(d_A));
-    CHECK_CUDA(cudaFree(d_B));
-    CHECK_CUDA(cudaFree(d_C));
-    cublasDestroy(handle);
-    cudaEventDestroy(start);
-    cudaEventDestroy(stop);
+  cudaEvent_t start, stop;
+  CHECK_CUDA(cudaEventCreate(&start));
+  CHECK_CUDA(cudaEventCreate(&stop));
+
+  CHECK_CUDA(cudaEventRecord(start, stream));
+  for (int i = 0; i < profiling_iters; ++i) {
+    int idx = i % arg_group_count;
+    cublas_gemm(handle, blocks_A[idx], blocks_B[idx], blocks_D[idx], M, N, K);
+  }
+  CHECK_CUDA(cudaEventRecord(stop, stream));
+  CHECK_CUDA(cudaStreamSynchronize(stream));
+
+  float milliseconds = 0;
+  CHECK_CUDA(cudaEventElapsedTime(&milliseconds, start, stop));
+
+  double runtime_ms = static_cast<double>(milliseconds) / profiling_iters;
+  double runtime_s = runtime_ms / 1000.0;
+  int64_t flops = int64_t(2) * M * N * K;
+  double tflops = (double(flops) / 1e12) / runtime_s;
+
+  std::cout << "Average runtime: " << runtime_ms << " ms" << std::endl;
+  std::cout << "Performance: " << tflops << " TFLOP/s" << std::endl;
+
+  // Verify correctness
+  fill_zero(blocks_D[0], size_D);
+  cublas_gemm(handle, blocks_A[0], blocks_B[0], blocks_D[0], M, N, K);
+  CHECK_CUDA(cudaDeviceSynchronize());
+  verify_gemm(blocks_D[0], block_D_ref, M, N);
+
+  // Cleanup
+  CHECK_CUDA(cudaEventDestroy(start));
+  CHECK_CUDA(cudaEventDestroy(stop));
+  CHECK_CUDA(cudaStreamDestroy(stream));
+
+  for (int i = 0; i < arg_group_count; ++i) {
+    CHECK_CUDA(cudaFree(blocks_A[i]));
+    CHECK_CUDA(cudaFree(blocks_B[i]));
+    CHECK_CUDA(cudaFree(blocks_D[i]));
+  }
+  CHECK_CUDA(cudaFree(block_D_ref));
+
+  CHECK_CUBLAS(cublasDestroy(handle));
 }
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
 int main() {
-    // Benchmark different matrix sizes
-    benchmark(1024, 1024, 1024);
-    benchmark(2048, 2048, 2048);
-    benchmark(4096, 4096, 4096);
-    benchmark(8192, 8192, 8192);
-    benchmark(16384, 16384, 16384);
+  std::cout << "cuBLAS BF16 GEMM Profiler" << std::endl;
+  std::cout << "D = A * B, A: RowMajor (MxK), B: ColMajor (NxK), D: RowMajor (MxN)" << std::endl;
+  std::cout << "Accumulator: FP32, Output: BF16" << std::endl;
+  std::cout << "Warmup: " << warmup_iters << ", Profiling: " << profiling_iters << std::endl;
 
-    return 0;
+  benchmark(1024, 1024, 1024);
+  benchmark(2048, 2048, 2048);
+  benchmark(4096, 4096, 4096);
+  benchmark(8192, 8192, 8192);
+  benchmark(16384, 16384, 16384);
+
+  return 0;
 }
