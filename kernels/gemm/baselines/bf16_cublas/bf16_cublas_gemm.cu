@@ -10,6 +10,8 @@
 #include <vector>
 #include <random>
 #include <cmath>
+#include <thread>
+#include <chrono>
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 #include <cuda_bf16.h>
@@ -177,6 +179,9 @@ void cublas_gemm(
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 void benchmark(int M, int N, int K) {
+  // Cooldown between configurations
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
   cublasHandle_t handle;
   CHECK_CUBLAS(cublasCreate(&handle));
 
