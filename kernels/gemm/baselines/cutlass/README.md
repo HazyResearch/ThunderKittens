@@ -77,8 +77,7 @@ Here, we describe how we benchmarked the [CUTLASS](https://github.com/NVIDIA/cut
         --profiling-iterations=100 \
         --verification-enabled=false \
         --enable-best-kernel-for-fixed-shape=true \
-        --dist="uniform,min:-1,max:1,scale:-1" \
-        --sort-results=true
+        --dist="uniform,min:-1,max:1,scale:-1"
     done
 
     # MXFP8_MXFP8_FP32_void_BF16 GEMM
@@ -94,8 +93,7 @@ Here, we describe how we benchmarked the [CUTLASS](https://github.com/NVIDIA/cut
         --profiling-iterations=100 \
         --verification-enabled=false \
         --enable-best-kernel-for-fixed-shape=true \
-        --dist="uniform,min:-1,max:1,scale:-1" \
-        --sort-results=true
+        --dist="uniform,min:-448,max:448,scale:-1"
     done
 
     # NVFP4_NVFP4_FP32_void_FP32 GEMM
@@ -111,8 +109,7 @@ Here, we describe how we benchmarked the [CUTLASS](https://github.com/NVIDIA/cut
         --profiling-iterations=100 \
         --verification-enabled=false \
         --enable-best-kernel-for-fixed-shape=true \
-        --dist="uniform,min:-1,max:1,scale:-1" \
-        --sort-results=true
+        --dist="uniform,min:-6,max:6,scale:-1"
     done
     ```
 
