@@ -520,6 +520,33 @@ template<> struct convertor<fp8e8m0_4, bf16_2> {
         return __nv_fp8x4_e8m0(f4);
     }
 };
+// fp4e2m1
+template<> struct convertor<fp4e2m1, float> {
+    static __device__ inline fp4e2m1 convert(const float & u) {
+        __nv_fp4_storage_t storage = __nv_cvt_float_to_fp4(u, __NV_E2M1, cudaRoundNearest);
+        return std::bit_cast<fp4e2m1>(storage);
+    }
+};
+template<> struct convertor<float, fp4e2m1> {
+    static __device__ inline float convert(const fp4e2m1 & u) {
+        __nv_fp4_storage_t storage = std::bit_cast<__nv_fp4_storage_t>(u);
+        __half_raw hr = __nv_cvt_fp4_to_halfraw(storage, __NV_E2M1);
+        return __half2float(*reinterpret_cast<__half*>(&hr));
+    }
+};
+template<> struct convertor<fp4e2m1_2, float2> {
+    static __device__ inline fp4e2m1_2 convert(const float2 & u) {
+        __nv_fp4x2_storage_t storage = __nv_cvt_float2_to_fp4x2(u, __NV_E2M1, cudaRoundNearest);
+        return std::bit_cast<fp4e2m1_2>(storage);
+    }
+};
+template<> struct convertor<float2, fp4e2m1_2> {
+    static __device__ inline float2 convert(const fp4e2m1_2 & u) {
+        __nv_fp4x2_storage_t storage = std::bit_cast<__nv_fp4x2_storage_t>(u);
+        __half2_raw hr2 = __nv_cvt_fp4x2_to_halfraw2(storage, __NV_E2M1);
+        return __half22float2(*reinterpret_cast<__half2*>(&hr2));
+    }
+};
 #endif
 #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 // fp8e4m3
