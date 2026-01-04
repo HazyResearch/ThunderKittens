@@ -44,8 +44,9 @@ static constexpr int mxfp8_block_size = 32;  // MXFP8 uses 32-element blocks
 // Simple reference GEMM: D = A * B with MXFP8 block scaling
 // A: RowMajor (M x K), B: ColMajor (N x K), D: RowMajor (M x N)
 // D[m,n] = sum_k A[m,k] * B[n,k]
-// Scales are per 32 elements along K (reduction axis):
-//   A_scale: RowMajor M x (K/32), B_scale: RowMajor N x (K/32)
+// VEC32 scales: every 32 consecutive memory elements share one scale
+//   A_scale: (M*K)/32 scales for A stored as RowMajor MxK
+//   B_scale: (N*K)/32 scales for B stored as RowMajor NxK
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 __device__ __forceinline__ float decode_ue8m0(__nv_fp8_e8m0 scale) {
@@ -54,33 +55,44 @@ __device__ __forceinline__ float decode_ue8m0(__nv_fp8_e8m0 scale) {
   return exp2f((float)(*reinterpret_cast<const uint8_t*>(&scale)) - 127.0f);
 }
 
+__device__ __forceinline__ int cublas_scale_idx(int row, int k_block, int K_blocks) {
+  int M_block = row / 128;
+  int K_block_groups = K_blocks / 4;
+  int K_block_group = k_block / 4;
+  int row_in_32 = row % 32;
+  int tile_in_block = (row / 32) % 4;
+  int kb_in_block = k_block % 4;
+
+  int block_base = (M_block * K_block_groups + K_block_group) * 512;
+  int local_idx = row_in_32 * 16 + tile_in_block * 4 + kb_in_block;
+  return block_base + local_idx;
+}
+
 __global__ void reference_gemm_kernel(
     __nv_bfloat16* D,
     __nv_fp8_e4m3 const* A,  // RowMajor MxK: A[m,k] at m*K + k
-    __nv_fp8_e4m3 const* B,  // ColMajor NxK (N rows of K elements): B[n,k] at n*K + k
-    __nv_fp8_e8m0 const* A_scale, // RowMajor M x K_blocks: A_scale[m, kb] at m*K_blocks + kb
-    __nv_fp8_e8m0 const* B_scale, // RowMajor N x K_blocks: B_scale[n, kb] at n*K_blocks + kb
+    __nv_fp8_e4m3 const* B,  // RowMajor NxK: B[n,k] at n*K + k
+    __nv_fp8_e8m0 const* A_scale, // cuBLAS MXFP8 scale layout
+    __nv_fp8_e8m0 const* B_scale, // cuBLAS MXFP8 scale layout
     int M, int N, int K) {
 
   int row = blockIdx.y * blockDim.y + threadIdx.y;  // m index
   int col = blockIdx.x * blockDim.x + threadIdx.x;  // n index
 
-  int K_blocks = K / mxfp8_block_size;
-
   if (row < M && col < N) {
     float acc = 0.0f;
+    int K_blocks = K / mxfp8_block_size;
+
     for (int k = 0; k < K; ++k) {
       // A is RowMajor MxK: A[m,k] at m*K + k
       int a_idx = row * K + k;
-      // B is ColMajor NxK (N rows of K elements): B[n,k] at n*K + k
+      // B is RowMajor NxK: B[n,k] at n*K + k
       int b_idx = col * K + k;
 
-      // Scales blocked along K: every 32 elements along K share a scale
-      int kb = k / mxfp8_block_size;
-      // A_scale is RowMajor M x K_blocks: A_scale[m, kb] at m*K_blocks + kb
-      int a_scale_idx = row * K_blocks + kb;
-      // B_scale is RowMajor N x K_blocks: B_scale[n, kb] at n*K_blocks + kb
-      int b_scale_idx = col * K_blocks + kb;
+      // cuBLAS MXFP8 scale layout
+      int k_block = k / mxfp8_block_size;
+      int a_scale_idx = cublas_scale_idx(row, k_block, K_blocks);
+      int b_scale_idx = cublas_scale_idx(col, k_block, K_blocks);
 
       float a_s = decode_ue8m0(A_scale[a_scale_idx]);
       float b_s = decode_ue8m0(B_scale[b_scale_idx]);
@@ -121,16 +133,18 @@ __global__ void init_random_fp8_kernel(__nv_fp8_e4m3* data, size_t count, uint64
   }
 }
 
+// Fully random scales - each scale gets a unique random value
 __global__ void init_random_scale_kernel(__nv_fp8_e8m0* data, size_t count, uint64_t seed) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx < count) {
+    // Generate unique random value per scale
     uint64_t x = seed + idx;
     x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
     x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
     x = x ^ (x >> 31);
-    // UE8M0 scale: use range [120, 134] which gives scales ~2^-7 to 2^7
-    uint8_t scale_val = 120 + (x % 15);
-    reinterpret_cast<uint8_t*>(data)[idx] = scale_val;
+    // Range [125, 129] = [2^-2, 2^2]
+    uint8_t val = 125 + (x % 5);
+    reinterpret_cast<uint8_t*>(data)[idx] = val;
   }
 }
 
@@ -263,7 +277,7 @@ struct CublasLtMxfp8Gemm {
            __nv_bfloat16* D, cudaStream_t stream = nullptr) {
 
     // Set scale pointers for this run
-    // cuBLAS "A" = our B, cuBLAS "B" = our A
+    // cuBLAS "A" = our B (passed first), cuBLAS "B" = our A (passed second)
     CHECK_CUBLAS(cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &B_scale, sizeof(B_scale)));
     CHECK_CUBLAS(cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &A_scale, sizeof(A_scale)));
 
@@ -352,13 +366,14 @@ void benchmark(int M, int N, int K) {
 
     init_random_fp8(blocks_A[i], size_A, seed + i * 100);
     init_random_fp8(blocks_B[i], size_B, seed + i * 100 + 1);
-    // Use uniform scales = 127 (2^0 = 1.0) for testing
-    init_uniform_scale(blocks_A_scale[i], size_A_scale, 127);
-    init_uniform_scale(blocks_B_scale[i], size_B_scale, 127);
+    init_random_scale(blocks_A_scale[i], size_A_scale, seed + i * 100 + 2);
+    init_random_scale(blocks_B_scale[i], size_B_scale, seed + i * 100 + 3);
     fill_zero(blocks_D[i], size_D);
+    CHECK_CUDA(cudaDeviceSynchronize());  // ensure scales are initialized before use
   }
   fill_zero(block_D_ref, size_D);
   CHECK_CUDA(cudaDeviceSynchronize());
+
 
   // Compute reference GEMM
   launch_reference_gemm(block_D_ref, blocks_A[0], blocks_B[0],

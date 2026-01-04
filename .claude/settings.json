@@ -49,7 +49,11 @@
       "Bash(uptime)",
       "Bash(free:*)",
       "Bash(lscpu)",
-      "Bash(lsb_release:*)"
+      "Bash(lsb_release:*)",
+      "Bash(make:*)",
+      "Bash(make run:*)",
+      "Bash(make test:*)",
+      "Bash(make clean:*)"
     ],
     "deny": [
       "Bash(git add:*)",
