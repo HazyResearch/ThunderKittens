@@ -84,10 +84,10 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
 
     static_assert(sizeof(G::a_tile) * C::LOAD_PIPE_DEPTH * C::NUM_CONSUMERS +
                   sizeof(G::b_tile) * C::LOAD_PIPE_DEPTH +
-                  sizeof(G::d_tile) * C::NUM_D_TILES <= C::DYNAMIC_SHARED_MEMORY);
+                  sizeof(G::d_tile) * C::NUM_D_TILES * C::NUM_CONSUMERS <= C::DYNAMIC_SHARED_MEMORY);
     typename G::a_tile (&a_smem)[C::LOAD_PIPE_DEPTH][C::NUM_CONSUMERS] = al.allocate<G::a_tile, C::LOAD_PIPE_DEPTH, C::NUM_CONSUMERS>();
     typename G::b_tile (&b_smem)[C::LOAD_PIPE_DEPTH]                   = al.allocate<G::b_tile, C::LOAD_PIPE_DEPTH>();
-    typename G::d_tile (&d_smem)[C::NUM_D_TILES]                       = al.allocate<G::d_tile, C::NUM_D_TILES>();
+    typename G::d_tile (&d_smem)[C::NUM_CONSUMERS][C::NUM_D_TILES]     = al.allocate<G::d_tile, C::NUM_CONSUMERS, C::NUM_D_TILES>();
 
     tensor_allocator<1, 2> tm_alloc{};
     using d_tt_t = tt<float, C::Mb/2, C::Nb>;
@@ -214,9 +214,9 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
                 }
                 warpgroup::tma::store_async_read_wait<1>();
                 warpgroup::sync(warpgroup::groupid()+1);
-                warpgroup::store(d_smem[i%C::NUM_D_TILES], d_reg[i]);
+                warpgroup::store(d_smem[warpgroup::groupid()][i%C::NUM_D_TILES], d_reg[i]);
                 warpgroup::sync(warpgroup::groupid()+1);
-                warpgroup::tma::store_async(g.d, d_smem[i%C::NUM_D_TILES], {(2*tile_coord.x+cta_rank)*C::NUM_CONSUMERS+warpgroup::groupid(), C::EPI_PIPE_DEPTH*tile_coord.y+i});
+                warpgroup::tma::store_async(g.d, d_smem[warpgroup::groupid()][i%C::NUM_D_TILES], {(2*tile_coord.x+cta_rank)*C::NUM_CONSUMERS+warpgroup::groupid(), C::EPI_PIPE_DEPTH*tile_coord.y+i});
             }
             if (!schedule.success) break;
         }
@@ -336,14 +336,19 @@ __host__ int main() {
     // Template parameters: _Mb, _Nb, _Kb, _SUPERGROUP_SIZE, _OVERLAP_MMA_EPI, _LOAD_PIPE_DEPTH, _EPI_PIPE_DEPTH
     N = 1024;
     run_benchmark<config<256, 128, 128, 4, true, 4, 2>>(N, N, N, ncu);
+    run_benchmark<config<256, 256,  64, 4, false, 4, 8>>(N, N, N, ncu);
     N = 2048;
     run_benchmark<config<256, 256,  64, 4, true, 4, 8>>(N, N, N, ncu);
+    run_benchmark<config<256, 256,  64, 4, false, 4, 8>>(N, N, N, ncu);
     N = 4096;
     run_benchmark<config<256, 256,  64, 4, true, 5, 2>>(N, N, N, ncu);
+    run_benchmark<config<256, 256,  64, 4, false, 4, 8>>(N, N, N, ncu);
     N = 8192;
     run_benchmark<config<256, 256,  64, 8, true, 6, 8>>(N, N, N, ncu);
+    run_benchmark<config<256, 256,  64, 8, false, 4, 8>>(N, N, N, ncu);
     N = 16384;
     run_benchmark<config<256, 256,  64, 8, true, 4, 8>>(N, N, N, ncu);
+    run_benchmark<config<256, 256,  64, 8, false, 4, 8>>(N, N, N, ncu);
 
     return 0;
 }
