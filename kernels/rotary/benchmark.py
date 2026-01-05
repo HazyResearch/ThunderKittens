@@ -13,8 +13,8 @@ except:
     print("Could not import thunderkittens")
 
 try:
-    from rotary.baselines.rotary import RotaryEmbedding
-    from rotary.baselines.rotary import apply_rotary_emb
+    from baselines.rotary import RotaryEmbedding
+    from baselines.rotary import apply_rotary_emb
     print(f"Successfully imported RotaryEmbedding")
 except:
     RotaryEmbedding = None
