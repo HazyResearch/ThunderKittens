@@ -184,7 +184,6 @@ void benchmark(int M, int N, int K) {
   CHECK_CUDA(cudaMalloc(&block_D_ref, size_D * sizeof(__nv_bfloat16)));
 
   uint64_t seed = 2024;
-  float global_scale = 1.0f;
 
   for (int i = 0; i < arg_group_count; ++i) {
     CHECK_CUDA(cudaMalloc(&blocks_A[i], size_A_packed * sizeof(__nv_fp4x2_e2m1)));
@@ -197,10 +196,10 @@ void benchmark(int M, int N, int K) {
 
     fill<uint8_t, FillMode::RANDOM>(reinterpret_cast<uint8_t*>(blocks_A[i]), size_A_packed, seed + i * 100, 0.0f, 255.0f);
     fill<uint8_t, FillMode::RANDOM>(reinterpret_cast<uint8_t*>(blocks_B[i]), size_B_packed, seed + i * 100 + 1, 0.0f, 255.0f);
-    fill<__nv_fp8_e4m3, FillMode::RANDOM>(blocks_A_scale[i], size_A_scale, seed + i * 100 + 2, 0.5f, 2.0f);
-    fill<__nv_fp8_e4m3, FillMode::RANDOM>(blocks_B_scale[i], size_B_scale, seed + i * 100 + 3, 0.5f, 2.0f);
-    cudaMemcpy(blocks_A_scale_global[i], &global_scale, sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(blocks_B_scale_global[i], &global_scale, sizeof(float), cudaMemcpyHostToDevice);
+    fill<__nv_fp8_e4m3, FillMode::RANDOM>(blocks_A_scale[i], size_A_scale, seed + i * 100 + 2, 0.1f, 10.0f);
+    fill<__nv_fp8_e4m3, FillMode::RANDOM>(blocks_B_scale[i], size_B_scale, seed + i * 100 + 3, 0.1f, 10.0f);
+    fill<float, FillMode::RANDOM>(blocks_A_scale_global[i], 1, seed + i * 100 + 4, 0.1f, 10.0f);
+    fill<float, FillMode::RANDOM>(blocks_B_scale_global[i], 1, seed + i * 100 + 5, 0.1f, 10.0f);
     fill<__nv_bfloat16, FillMode::CONSTANT>(blocks_D[i], size_D, 0.0f);
   }
   fill<__nv_bfloat16, FillMode::CONSTANT>(block_D_ref, size_D, 0.0f);
