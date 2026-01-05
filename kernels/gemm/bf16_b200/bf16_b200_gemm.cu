@@ -360,9 +360,9 @@ __host__ int main() {
 
     // Template parameters: _Mb, _Nb, _Kb, _SUPERGROUP_SIZE, _OVERLAP_MMA_EPI, _LOAD_PIPE_DEPTH, _EPI_PIPE_DEPTH
     N = 1024;
-    run_benchmark<config<256, 128, 128, 4, true, 4, 2>>(N, N, N, ncu);
+    run_benchmark<config<128, 128, 128, 4, true, 6, 2>>(N, N, N, ncu);
     N = 2048;
-    run_benchmark<config<256, 256,  64, 4, true, 4, 8>>(N, N, N, ncu);
+    run_benchmark<config<256, 256, 64, 4, true, 5, 8>>(N, N, N, ncu);
     N = 4096;
     run_benchmark<config<256, 256,  64, 4, false, 4, 8>>(N, N, N, ncu);
     N = 8192;
