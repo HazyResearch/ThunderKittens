@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cuda_runtime.h>
 #include <cuda_fp8.h>
+#include <cuda_fp4.h>
 
 #include "kittens.cuh"
 
@@ -152,6 +153,72 @@ static inline void reference_blockscaled_gemm(
   dim3 grid((N + 15) / 16, (M + 15) / 16);
   reference_blockscaled_gemm_kernel<InputT, ScaleT, OutputT, BLOCK_SIZE>
       <<<grid, block>>>(D, A, B, A_scale, B_scale, M, N, K);
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// NVFP4 Reference GEMM: D = A * B with packed FP4 data, block scales, and per-tensor scales
+// A: RowMajor (M x K) packed as Mx(K/2), B: ColMajor (N x K) packed as Nx(K/2), D: RowMajor (M x N)
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+template <typename OutputT>
+__global__ void reference_nvfp4_gemm_kernel(
+    OutputT* D,
+    __nv_fp4x2_e2m1 const* A_packed,
+    __nv_fp4x2_e2m1 const* B_packed,
+    __nv_fp8_e4m3 const* A_scale,
+    __nv_fp8_e4m3 const* B_scale,
+    float const* A_scale_global,
+    float const* B_scale_global,
+    int M, int N, int K) {
+
+  constexpr int BLOCK_SIZE = 16;
+  int row = blockIdx.y * blockDim.y + threadIdx.y;
+  int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (row < M && col < N) {
+    float acc = 0.0f;
+    int K_blocks = K / BLOCK_SIZE;
+
+    for (int k = 0; k < K; k += 2) {
+      int a_idx = row * (K / 2) + k / 2;
+      int b_idx = col * (K / 2) + k / 2;
+
+      float2 a_vals = static_cast<float2>(A_packed[a_idx]);
+      float2 b_vals = static_cast<float2>(B_packed[b_idx]);
+
+      int k_block0 = k / BLOCK_SIZE;
+      int k_block1 = (k + 1) / BLOCK_SIZE;
+
+      int a_scale_idx0 = scale_swizzle_idx(row, k_block0, K_blocks);
+      int a_scale_idx1 = scale_swizzle_idx(row, k_block1, K_blocks);
+      int b_scale_idx0 = scale_swizzle_idx(col, k_block0, K_blocks);
+      int b_scale_idx1 = scale_swizzle_idx(col, k_block1, K_blocks);
+
+      float a_s0 = kittens::base_types::convertor<float, __nv_fp8_e4m3>::convert(A_scale[a_scale_idx0]);
+      float a_s1 = kittens::base_types::convertor<float, __nv_fp8_e4m3>::convert(A_scale[a_scale_idx1]);
+      float b_s0 = kittens::base_types::convertor<float, __nv_fp8_e4m3>::convert(B_scale[b_scale_idx0]);
+      float b_s1 = kittens::base_types::convertor<float, __nv_fp8_e4m3>::convert(B_scale[b_scale_idx1]);
+
+      acc += (a_vals.x * a_s0) * (b_vals.x * b_s0);
+      acc += (a_vals.y * a_s1) * (b_vals.y * b_s1);
+    }
+
+    float global_scale = (*A_scale_global) * (*B_scale_global);
+    D[row * N + col] = kittens::base_types::convertor<OutputT, float>::convert(acc * global_scale);
+  }
+}
+
+template <typename OutputT>
+static inline void reference_nvfp4_gemm(
+    OutputT* D,
+    __nv_fp4x2_e2m1 const* A, __nv_fp4x2_e2m1 const* B,
+    __nv_fp8_e4m3 const* A_scale, __nv_fp8_e4m3 const* B_scale,
+    float const* A_scale_global, float const* B_scale_global,
+    int M, int N, int K) {
+  dim3 block(16, 16);
+  dim3 grid((N + 15) / 16, (M + 15) / 16);
+  reference_nvfp4_gemm_kernel<OutputT>
+      <<<grid, block>>>(D, A, B, A_scale, B_scale, A_scale_global, B_scale_global, M, N, K);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
