@@ -203,20 +203,38 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
             warpgroup::tma::cluster::arrive(schedule_finished[task_iter%C::CLC_PIPE_DEPTH], 0);
             if (schedule.success) next_tile_coord = get_tile_idx(schedule.x);
             wait(outputs_arrived[warpgroup::groupid()], task_iter%2);
-            rt_bf<C::Mb/8, C::Nb/C::EPI_PIPE_DEPTH> d_reg[C::EPI_PIPE_DEPTH];
-            #pragma unroll
-            for(int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
-                warpgroup::load_async(d_reg[i], d_tt[task_iter%C::MMA_PIPE_DEPTH].template subtile<tt<float, C::Mb/2, C::Nb/C::EPI_PIPE_DEPTH>>(0, C::Nb/C::EPI_PIPE_DEPTH*i));
-                tensor_load_wait();
-                if (i == C::EPI_PIPE_DEPTH - 1) {
+            if constexpr (C::OVERLAP_MMA_EPI) {
+                rt_bf<C::Mb/8, C::Nb/C::EPI_PIPE_DEPTH> d_reg;
+                #pragma unroll
+                for(int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
+                    warpgroup::load_async(d_reg, d_tt[task_iter%C::MMA_PIPE_DEPTH].template subtile<tt<float, C::Mb/2, C::Nb/C::EPI_PIPE_DEPTH>>(0, C::Nb/C::EPI_PIPE_DEPTH*i));
+                    tensor_load_wait();
+                    if (i == C::EPI_PIPE_DEPTH - 1) {
+                        warpgroup::sync(warpgroup::groupid()+1);
+                        warpgroup::tma::cluster::arrive(outputs_finished[task_iter%C::MMA_PIPE_DEPTH], 0);
+                    }
+                    warpgroup::tma::store_async_read_wait<C::NUM_D_TILES-1>();
                     warpgroup::sync(warpgroup::groupid()+1);
-                    warpgroup::tma::cluster::arrive(outputs_finished[task_iter%C::MMA_PIPE_DEPTH], 0);
+                    warpgroup::store(d_smem[warpgroup::groupid()][i%C::NUM_D_TILES], d_reg);
+                    warpgroup::sync(warpgroup::groupid()+1);
+                    warpgroup::tma::store_async(g.d, d_smem[warpgroup::groupid()][i%C::NUM_D_TILES], {(2*tile_coord.x+cta_rank)*C::NUM_CONSUMERS+warpgroup::groupid(), C::EPI_PIPE_DEPTH*tile_coord.y+i});
                 }
-                warpgroup::tma::store_async_read_wait<1>();
+            } else {
+                rt_bf<C::Mb/8, C::Nb/C::EPI_PIPE_DEPTH> d_reg[C::EPI_PIPE_DEPTH];
+                #pragma unroll
+                for(int i = 0; i < C::EPI_PIPE_DEPTH; i++)
+                    warpgroup::load_async(d_reg[i], d_tt[task_iter%C::MMA_PIPE_DEPTH].template subtile<tt<float, C::Mb/2, C::Nb/C::EPI_PIPE_DEPTH>>(0, C::Nb/C::EPI_PIPE_DEPTH*i));
+                tensor_load_wait();
                 warpgroup::sync(warpgroup::groupid()+1);
-                warpgroup::store(d_smem[warpgroup::groupid()][i%C::NUM_D_TILES], d_reg[i]);
-                warpgroup::sync(warpgroup::groupid()+1);
-                warpgroup::tma::store_async(g.d, d_smem[warpgroup::groupid()][i%C::NUM_D_TILES], {(2*tile_coord.x+cta_rank)*C::NUM_CONSUMERS+warpgroup::groupid(), C::EPI_PIPE_DEPTH*tile_coord.y+i});
+                warpgroup::tma::cluster::arrive(outputs_finished[task_iter%C::MMA_PIPE_DEPTH], 0);
+                #pragma unroll
+                for(int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
+                    warpgroup::tma::store_async_read_wait<C::NUM_D_TILES-1>();
+                    warpgroup::sync(warpgroup::groupid()+1);
+                    warpgroup::store(d_smem[warpgroup::groupid()][i%C::NUM_D_TILES], d_reg[i]);
+                    warpgroup::sync(warpgroup::groupid()+1);
+                    warpgroup::tma::store_async(g.d, d_smem[warpgroup::groupid()][i%C::NUM_D_TILES], {(2*tile_coord.x+cta_rank)*C::NUM_CONSUMERS+warpgroup::groupid(), C::EPI_PIPE_DEPTH*tile_coord.y+i});
+                }
             }
             if (!schedule.success) break;
         }
@@ -336,18 +354,13 @@ __host__ int main() {
     // Template parameters: _Mb, _Nb, _Kb, _SUPERGROUP_SIZE, _OVERLAP_MMA_EPI, _LOAD_PIPE_DEPTH, _EPI_PIPE_DEPTH
     N = 1024;
     run_benchmark<config<256, 128, 128, 4, true, 4, 2>>(N, N, N, ncu);
-    run_benchmark<config<256, 256,  64, 4, false, 4, 8>>(N, N, N, ncu);
     N = 2048;
     run_benchmark<config<256, 256,  64, 4, true, 4, 8>>(N, N, N, ncu);
-    run_benchmark<config<256, 256,  64, 4, false, 4, 8>>(N, N, N, ncu);
     N = 4096;
-    run_benchmark<config<256, 256,  64, 4, true, 5, 2>>(N, N, N, ncu);
     run_benchmark<config<256, 256,  64, 4, false, 4, 8>>(N, N, N, ncu);
     N = 8192;
-    run_benchmark<config<256, 256,  64, 8, true, 6, 8>>(N, N, N, ncu);
     run_benchmark<config<256, 256,  64, 8, false, 4, 8>>(N, N, N, ncu);
     N = 16384;
-    run_benchmark<config<256, 256,  64, 8, true, 4, 8>>(N, N, N, ncu);
     run_benchmark<config<256, 256,  64, 8, false, 4, 8>>(N, N, N, ncu);
 
     return 0;
