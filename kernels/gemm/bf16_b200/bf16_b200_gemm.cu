@@ -5,6 +5,13 @@ using namespace kittens;
 
 template <int _Mb, int _Nb, int _Kb, int _SUPERGROUP_SIZE, bool _OVERLAP_MMA_EPI, int _LOAD_PIPE_DEPTH, int _EPI_PIPE_DEPTH>
 struct config {
+    static_assert(_Mb == 128 || _Mb == 256, "Mb must be 128 or 256");
+    static_assert(_Nb >= 16 && _Nb <= 256 && _Nb % 16 == 0, "Nb must be 16, 32, ..., 256");
+    static_assert(_Kb >= 16 && _Kb % 16 == 0, "Kb must be a multiple of 16");
+    static_assert(_SUPERGROUP_SIZE >= 1 && _SUPERGROUP_SIZE <= 16, "SUPERGROUP_SIZE must be 1-16");
+    static_assert(_LOAD_PIPE_DEPTH >= 1 && _LOAD_PIPE_DEPTH <= 16, "LOAD_PIPE_DEPTH must be 1-16");
+    static_assert(_EPI_PIPE_DEPTH >= 1 && _EPI_PIPE_DEPTH <= 16, "EPI_PIPE_DEPTH must be 1-16");
+
     static constexpr int Mb = _Mb; // per MMA
     static constexpr int Nb = _Nb; // per MMA
     static constexpr int Kb = _Kb;
