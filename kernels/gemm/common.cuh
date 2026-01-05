@@ -66,10 +66,12 @@ static inline void fill(T* data, size_t count, uint64_t seed, float min_val, flo
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Reference GEMM: D = A * B
-// A: RowMajor (M x K), B: ColMajor (N x K), D: RowMajor (M x N)
+// A: RowMajor (M x K)
+// B: RowMajor (K x N) when transpose_b=false, ColMajor (N x K) when transpose_b=true
+// D: RowMajor (M x N)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-template <typename InputT, typename OutputT>
+template <typename InputT, typename OutputT, bool transpose_b>
 __global__ void reference_gemm_kernel(OutputT* D, InputT const* A, InputT const* B, int M, int N, int K) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -78,18 +80,22 @@ __global__ void reference_gemm_kernel(OutputT* D, InputT const* A, InputT const*
         float acc = 0.0f;
         for (int k = 0; k < K; ++k) {
             float a = kittens::base_types::convertor<float, InputT>::convert(A[row * K + k]);
-            float b = kittens::base_types::convertor<float, InputT>::convert(B[col * K + k]);
+            float b;
+            if constexpr (transpose_b)
+                b = kittens::base_types::convertor<float, InputT>::convert(B[col * K + k]);
+            else
+                b = kittens::base_types::convertor<float, InputT>::convert(B[k * N + col]);
             acc += a * b;
         }
         D[row * N + col] = kittens::base_types::convertor<OutputT, float>::convert(acc);
     }
 }
 
-template <typename InputT, typename OutputT>
+template <typename InputT, typename OutputT, bool transpose_b = true>
 static inline void reference_gemm(OutputT* D, InputT const* A, InputT const* B, int M, int N, int K) {
     dim3 block(16, 16);
     dim3 grid((N + 15) / 16, (M + 15) / 16);
-    reference_gemm_kernel<InputT, OutputT><<<grid, block>>>(D, A, B, M, N, K);
+    reference_gemm_kernel<InputT, OutputT, transpose_b><<<grid, block>>>(D, A, B, M, N, K);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
