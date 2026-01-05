@@ -13,8 +13,8 @@ struct config {
     static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - 1024;
 
     static constexpr int SUPERGROUP_SIZE = _SUPERGROUP_SIZE;
-    static constexpr int Mb = _Mb;
-    static constexpr int Nb = _Nb;
+    static constexpr int Mb = _Mb; // Cluster-wide
+    static constexpr int Nb = _Nb; // Cluster-wide
     static constexpr int Kb = _Kb;
 
     static constexpr int LOAD_PIPE_DEPTH = _LOAD_PIPE_DEPTH;
@@ -22,14 +22,18 @@ struct config {
     static constexpr int EPI_PIPE_DEPTH = _EPI_PIPE_DEPTH;
     static constexpr int CLC_PIPE_DEPTH = 1;
 
+    static constexpr bool OVERLAP_MMA_EPI = true;
+
+    static constexpr int MMA_Mb = Mb / CLUSTER_SIZE / (OVERLAP_MMA_EPI ? 1 : 2);
+    static constexpr int MMA_Nb = Nb;
     static constexpr int NUM_D_TILES = EPI_PIPE_DEPTH > 1 ? 2 : 1;
 };
 
 template <typename C>
 struct globals {
-    using a_tile = st_bf<C::Mb/2, C::Kb>;
-    using b_tile = st_bf<C::Nb/2, C::Kb>;
-    using d_tile = st_bf<C::Mb/2, C::Nb/C::EPI_PIPE_DEPTH>;
+    using a_tile = st_bf<C::MMA_Mb, C::Kb>;
+    using b_tile = st_bf<C::MMA_Nb/2, C::Kb>;
+    using d_tile = st_bf<C::MMA_Mb, C::MMA_Nb/C::EPI_PIPE_DEPTH>;
 
     using a_gl = gl<bf16, 1, 1, -1, -1, a_tile>;
     using b_gl = gl<bf16, 1, 1, -1, -1, b_tile>;
@@ -39,7 +43,7 @@ struct globals {
     b_gl b;
     d_gl d;
 
-    __host__ __inline__ dim3 grid() { return dim3(d.rows()/(C::Mb/2)*d.cols()/C::Nb); }
+    __host__ __inline__ dim3 grid() { return dim3(d.rows()/C::MMA_Mb * d.cols()/C::MMA_Nb); }
     __host__ __inline__ dim3 block() { return dim3(C::NUM_THREADS); }
     __host__ __inline__ int dynamic_shared_memory() { return C::DYNAMIC_SHARED_MEMORY; }
 };
@@ -88,7 +92,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
     typename G::d_tile (&d_smem)[C::NUM_D_TILES]     = al.allocate<G::d_tile, C::NUM_D_TILES>();
 
     tensor_allocator<1, 2> tm_alloc{};
-    using d_tt_t = tt<float, C::Mb/2, C::Nb>;
+    using d_tt_t = tt<float, C::MMA_Mb, C::MMA_Nb>;
 
     __shared__ clc::handle clc_handle[C::CLC_PIPE_DEPTH];
     __shared__ semaphore schedule_arrived[C::CLC_PIPE_DEPTH], schedule_finished[C::CLC_PIPE_DEPTH];
@@ -149,10 +153,8 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
             d_tt_t d_tt[C::MMA_PIPE_DEPTH];
             #pragma unroll
             for (int i = 0; i < C::MMA_PIPE_DEPTH; i++) {
-                if constexpr(C::Mb/2 == 128)
-                    d_tt[i] = tm_alloc.allocate<d_tt_t>(i*C::Nb);
-                else
-                    d_tt[i] = tm_alloc.allocate<d_tt_t>(0, i*C::Nb);
+                if constexpr(C::MMA_Mb == 128) d_tt[i] = tm_alloc.allocate<d_tt_t>(i*C::MMA_Nb);
+                else                           d_tt[i] = tm_alloc.allocate<d_tt_t>(0, i*C::MMA_Nb);
             }
             int input_ring = 0;
             for (int task_iter = 0; true; task_iter++) {
@@ -178,8 +180,8 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
         d_tt_t d_tt[C::MMA_PIPE_DEPTH];
         #pragma unroll
         for (int i = 0; i < C::MMA_PIPE_DEPTH; i++) {
-            if constexpr(C::Mb/2 == 128) d_tt[i] = tm_alloc.allocate<d_tt_t>(   i*C::Nb);
-            else                         d_tt[i] = tm_alloc.allocate<d_tt_t>(0, i*C::Nb);
+            if constexpr(C::MMA_Mb == 128) d_tt[i] = tm_alloc.allocate<d_tt_t>(   i*C::MMA_Nb);
+            else                           d_tt[i] = tm_alloc.allocate<d_tt_t>(0, i*C::MMA_Nb);
         }
         int2 tile_coord, next_tile_coord = get_tile_idx(blockIdx.x);
         for(int task_iter = 0; true; task_iter++) {
@@ -190,10 +192,10 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
             warpgroup::tma::cluster::arrive(schedule_finished[task_iter%C::CLC_PIPE_DEPTH], 0);
             if (schedule.success) next_tile_coord = get_tile_idx(schedule.x);
             wait(outputs_arrived, task_iter%2);
-            rt_bf<C::Mb/8, C::Nb/C::EPI_PIPE_DEPTH> d_reg[C::EPI_PIPE_DEPTH];
+            rt_bf<C::MMA_Mb/4, C::MMA_Nb/C::EPI_PIPE_DEPTH> d_reg[C::EPI_PIPE_DEPTH];
             #pragma unroll
             for(int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
-                warpgroup::load_async(d_reg[i], d_tt[task_iter%C::MMA_PIPE_DEPTH].template subtile<tt<float, C::Mb/2, C::Nb/C::EPI_PIPE_DEPTH>>(0, C::Nb/C::EPI_PIPE_DEPTH*i));
+                warpgroup::load_async(d_reg[i], d_tt[task_iter%C::MMA_PIPE_DEPTH].template subtile<tt<float, C::MMA_Mb, C::MMA_Nb/C::EPI_PIPE_DEPTH>>(0, C::MMA_Nb/C::EPI_PIPE_DEPTH*i));
                 tensor_load_wait();
                 warpgroup::tma::store_async_read_wait<1>();
                 warpgroup::sync(1);
@@ -213,7 +215,7 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
     std::cout << "Template: SUPERGROUP_SIZE=" << C::SUPERGROUP_SIZE << " Mb=" << C::Mb << " Nb=" << C::Nb << " Kb=" << C::Kb <<
                  " LOAD_PIPE_DEPTH=" << C::LOAD_PIPE_DEPTH << " MMA_PIPE_DEPTH=" << C::MMA_PIPE_DEPTH << " EPI_PIPE_DEPTH=" << C::EPI_PIPE_DEPTH << "\n";
-    std::cout << "Total number of tasks: " << (M / C::Mb * N / C::Nb) << "\n";
+    std::cout << "Total number of tasks: " << (M / C::MMA_Mb * N / C::MMA_Nb) << "\n";
     std::cout << "Number of iterations per task: " << (K / C::Kb) << "\n";
 
     // Cooldown between configurations
