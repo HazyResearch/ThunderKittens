@@ -3,39 +3,35 @@
 
 using namespace kittens;
 
-template <int _SUPERGROUP_SIZE, int _Mb, int _Nb, int _Kb, int _LOAD_PIPE_DEPTH, int _MMA_PIPE_DEPTH, int _EPI_PIPE_DEPTH>
+template <int _Mb, int _Nb, int _Kb, int _SUPERGROUP_SIZE, bool _OVERLAP_MMA_EPI, int _LOAD_PIPE_DEPTH, int _EPI_PIPE_DEPTH>
 struct config {
-    static constexpr int CLUSTER_SIZE = 2;
-
-    static constexpr int SUPERGROUP_SIZE = _SUPERGROUP_SIZE;
-    static constexpr int Mb = _Mb; // Cluster-wide
-    static constexpr int Nb = _Nb; // Cluster-wide
+    static constexpr int Mb = _Mb; // per MMA
+    static constexpr int Nb = _Nb; // per MMA
     static constexpr int Kb = _Kb;
+    static constexpr int SUPERGROUP_SIZE = _SUPERGROUP_SIZE;
+
+    static constexpr bool OVERLAP_MMA_EPI = _OVERLAP_MMA_EPI;
 
     static constexpr int LOAD_PIPE_DEPTH = _LOAD_PIPE_DEPTH;
-    static constexpr int MMA_PIPE_DEPTH = _MMA_PIPE_DEPTH;
+    static constexpr int MMA_PIPE_DEPTH = OVERLAP_MMA_EPI ? 2 : 1;
     static constexpr int EPI_PIPE_DEPTH = _EPI_PIPE_DEPTH;
     static constexpr int CLC_PIPE_DEPTH = 1;
 
-    static constexpr bool OVERLAP_MMA_EPI = true;
-
+    static constexpr int CLUSTER_SIZE = 2;
     static constexpr int NUM_CONSUMERS = OVERLAP_MMA_EPI ? 1 : 2;
     static constexpr int NUM_PRODUCERS = 1;
     static constexpr int NUM_WARPS = (NUM_CONSUMERS + NUM_PRODUCERS) * 4;
     static constexpr int NUM_THREADS = NUM_WARPS * WARP_THREADS;
-
-    static constexpr int MMA_Mb = Mb / CLUSTER_SIZE / NUM_CONSUMERS;
-    static constexpr int MMA_Nb = Nb;
-    static constexpr int NUM_D_TILES = EPI_PIPE_DEPTH > 1 ? 2 : 1;
-
     static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - 1024;
+
+    static constexpr int NUM_D_TILES = EPI_PIPE_DEPTH > 1 ? 2 : 1;
 };
 
 template <typename C>
 struct globals {
-    using a_tile = st_bf<C::MMA_Mb, C::Kb>;
-    using b_tile = st_bf<C::MMA_Nb/2, C::Kb>;
-    using d_tile = st_bf<C::MMA_Mb, C::MMA_Nb/C::EPI_PIPE_DEPTH>;
+    using a_tile = st_bf<C::Mb/2, C::Kb>;
+    using b_tile = st_bf<C::Nb/2, C::Kb>;
+    using d_tile = st_bf<C::Mb/2, C::Nb/C::EPI_PIPE_DEPTH>;
 
     using a_gl = gl<bf16, 1, 1, -1, -1, a_tile>;
     using b_gl = gl<bf16, 1, 1, -1, -1, b_tile>;
@@ -45,7 +41,7 @@ struct globals {
     b_gl b;
     d_gl d;
 
-    __host__ __inline__ dim3 grid() { return dim3(d.rows()/C::MMA_Mb * d.cols()/C::MMA_Nb); }
+    __host__ __inline__ dim3 grid() { return dim3(d.rows()/(C::NUM_CONSUMERS*C::Mb/2) * d.cols()/C::Nb); }
     __host__ __inline__ dim3 block() { return dim3(C::NUM_THREADS); }
     __host__ __inline__ int dynamic_shared_memory() { return C::DYNAMIC_SHARED_MEMORY; }
 };
@@ -66,7 +62,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
 
     auto get_tile_idx = [&](int block_idx) -> int2 {
         const int cluster_idx = block_idx / C::CLUSTER_SIZE;
-        const int rblks = g.d.rows() / C::Mb;
+        const int rblks = g.d.rows() / (C::Mb * C::NUM_CONSUMERS);
         const int cblks = g.d.cols() / C::Nb;
         const int supergroup_cblks = (cblks/C::SUPERGROUP_SIZE)*C::SUPERGROUP_SIZE;
         const int finalgroup_cblks = cblks-supergroup_cblks;
@@ -86,42 +82,49 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
     extern __shared__ int __shm[];
     tma_swizzle_allocator al((int*)&__shm[0]);
 
-    static_assert(sizeof(G::a_tile) * C::LOAD_PIPE_DEPTH +
+    static_assert(sizeof(G::a_tile) * C::LOAD_PIPE_DEPTH * C::NUM_CONSUMERS +
                   sizeof(G::b_tile) * C::LOAD_PIPE_DEPTH +
                   sizeof(G::d_tile) * C::NUM_D_TILES <= C::DYNAMIC_SHARED_MEMORY);
-    typename G::a_tile (&a_smem)[C::LOAD_PIPE_DEPTH] = al.allocate<G::a_tile, C::LOAD_PIPE_DEPTH>();
-    typename G::b_tile (&b_smem)[C::LOAD_PIPE_DEPTH] = al.allocate<G::b_tile, C::LOAD_PIPE_DEPTH>();
-    typename G::d_tile (&d_smem)[C::NUM_D_TILES]     = al.allocate<G::d_tile, C::NUM_D_TILES>();
+    typename G::a_tile (&a_smem)[C::LOAD_PIPE_DEPTH][C::NUM_CONSUMERS] = al.allocate<G::a_tile, C::LOAD_PIPE_DEPTH, C::NUM_CONSUMERS>();
+    typename G::b_tile (&b_smem)[C::LOAD_PIPE_DEPTH]                   = al.allocate<G::b_tile, C::LOAD_PIPE_DEPTH>();
+    typename G::d_tile (&d_smem)[C::NUM_D_TILES]                       = al.allocate<G::d_tile, C::NUM_D_TILES>();
 
     tensor_allocator<1, 2> tm_alloc{};
-    using d_tt_t = tt<float, C::MMA_Mb, C::MMA_Nb>;
+    using d_tt_t = tt<float, C::Mb/2, C::Nb>;
 
     __shared__ clc::handle clc_handle[C::CLC_PIPE_DEPTH];
     __shared__ semaphore schedule_arrived[C::CLC_PIPE_DEPTH], schedule_finished[C::CLC_PIPE_DEPTH];
-    __shared__ semaphore inputs_arrived[C::LOAD_PIPE_DEPTH], inputs_finished[C::LOAD_PIPE_DEPTH], outputs_arrived, outputs_finished[C::MMA_PIPE_DEPTH];
+    __shared__ semaphore inputs_arrived[C::LOAD_PIPE_DEPTH], inputs_finished[C::LOAD_PIPE_DEPTH], outputs_arrived[C::NUM_CONSUMERS], outputs_finished[C::MMA_PIPE_DEPTH];
     uint32_t bitfield = 0xFFFF0000; // ***_finished phase bits start as 1s, ***_arrived phase bits start as 0s
 
     if (threadIdx.x == 0) {
         #pragma unroll
         for (int i = 0; i < C::CLC_PIPE_DEPTH; i++) {
             init_semaphore(schedule_arrived[i], 0, 1);
-            init_semaphore(schedule_finished[i], 0, 3*C::CLUSTER_SIZE+1);
+            init_semaphore(schedule_finished[i], 0, (2+C::NUM_CONSUMERS)*C::CLUSTER_SIZE+C::NUM_CONSUMERS);
         }
         #pragma unroll
         for (int i = 0; i < C::LOAD_PIPE_DEPTH; i++) {
-            init_semaphore(inputs_arrived[i], 0, 1);
-            init_semaphore(inputs_finished[i], 0, 1);
+            init_semaphore(inputs_arrived[i], 0, C::NUM_CONSUMERS);
+            init_semaphore(inputs_finished[i], 0, C::NUM_CONSUMERS);
         }
-        init_semaphore(outputs_arrived, 0, 1);
+        #pragma unroll
+        for (int i = 0; i < C::NUM_CONSUMERS; i++) {
+            init_semaphore(outputs_arrived[i], 0, 1);
+        }
         #pragma unroll
         for (int i = 0; i < C::MMA_PIPE_DEPTH; i++) {
-            init_semaphore(outputs_finished[i], 0, C::CLUSTER_SIZE);
+            init_semaphore(outputs_finished[i], 0, C::CLUSTER_SIZE*C::NUM_CONSUMERS);
         }
     }
     everyone::tma::cluster::sync();
 
     if (warpgroup::groupid() == C::NUM_CONSUMERS) {
-        warpgroup::increase_registers<256>();
+        if constexpr (C::NUM_CONSUMERS == 1)
+            warpgroup::increase_registers<256>();
+        else
+            warpgroup::decrease_registers<56>();
+
         if (warp::laneid() == 0 && warpgroup::warpid() == 3) {
             int input_ring = 0;
             int2 tile_coord = get_tile_idx(blockIdx.x);
@@ -129,7 +132,9 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
                 for (int idx = 0; idx < iters_per_task; idx++) {
                     tma::cluster::wait(inputs_finished[input_ring], get_phasebit<1>(bitfield, input_ring));
                     update_phasebit<1>(bitfield, input_ring);
-                    tma::cluster::load_async(a_smem[input_ring], g.a, {tile_coord.x*2+cta_rank, idx}, inputs_arrived[input_ring], (uint16_t)(1<<cta_rank), 0);
+                    #pragma unroll
+                    for (int i = 0; i < C::NUM_CONSUMERS; i++)
+                        tma::cluster::load_async(a_smem[input_ring][i], g.a, {(tile_coord.x*2+cta_rank)*C::NUM_CONSUMERS+i, idx}, inputs_arrived[input_ring], (uint16_t)(1<<cta_rank), 0);
                     tma::cluster::load_async(b_smem[input_ring], g.b, {tile_coord.y*2+cta_rank, idx}, inputs_arrived[input_ring], (uint16_t)(1<<cta_rank), 0);
                     input_ring=ring_advance<C::LOAD_PIPE_DEPTH>(input_ring);
                 }
@@ -151,12 +156,12 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
                 tma::cluster::arrive(schedule_finished[task_iter%C::CLC_PIPE_DEPTH], 0);
                 if (!schedule.success) break;
             }
-        } else if (cta_rank == 0 && warp::laneid() == 0 && warpgroup::warpid() == 0) {
+        } else if (cta_rank == 0 && warp::laneid() == 0 && warpgroup::warpid() < C::NUM_CONSUMERS) {
             d_tt_t d_tt[C::MMA_PIPE_DEPTH];
             #pragma unroll
             for (int i = 0; i < C::MMA_PIPE_DEPTH; i++) {
-                if constexpr(C::MMA_Mb == 128) d_tt[i] = tm_alloc.allocate<d_tt_t>(i*C::MMA_Nb);
-                else                           d_tt[i] = tm_alloc.allocate<d_tt_t>(0, i*C::MMA_Nb);
+                if constexpr(C::Mb == 256) d_tt[i] = tm_alloc.allocate<d_tt_t>(   (i+warpgroup::warpid())*C::Nb);
+                else                       d_tt[i] = tm_alloc.allocate<d_tt_t>(0, (i+warpgroup::warpid())*C::Nb);
             }
             int input_ring = 0;
             for (int task_iter = 0; true; task_iter++) {
@@ -165,48 +170,54 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
                 tma::cluster::arrive(schedule_finished[task_iter%C::CLC_PIPE_DEPTH], 0);
                 tma::cluster::wait(outputs_finished[task_iter%C::MMA_PIPE_DEPTH], ((task_iter+C::MMA_PIPE_DEPTH)/C::MMA_PIPE_DEPTH)%2);
                 for(int idx = 0; idx < iters_per_task; idx++) {
-                    tma::cluster::expect_bytes(inputs_arrived[input_ring], 2*sizeof(G::a_tile) + 2*sizeof(G::b_tile));
+                    tma::cluster::expect_bytes(inputs_arrived[input_ring], (C::CLUSTER_SIZE*C::NUM_CONSUMERS*sizeof(G::a_tile) + 2*sizeof(G::b_tile))/C::NUM_CONSUMERS);
                     tma::cluster::wait(inputs_arrived[input_ring], get_phasebit<0>(bitfield, input_ring));
                     update_phasebit<0>(bitfield, input_ring);
-                    if (idx == 0) mm2_ABt (d_tt[task_iter%C::MMA_PIPE_DEPTH], a_smem[input_ring], b_smem[input_ring], inputs_finished[input_ring]);
-                    else          mma2_ABt(d_tt[task_iter%C::MMA_PIPE_DEPTH], a_smem[input_ring], b_smem[input_ring], inputs_finished[input_ring]);
+                    if (idx == 0) mm2_ABt (d_tt[task_iter%C::MMA_PIPE_DEPTH], a_smem[input_ring][warpgroup::warpid()], b_smem[input_ring], inputs_finished[input_ring]);
+                    else          mma2_ABt(d_tt[task_iter%C::MMA_PIPE_DEPTH], a_smem[input_ring][warpgroup::warpid()], b_smem[input_ring], inputs_finished[input_ring]);
                     input_ring=ring_advance<C::LOAD_PIPE_DEPTH>(input_ring);
                 }
-                detail::tcgen05::commit<C::CLUSTER_SIZE>(outputs_arrived);
+                detail::tcgen05::commit<C::CLUSTER_SIZE>(outputs_arrived[warpgroup::warpid()]);
                 if (!schedule.success) break;
             }
         }
     }
     else {
-        warpgroup::increase_registers<256>();
+        if constexpr (C::NUM_CONSUMERS == 1)
+            warpgroup::increase_registers<256>();
+        else
+            warpgroup::increase_registers<224>();
+
         d_tt_t d_tt[C::MMA_PIPE_DEPTH];
         #pragma unroll
         for (int i = 0; i < C::MMA_PIPE_DEPTH; i++) {
-            if constexpr(C::MMA_Mb == 128) d_tt[i] = tm_alloc.allocate<d_tt_t>(   i*C::MMA_Nb);
-            else                           d_tt[i] = tm_alloc.allocate<d_tt_t>(0, i*C::MMA_Nb);
+            if constexpr(C::Mb == 256) d_tt[i] = tm_alloc.allocate<d_tt_t>(   (i+warpgroup::groupid())*C::Nb);
+            else                       d_tt[i] = tm_alloc.allocate<d_tt_t>(0, (i+warpgroup::groupid())*C::Nb);
         }
         int2 tile_coord, next_tile_coord = get_tile_idx(blockIdx.x);
         for(int task_iter = 0; true; task_iter++) {
             tile_coord = next_tile_coord;
             tma::cluster::wait(schedule_arrived[task_iter%C::CLC_PIPE_DEPTH], (task_iter/C::CLC_PIPE_DEPTH)%2);
             auto schedule = clc::query(clc_handle[task_iter%C::CLC_PIPE_DEPTH]);
-            warpgroup::sync(1);
+            warpgroup::sync(warpgroup::groupid()+1);
             warpgroup::tma::cluster::arrive(schedule_finished[task_iter%C::CLC_PIPE_DEPTH], 0);
             if (schedule.success) next_tile_coord = get_tile_idx(schedule.x);
-            wait(outputs_arrived, task_iter%2);
-            rt_bf<C::MMA_Mb/4, C::MMA_Nb/C::EPI_PIPE_DEPTH> d_reg[C::EPI_PIPE_DEPTH];
+            wait(outputs_arrived[warpgroup::groupid()], task_iter%2);
+            rt_bf<C::Mb/8, C::Nb/C::EPI_PIPE_DEPTH> d_reg[C::EPI_PIPE_DEPTH];
             #pragma unroll
             for(int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
-                warpgroup::load_async(d_reg[i], d_tt[task_iter%C::MMA_PIPE_DEPTH].template subtile<tt<float, C::MMA_Mb, C::MMA_Nb/C::EPI_PIPE_DEPTH>>(0, C::MMA_Nb/C::EPI_PIPE_DEPTH*i));
+                warpgroup::load_async(d_reg[i], d_tt[task_iter%C::MMA_PIPE_DEPTH].template subtile<tt<float, C::Mb/2, C::Nb/C::EPI_PIPE_DEPTH>>(0, C::Nb/C::EPI_PIPE_DEPTH*i));
                 tensor_load_wait();
+                if (i == C::EPI_PIPE_DEPTH - 1) {
+                    warpgroup::sync(warpgroup::groupid()+1);
+                    warpgroup::tma::cluster::arrive(outputs_finished[task_iter%C::MMA_PIPE_DEPTH], 0);
+                }
                 warpgroup::tma::store_async_read_wait<1>();
-                warpgroup::sync(1);
-                warpgroup::store(d_smem[i%2], d_reg[i]);
-                warpgroup::sync(1);
-                warpgroup::tma::store_async(g.d, d_smem[i%2], {2*tile_coord.x+cta_rank, C::EPI_PIPE_DEPTH*tile_coord.y+i});
+                warpgroup::sync(warpgroup::groupid()+1);
+                warpgroup::store(d_smem[i%C::NUM_D_TILES], d_reg[i]);
+                warpgroup::sync(warpgroup::groupid()+1);
+                warpgroup::tma::store_async(g.d, d_smem[i%C::NUM_D_TILES], {(2*tile_coord.x+cta_rank)*C::NUM_CONSUMERS+warpgroup::groupid(), C::EPI_PIPE_DEPTH*tile_coord.y+i});
             }
-            warpgroup::tma::store_async_read_wait();
-            warpgroup::tma::cluster::arrive(outputs_finished[task_iter%C::MMA_PIPE_DEPTH], 0);
             if (!schedule.success) break;
         }
     }
@@ -215,9 +226,9 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
 template <typename C>
 __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
-    std::cout << "Template: SUPERGROUP_SIZE=" << C::SUPERGROUP_SIZE << " Mb=" << C::Mb << " Nb=" << C::Nb << " Kb=" << C::Kb <<
-                 " LOAD_PIPE_DEPTH=" << C::LOAD_PIPE_DEPTH << " MMA_PIPE_DEPTH=" << C::MMA_PIPE_DEPTH << " EPI_PIPE_DEPTH=" << C::EPI_PIPE_DEPTH << "\n";
-    std::cout << "Total number of tasks: " << (M / C::MMA_Mb * N / C::MMA_Nb) << "\n";
+    std::cout << "Template: Mb=" << C::Mb << " Nb=" << C::Nb << " Kb=" << C::Kb << " SUPERGROUP_SIZE=" << C::SUPERGROUP_SIZE
+              << " OVERLAP_MMA_EPI=" << C::OVERLAP_MMA_EPI << " LOAD_PIPE_DEPTH=" << C::LOAD_PIPE_DEPTH << " EPI_PIPE_DEPTH=" << C::EPI_PIPE_DEPTH << "\n";
+    std::cout << "Total number of tasks: " << (M / (C::Mb*C::NUM_CONSUMERS) * N / C::Nb) << "\n";
     std::cout << "Number of iterations per task: " << (K / C::Kb) << "\n";
 
     // Cooldown between configurations
@@ -322,17 +333,17 @@ __host__ int main() {
     int N;
     bool ncu = false;
 
-    // Template parameters: SUPERGROUP_SIZE, Mb, Nb, Kb, LOAD_PIPE_DEPTH, MMA_PIPE_DEPTH, EPI_PIPE_DEPTH
+    // Template parameters: _Mb, _Nb, _Kb, _SUPERGROUP_SIZE, _OVERLAP_MMA_EPI, _LOAD_PIPE_DEPTH, _EPI_PIPE_DEPTH
     N = 1024;
-    run_benchmark<config<4, 256, 128, 128, 4, 2, 2>>(N, N, N, ncu);
+    run_benchmark<config<256, 128, 128, 4, true, 4, 2>>(N, N, N, ncu);
     N = 2048;
-    run_benchmark<config<4, 256, 256, 64, 4, 2, 8>>(N, N, N, ncu);
+    run_benchmark<config<256, 256,  64, 4, true, 4, 8>>(N, N, N, ncu);
     N = 4096;
-    run_benchmark<config<4, 256, 256, 64, 5, 2, 2>>(N, N, N, ncu);
+    run_benchmark<config<256, 256,  64, 4, true, 5, 2>>(N, N, N, ncu);
     N = 8192;
-    run_benchmark<config<8, 256, 256, 64, 6, 2, 8>>(N, N, N, ncu);
+    run_benchmark<config<256, 256,  64, 8, true, 6, 8>>(N, N, N, ncu);
     N = 16384;
-    run_benchmark<config<8, 256, 256, 64, 4, 2, 8>>(N, N, N, ncu);
+    run_benchmark<config<256, 256,  64, 8, true, 4, 8>>(N, N, N, ncu);
 
     return 0;
 }
