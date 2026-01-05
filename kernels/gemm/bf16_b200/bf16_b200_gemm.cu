@@ -1,4 +1,5 @@
 #include "kittens.cuh"
+#include "../common.cuh"
 
 using namespace kittens;
 
@@ -206,78 +207,52 @@ __global__ void kernel(const __grid_constant__ G g) {
     }
 }
 
-#include <omp.h>
-#include <random>
-#include <vector>
-
 template <typename G>
-__host__ double run_benchmark(size_t M, size_t N, size_t K, bool check_correctness = false, bool ncu = false) {
+__host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
     std::cout << "Template: SUPERGROUP_SIZE=" << G::SUPERGROUP_SIZE << " Mb=" << G::Mb << " Nb=" << G::Nb << " Kb=" << G::Kb << 
                  " SMEM_PIPE_DEPTH=" << G::SMEM_PIPE_DEPTH << " MMA_PIPE_DEPTH=" << G::MMA_PIPE_DEPTH << " TMEM_PIPE_DEPTH=" << G::TMEM_PIPE_DEPTH << "\n";
     std::cout << "Total number of tasks: " << (M / G::Mb * N / G::Nb) << "\n";
     std::cout << "Number of iterations per task: " << (K / G::Kb) << "\n";
 
-    // Sleep for 50 ms to limit power consumption and thermals
-    usleep(50000);
+    // Cooldown between configurations
+    sleep_ms(500);
 
-    // Calculate arg_group_size
-    const int arg_size = 2 * (M * K + N * K + M * N);
-    const int l2_cache_size = 128 * 1024 * 1024;
-    const int ideal_arg_size = l2_cache_size * 3;
-    const int arg_group_count = arg_size > ideal_arg_size ? 1 : (ideal_arg_size / arg_size) + 1;
-
-    // Allocate host memory
-    std::vector<float> h_A(M * K * arg_group_count);
-    std::vector<float> h_B(K * N * arg_group_count);
-    std::vector<float> h_C_ref(M * N);
-    std::cout << "Allocated host memory" << std::endl;
-
-    // Initialize random number generator
-    std::random_device rd;
-    std::mt19937 gen(42);
-    std::uniform_real_distribution<> dis(-1., 1.);
-
-    // Initialize matrices with random values
-    for (int i = 0; i < M * K * arg_group_count; ++i) h_A[i] = dis(gen);
-    for (int i = 0; i < K * N * arg_group_count; ++i) h_B[i] = dis(gen);
-    std::cout << "Initialized matrices" << std::endl;
-
-    // Perform CPU matrix multiplication for reference
-    if (check_correctness) {
-        #pragma omp parallel for collapse(2)
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                float sum = 0.0f;
-                for (int k = 0; k < K; k++)
-                    sum += h_A[i * K + k] * h_B[j * K + k];
-                h_C_ref[i * N + j] = sum;
-            }
-        }
-        std::cout << "Performed CPU matrix multiplication" << std::endl;
-    }
+    // L2 cache eviction - multiple buffer groups
+    int l2_cache_size;
+    cudaDeviceGetAttribute(&l2_cache_size, cudaDevAttrL2CacheSize, 0);
+    const size_t arg_size = 2 * (size_t(M) * K + size_t(N) * K + size_t(M) * N);
+    const size_t ideal_arg_size = size_t(l2_cache_size) * 3;
+    const int arg_group_count = (arg_size > ideal_arg_size) ? 1 : int(ideal_arg_size / arg_size) + 1;
 
     // Allocate device memory
     std::vector<__nv_bfloat16*> d_A(arg_group_count);
     std::vector<__nv_bfloat16*> d_B(arg_group_count);
     std::vector<__nv_bfloat16*> d_C(arg_group_count);
+    __nv_bfloat16* d_C_ref;
     for (int i = 0; i < arg_group_count; i++) {
         CUDACHECK(cudaMalloc(&d_A[i], M*K*sizeof(__nv_bfloat16)));
         CUDACHECK(cudaMalloc(&d_B[i], K*N*sizeof(__nv_bfloat16)));
         CUDACHECK(cudaMalloc(&d_C[i], M*N*sizeof(__nv_bfloat16)));
     }
+    CUDACHECK(cudaMalloc(&d_C_ref, M*N*sizeof(__nv_bfloat16)));
     std::cout << "Allocated device memory" << std::endl;
 
-    // Convert to __nv_bfloat16 and copy to device
-    std::vector<__nv_bfloat16> h_A_bf16(M * K * arg_group_count);
-    std::vector<__nv_bfloat16> h_B_bf16(K * N * arg_group_count);
-    for (int i = 0; i < M * K * arg_group_count; ++i) h_A_bf16[i] = __float2bfloat16(h_A[i]);
-    for (int i = 0; i < K * N * arg_group_count; ++i) h_B_bf16[i] = __float2bfloat16(h_B[i]);
+    // Initialize matrices with random values on device
+    uint64_t seed = 2024;
     for (int i = 0; i < arg_group_count; i++) {
-        CUDACHECK(cudaMemcpy(d_A[i], &h_A_bf16[i*M*K], M*K*sizeof(__nv_bfloat16), cudaMemcpyHostToDevice));
-        CUDACHECK(cudaMemcpy(d_B[i], &h_B_bf16[i*N*K], N*K*sizeof(__nv_bfloat16), cudaMemcpyHostToDevice));
+        fill<__nv_bfloat16, FillMode::RANDOM>(d_A[i], M*K, seed + i*100, -1.0f, 1.0f);
+        fill<__nv_bfloat16, FillMode::RANDOM>(d_B[i], K*N, seed + i*100 + 1, -1.0f, 1.0f);
+        fill<__nv_bfloat16, FillMode::CONSTANT>(d_C[i], M*N, 0.0f);
     }
-    std::cout << "Copied matrices to device" << std::endl;
+    fill<__nv_bfloat16, FillMode::CONSTANT>(d_C_ref, M*N, 0.0f);
+    CUDACHECK(cudaDeviceSynchronize());
+    std::cout << "Initialized matrices on device" << std::endl;
+
+    // Compute reference GEMM on device
+    reference_gemm<__nv_bfloat16, __nv_bfloat16>(d_C_ref, d_A[0], d_B[0], M, N, K);
+    CUDACHECK(cudaDeviceSynchronize());
+    std::cout << "Computed reference GEMM on device" << std::endl;
 
     // Prepare kernel inputs
     std::vector<G> g;
@@ -323,38 +298,8 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool check_correctne
     std::cout << "Average kernel execution time: " << microseconds << " us\n";
     std::cout << "Achieved performance: " << tflops << " TFLOPs\n";
 
-    if (check_correctness) {
-        // Copy result back to host
-        std::vector<__nv_bfloat16> h_C_bf16(M * N);
-        CUDACHECK(cudaMemcpy(&h_C_bf16[0], d_C[0], M*N*sizeof(__nv_bfloat16), cudaMemcpyDeviceToHost));
-        std::cout << "Copied result back to host" << std::endl;
-
-        // Convert result back to float for comparison
-        std::vector<float> h_C(M * N);
-        for (int i = 0; i < M * N; ++i) h_C[i] = __bfloat162float(h_C_bf16[i]);
-        std::cout << "Converted result back to float" << std::endl;
-
-        // Check result
-        float max = 0.0f;
-        float avg = 0.0f;
-        float max_error = 0.0f;
-        float avg_error = 0.0f;
-        // int error_count = 0;
-        for (int i = 0; i < M * N; ++i) {
-            max = std::max(max, std::abs(h_C_ref[i]));
-            avg += std::abs(h_C_ref[i]);
-            float error = std::abs(h_C[i] - h_C_ref[i]);
-            max_error = std::max(max_error, error);
-            avg_error += error;
-        }
-        avg /= M*N;
-        avg_error /= M*N;
-
-        std::cout << "Abs max:   " << max << std::endl;
-        std::cout << "Abs avg:   " << avg << std::endl;
-        std::cout << "Max error: " << max_error << std::endl;
-        std::cout << "Avg error: " << avg_error << std::endl;
-    }
+    // Verify results
+    check_correctness(d_C[0], d_C_ref, M * N);
 
     // Clean up
     for (int i = 0; i < arg_group_count; i++) {
@@ -362,6 +307,7 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool check_correctne
         cudaFree(d_B[i]);
         cudaFree(d_C[i]);
     }
+    cudaFree(d_C_ref);
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
 
@@ -370,20 +316,19 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool check_correctne
 
 __host__ int main() {
     int N;
-    bool check_correctness = false;
     bool ncu = false;
 
     // Template parameters: SUPERGROUP_SIZE, Mb, Nb, Kb, SMEM_PIPE_DEPTH, MMA_PIPE_DEPTH, TMEM_PIPE_DEPTH
     N = 1024;
-    run_benchmark<globals<4, 128, 128, 128, 4, 2, 2>>(N, N, N, check_correctness, ncu);
+    run_benchmark<globals<4, 128, 128, 128, 4, 2, 2>>(N, N, N, ncu);
     N = 2048;
-    run_benchmark<globals<4, 128, 256, 64, 4, 2, 8>>(N, N, N, check_correctness, ncu);
+    run_benchmark<globals<4, 128, 256, 64, 4, 2, 8>>(N, N, N, ncu);
     N = 4096;
-    run_benchmark<globals<4, 128, 256, 64, 5, 2, 2>>(N, N, N, check_correctness, ncu);
+    run_benchmark<globals<4, 128, 256, 64, 5, 2, 2>>(N, N, N, ncu);
     N = 8192;
-    run_benchmark<globals<8, 128, 256, 64, 6, 2, 8>>(N, N, N, check_correctness, ncu);
+    run_benchmark<globals<8, 128, 256, 64, 6, 2, 8>>(N, N, N, ncu);
     N = 16384;
-    run_benchmark<globals<8, 128, 256, 64, 4, 2, 8>>(N, N, N, check_correctness, ncu);
+    run_benchmark<globals<8, 128, 256, 64, 4, 2, 8>>(N, N, N, ncu);
 
     return 0;
 }

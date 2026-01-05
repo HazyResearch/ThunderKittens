@@ -53,7 +53,8 @@
       "Bash(make:*)",
       "Bash(make run:*)",
       "Bash(make test:*)",
-      "Bash(make clean:*)"
+      "Bash(make clean:*)",
+      "Bash(nvcc:*)"
     ],
     "deny": [
       "Bash(git add:*)",

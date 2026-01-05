@@ -8,8 +8,6 @@
 
 #include <iostream>
 #include <vector>
-#include <thread>
-#include <chrono>
 #include <cuda_runtime.h>
 #include <cublasLt.h>
 #include <cuda_fp8.h>
@@ -124,7 +122,7 @@ struct CublasLtGemm {
 
 void benchmark(int M, int N, int K) {
   // Cooldown between configurations
-  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  sleep_ms(500);
 
   std::cout << "\n----------------------------------------" << std::endl;
   std::cout << "Problem size: M=" << M << ", N=" << N << ", K=" << K << std::endl;

@@ -4,9 +4,20 @@
 #include <iomanip>
 #include <vector>
 #include <cmath>
+#include <thread>
+#include <chrono>
 #include <cuda_runtime.h>
+#include <cuda_fp8.h>
 
 #include "kittens.cuh"
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Utility
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+static inline void sleep_ms(int milliseconds) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Fill kernel
@@ -78,6 +89,69 @@ static inline void reference_gemm(OutputT* D, InputT const* A, InputT const* B, 
     dim3 block(16, 16);
     dim3 grid((N + 15) / 16, (M + 15) / 16);
     reference_gemm_kernel<InputT, OutputT><<<grid, block>>>(D, A, B, M, N, K);
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Block-Scaled Reference GEMM: D = A * B with block scaling
+// A: RowMajor (M x K), B: ColMajor (N x K), D: RowMajor (M x N)
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+__device__ inline int scale_swizzle_idx(int row, int k_block, int K_blocks) {
+  int M_block = row / 128;
+  int K_block_groups = K_blocks / 4;
+  int K_block_group = k_block / 4;
+  int row_in_32 = row % 32;
+  int tile_in_block = (row / 32) % 4;
+  int kb_in_block = k_block % 4;
+
+  int block_base = (M_block * K_block_groups + K_block_group) * 512;
+  int local_idx = row_in_32 * 16 + tile_in_block * 4 + kb_in_block;
+  return block_base + local_idx;
+}
+
+template <typename InputT, typename ScaleT, typename OutputT, int BLOCK_SIZE>
+__global__ void reference_blockscaled_gemm_kernel(
+    OutputT* D,
+    InputT const* A, InputT const* B,
+    ScaleT const* A_scale, ScaleT const* B_scale,
+    int M, int N, int K) {
+  int row = blockIdx.y * blockDim.y + threadIdx.y;
+  int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (row < M && col < N) {
+    float acc = 0.0f;
+    int K_blocks = K / BLOCK_SIZE;
+
+    for (int k = 0; k < K; ++k) {
+      int a_idx = row * K + k;
+      int b_idx = col * K + k;
+
+      int k_block = k / BLOCK_SIZE;
+      int a_scale_idx = scale_swizzle_idx(row, k_block, K_blocks);
+      int b_scale_idx = scale_swizzle_idx(col, k_block, K_blocks);
+
+      float a_s = kittens::base_types::convertor<float, ScaleT>::convert(A_scale[a_scale_idx]);
+      float b_s = kittens::base_types::convertor<float, ScaleT>::convert(B_scale[b_scale_idx]);
+
+      float a = kittens::base_types::convertor<float, InputT>::convert(A[a_idx]) * a_s;
+      float b = kittens::base_types::convertor<float, InputT>::convert(B[b_idx]) * b_s;
+
+      acc += a * b;
+    }
+    D[row * N + col] = kittens::base_types::convertor<OutputT, float>::convert(acc);
+  }
+}
+
+template <typename InputT, typename ScaleT, typename OutputT, int BLOCK_SIZE>
+static inline void reference_blockscaled_gemm(
+    OutputT* D,
+    InputT const* A, InputT const* B,
+    ScaleT const* A_scale, ScaleT const* B_scale,
+    int M, int N, int K) {
+  dim3 block(16, 16);
+  dim3 grid((N + 15) / 16, (M + 15) / 16);
+  reference_blockscaled_gemm_kernel<InputT, ScaleT, OutputT, BLOCK_SIZE>
+      <<<grid, block>>>(D, A, B, A_scale, B_scale, M, N, K);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
