@@ -6,11 +6,6 @@ using namespace kittens;
 template <int _SUPERGROUP_SIZE, int _Mb, int _Nb, int _Kb, int _LOAD_PIPE_DEPTH, int _MMA_PIPE_DEPTH, int _EPI_PIPE_DEPTH>
 struct config {
     static constexpr int CLUSTER_SIZE = 2;
-    static constexpr int NUM_CONSUMERS = 1;
-    static constexpr int NUM_PRODUCERS = 1;
-    static constexpr int NUM_WARPS = (NUM_CONSUMERS + NUM_PRODUCERS) * 4;
-    static constexpr int NUM_THREADS = NUM_WARPS * WARP_THREADS;
-    static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - 1024;
 
     static constexpr int SUPERGROUP_SIZE = _SUPERGROUP_SIZE;
     static constexpr int Mb = _Mb; // Cluster-wide
@@ -24,9 +19,16 @@ struct config {
 
     static constexpr bool OVERLAP_MMA_EPI = true;
 
-    static constexpr int MMA_Mb = Mb / CLUSTER_SIZE / (OVERLAP_MMA_EPI ? 1 : 2);
+    static constexpr int NUM_CONSUMERS = OVERLAP_MMA_EPI ? 1 : 2;
+    static constexpr int NUM_PRODUCERS = 1;
+    static constexpr int NUM_WARPS = (NUM_CONSUMERS + NUM_PRODUCERS) * 4;
+    static constexpr int NUM_THREADS = NUM_WARPS * WARP_THREADS;
+
+    static constexpr int MMA_Mb = Mb / CLUSTER_SIZE / NUM_CONSUMERS;
     static constexpr int MMA_Nb = Nb;
     static constexpr int NUM_D_TILES = EPI_PIPE_DEPTH > 1 ? 2 : 1;
+
+    static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - 1024;
 };
 
 template <typename C>
