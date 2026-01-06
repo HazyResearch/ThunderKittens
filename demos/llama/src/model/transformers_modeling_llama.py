@@ -54,10 +54,13 @@ from transformers.models.llama.configuration_llama import LlamaConfig
 from .transformers_modeling_utils import PreTrainedModel    # local override for TK
 
 try:
-    import thunderkittens as tk
-    print("Successfully imported ThunderKittens")
+    import sys, os
+    _tk_root = os.path.join(os.path.dirname(__file__), '..', '..', '..', '..')
+    sys.path.insert(0, os.path.join(_tk_root, 'kernels', 'attention', 'mha_h100'))
+    from _C import mha_forward, mha_backward
+    print("Successfully imported ThunderKittens 'mha_h100' kernel")
 except ImportError:
-    print("Failed to import ThunderKittens")
+    raise ImportError("ERROR: 'mha_h100' kernel not compiled. Run: cd <ThunderKittens>/kernels/attention/mha_h100 && make")
 
 logger = logging.get_logger(__name__)
 
@@ -771,7 +774,7 @@ class LlamaTKAttention(LlamaAttention):
             query_states = query_states.to(torch.bfloat16).contiguous()
             key_states = key_states.to(torch.bfloat16).contiguous()
             value_states = value_states.to(torch.bfloat16).contiguous()
-            o, l_vec = tk.mha_forward(query_states, key_states, value_states, self.is_causal)
+            o, l_vec = mha_forward(query_states, key_states, value_states, self.is_causal)
             attn_output = o.transpose(1, 2).contiguous()
 
             # Unpad if self.o is longer than q_len

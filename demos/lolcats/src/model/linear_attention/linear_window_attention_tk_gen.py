@@ -6,10 +6,13 @@ import torch
 import torch.nn.functional as F
 
 try:
-    import thunderkittens as tk
-    print(f"Successfully imported ThunderKittens for TK window attention")
-except:
-    print(f"Failed to import ThunderKittens for TK window attention")
+    import sys, os
+    _tk_root = os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', '..')
+    sys.path.insert(0, os.path.join(_tk_root, 'kernels', 'hedgehog'))
+    from _C import hedgehog
+    print("Successfully imported ThunderKittens 'hedgehog' kernel")
+except ImportError:
+    raise ImportError("ERROR: 'hedgehog' kernel not compiled. Run: cd <ThunderKittens>/kernels/hedgehog && make")
 
 from .linear_window_attention_tk_long import LolcatsTKWindowLongAttention
 from .linear_attention import LinearAttentionState
@@ -92,7 +95,7 @@ class LolcatsWindowAttentionTKGen(LolcatsTKWindowLongAttention):
             q = q.contiguous()
             k = k.contiguous()
             v = v.contiguous()
-            y_true, kv_state, k_state = tk.hedgehog(q, k, v, q_map, k_map, alphas, betas)
+            y_true, kv_state, k_state = hedgehog(q, k, v, q_map, k_map, alphas, betas)
             y_true = y_true.to(q.dtype)
             past_key_value.update_with_kv(kv_state, k_state, k, v, self.layer_idx)
         

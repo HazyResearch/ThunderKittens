@@ -9,10 +9,13 @@ from einops import rearrange
 from train.src.generation import InferenceParams
 
 try:
-    import thunderkittens as tk
-    print(f"Successfully imported tk")
-except:
-    print(f"Please install the based kernel within ThunderKittens")
+    import sys, os
+    _tk_root = os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', '..')
+    sys.path.insert(0, os.path.join(_tk_root, 'kernels', 'based'))
+    from _C import based
+    print("Successfully imported ThunderKittens 'based' kernel")
+except ImportError:
+    raise ImportError("ERROR: 'based' kernel not compiled. Run: cd <ThunderKittens>/kernels/based && make")
 
 try:
     from fla.ops.based import parallel_based
@@ -155,7 +158,7 @@ class LinearAttention(nn.Module):
             k = torch.cat([k, torch.zeros(b, h, self.l_max - l, D, dtype=k.dtype, device=k.device)], dim=2)
             v = torch.cat([v, torch.zeros(b, h, self.l_max - l, d, dtype=v.dtype, device=v.device)], dim=2)
 
-            y, kv_state = tk.based( q, k, v )
+            y, kv_state = based( q, k, v )
             
             # unpadding
             y = y[:, :, :l]    
