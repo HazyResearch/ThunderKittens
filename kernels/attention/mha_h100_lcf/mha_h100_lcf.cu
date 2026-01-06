@@ -160,22 +160,22 @@ int main(int argc, char **argv) {
 
     std::cout << "Starting to enter!" << std::endl;
 
-    for(int i = 0; i < TOTAL_ELEMENTS/ATTN_B; i++) infile >> q[i];
+    for(int i = 0; i < TOTAL_ELEMENTS; i++) infile >> q[i];
     std::cout << "Finished loading Q" << std::endl;
-    for(int i = 0; i < TOTAL_ELEMENTS/ATTN_B; i++) infile >> k[i];
+    for(int i = 0; i < TOTAL_ELEMENTS; i++) infile >> k[i];
     std::cout << "Finished loading K" << std::endl;
-    for(int i = 0; i < TOTAL_ELEMENTS/ATTN_B; i++) infile >> v[i];
+    for(int i = 0; i < TOTAL_ELEMENTS; i++) infile >> v[i];
     std::cout << "Finished loading V" << std::endl;
-    for(int i = 0; i < TOTAL_ELEMENTS/ATTN_B; i++) infile >> o_ref[i];
+    for(int i = 0; i < TOTAL_ELEMENTS; i++) infile >> o_ref[i];
     std::cout << "Finished loading O_REF" << std::endl;
 
     std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
 
-    // replicate into batch elements
+    // Convert to bf16
     for(int i = 0; i < TOTAL_ELEMENTS; i++) {
-        q_bf[i] = __float2bfloat16(q[i % (TOTAL_ELEMENTS/ATTN_B)]);
-        k_bf[i] = __float2bfloat16(k[i % (TOTAL_ELEMENTS/ATTN_B)]);
-        v_bf[i] = __float2bfloat16(v[i % (TOTAL_ELEMENTS/ATTN_B)]);
+        q_bf[i] = __float2bfloat16(q[i]);
+        k_bf[i] = __float2bfloat16(k[i]);
+        v_bf[i] = __float2bfloat16(v[i]);
     }
 
     bf16 *d_q, *d_k, *d_v, *d_o;
@@ -245,10 +245,10 @@ int main(int argc, char **argv) {
     float max_error = 0; 
 
     for(int i = 0; i < TOTAL_ELEMENTS; i++) {
-        float diff = o[i] - o_ref[i % (TOTAL_ELEMENTS/ATTN_B)];
+        float diff = o[i] - o_ref[i];
 
         if (i < TOTAL_UNIQUE_ELEMENTS) {
-            o_ref_file << o_ref[i % (TOTAL_ELEMENTS/ATTN_B)] << ' ';
+            o_ref_file << o_ref[i] << ' ';
             o_file << o[i] << ' ';
             diff_file << diff << ' ';
         }
