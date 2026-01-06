@@ -1,6 +1,6 @@
 #!/bin/bash
 
-CONFIG_DIR='./configs/'   
+CONFIG_DIR='../configs/'   
 
 CUDA_VISIBLE_DEVICES=0 python -Wignore demo_llama_hf.py \
     --model_config_path ${CONFIG_DIR}/llama_3.1_8b_model_config.yaml \
