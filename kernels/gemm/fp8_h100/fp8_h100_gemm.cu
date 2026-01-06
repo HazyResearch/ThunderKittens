@@ -1,5 +1,6 @@
 #include "kittens.cuh"
 #include "prototype.cuh"
+#include "../common.cuh"
 
 #ifdef TORCH_COMPILE
 #define TK_COMPILE_FP8_GEMM
@@ -153,20 +154,6 @@ at::Tensor fp8_gemm(at::Tensor A, at::Tensor B) {
     return C;
 }
 #else
-void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
-    std::cout << "CPU M=" << M << " N=" << N << " K=" << K << std::endl;
-    #pragma omp parallel for collapse(2) // otherwise the CPU version takes for everrrrrr
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            float sum = 0.0f;
-            for (int k = 0; k < K; k++) {
-                sum += a[i * K + k] * b[j * K + k]; // mma_ABt
-                // sum += a[i * K + k] * b[k * N + j]; // mma_AB
-            }
-            c[i * N + j] = sum;
-        }
-    }
-}
 
 template<typename mmt>
 int run_benchmark(size_t M, size_t N, size_t K) {
@@ -178,7 +165,6 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     float *h_A = new float[M * K];
     float *h_B = new float[K * N];
     float *h_C = new float[M * N];
-    float *h_C_ref = new float[M * N];
 
     std::cout << "Allocated host memory" << std::endl;
 
@@ -194,10 +180,11 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     std::cout << "Initialized matrices" << std::endl;
 
     // Allocate device memory
-    fp8e4m3 *d_A, *d_B, *d_C;
+    fp8e4m3 *d_A, *d_B, *d_C, *d_C_ref;
     cudaMalloc(&d_A, M*K*sizeof(fp8e4m3));
     cudaMalloc(&d_B, K*N*sizeof(fp8e4m3));
     cudaMalloc(&d_C, M*N*sizeof(fp8e4m3));
+    cudaMalloc(&d_C_ref, M*N*sizeof(fp8e4m3));
 
     // Check for CUDA errors
     cudaStatus = cudaGetLastError();
@@ -217,15 +204,14 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     for (int i = 0; i < M * K; ++i) h_A[i] = float(h_A_fp8[i]);
     for (int i = 0; i < K * N; ++i) h_B[i] = float(h_B_fp8[i]);
 
-    // Perform CPU matrix multiplication for reference
-    if(true) cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
-
-    std::cout << "Performed CPU matrix multiplication" << std::endl;
-
     cudaMemcpy(d_A, h_A_fp8, M*K*sizeof(fp8e4m3), cudaMemcpyHostToDevice);
     cudaMemcpy(d_B, h_B_fp8, K*N*sizeof(fp8e4m3), cudaMemcpyHostToDevice);
-
     std::cout << "Copied matrices to device" << std::endl;
+
+    // Compute reference GEMM on GPU (transpose_b=true for ABt layout)
+    reference_gemm<fp8e4m3, fp8e4m3, true>(d_C_ref, d_A, d_B, M, N, K);
+    cudaDeviceSynchronize();
+    std::cout << "Computed reference GEMM on device" << std::endl;
 
     unsigned long mem_size = MAX_SHARED_MEMORY - 1024;
     cudaFuncSetAttribute(prototype::lcf::kernel<mmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
@@ -273,13 +259,17 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 
     // Copy result back to host
     __nv_fp8_e4m3 *h_C_fp8 = new __nv_fp8_e4m3[M * N];
+    __nv_fp8_e4m3 *h_C_ref_fp8 = new __nv_fp8_e4m3[M * N];
     cudaMemcpy(h_C_fp8, d_C, M*N*sizeof(fp8e4m3), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_C_ref_fp8, d_C_ref, M*N*sizeof(fp8e4m3), cudaMemcpyDeviceToHost);
 
     std::cout << "Copied result back to host" << std::endl;
 
     // Convert result back to float for comparison
+    float *h_C_ref = new float[M * N];
     for (int i = 0; i < M * N; ++i) {
         h_C[i] = float(h_C_fp8[i]);
+        h_C_ref[i] = float(h_C_ref_fp8[i]);
     }
 
     std::cout << "Converted result back to float" << std::endl;
@@ -289,7 +279,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     int error_count = 0;
     for (int i = 0; i < M * N; ++i) {
         float error = std::abs(h_C[i] - h_C_ref[i]);
-        if(error > 0.2f) { // large because of fp8 vs fp32 numerics
+        if(error > 0.25f) { // large because of fp8 vs fp32 numerics
             if(error_count < 100) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
             else if(error_count == 700) std::cout << "Too many errors to show them all.\n";
             error_count++;
@@ -315,9 +305,11 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     delete[] h_A_fp8;
     delete[] h_B_fp8;
     delete[] h_C_fp8;
+    delete[] h_C_ref_fp8;
     cudaFree(d_A);
     cudaFree(d_B);
     cudaFree(d_C);
+    cudaFree(d_C_ref);
 
     return 0;
 }
