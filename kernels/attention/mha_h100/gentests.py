@@ -1,11 +1,7 @@
 import torch
-from tqdm import trange
 import numpy as np
 import sys
 import math
-
-# pip install "grouped-query-attention-pytorch @ git+ssh://git@github.com/fkodom/grouped-query-attention-pytorch.git"
-from grouped_query_attention_pytorch.attention import scaled_dot_product_gqa
 
 # only generate a single batch/head of data, which makes file loading much faster.
 # it does mean we'll have to check batch/head behavior separately later, but that should be much easier to debug.
@@ -23,16 +19,6 @@ q = (torch.randn((B, H_QO, N, D), dtype=torch.bfloat16, device='cuda')).requires
 k = (torch.randn((B, H_KV, N, D), dtype=torch.bfloat16, device='cuda')).requires_grad_()
 v = (torch.randn((B, H_KV, N, D), dtype=torch.bfloat16, device='cuda')).requires_grad_()
 grad_output = (torch.randn((B, H_QO, N, D), dtype=torch.bfloat16, device='cuda'))
-
-# pad seqlen to multiple of 128
-o, _ = scaled_dot_product_gqa(
-    q.permute(0, 2, 1, 3).contiguous(),
-    k.permute(0, 2, 1, 3).contiguous(),
-    v.permute(0, 2, 1, 3).contiguous(),
-    is_causal=causal,
-    need_weights=False,
-)
-o = o.permute(0, 2, 1, 3).contiguous()
 
 ##########################################
 ### EXACT GQA COMPUTATION FROM LLAMA 3 ###
@@ -58,7 +44,7 @@ mask = torch.triu(mask, diagonal=1)
 if mask is not None and causal:
     scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
 scores = torch.nn.functional.softmax(scores, dim=-1).type_as(q)
-output = torch.matmul(scores, values_l)  # (bs, n_local_heads, seqlen, head_dim)
+o = torch.matmul(scores, values_l)  # (bs, n_local_heads, seqlen, head_dim)
 ### EXACT GQA COMPUTATION FROM LLAMA 3 ###
 ##########################################
 
@@ -126,50 +112,21 @@ if H_QO != H_KV:
 
 filename += '.txt'
 
-with open(filename, 'w') as f:
-    # inputs
-    qf = q.to(torch.float32).flatten().detach().cpu().numpy()
-    kf = k.to(torch.float32).flatten().detach().cpu().numpy()
-    vf = v.to(torch.float32).flatten().detach().cpu().numpy()
-    of = o.to(torch.float32).flatten().detach().cpu().numpy()
-    
-    og_f = grad_output.to(torch.float32).flatten().detach().cpu().numpy()
-    
-    # intermediate
-    l_vecf = l_vec.to(torch.float32).flatten().detach().cpu().numpy()
-    d_vecf = d_vec.to(torch.float32).flatten().detach().cpu().numpy()
-    
-    qg_f = q_grad.to(torch.float32).flatten().detach().cpu().numpy()
-    kg_f = k_grad.to(torch.float32).flatten().detach().cpu().numpy()
-    vg_f = v_grad.to(torch.float32).flatten().detach().cpu().numpy()
-    
-    for i in trange(q.shape[0] * q.shape[1] * q.shape[2] * q.shape[3]):
-        f.write(repr(float(qf[i])))
-        f.write(' ')
-    for i in trange(k.shape[0] * k.shape[1] * k.shape[2] * k.shape[3]):
-        f.write(repr(float(kf[i])))
-        f.write(' ')
-    for i in trange(v.shape[0] * v.shape[1] * v.shape[2] * v.shape[3]):
-        f.write(repr(float(vf[i])))
-        f.write(' ')
-    for i in trange(o.shape[0] * o.shape[1] * o.shape[2] * o.shape[3]):
-        f.write(repr(float(of[i])))
-        f.write(' ')
-    for i in trange(l_vec.shape[0] * l_vec.shape[1] * l_vec.shape[2]):
-        f.write(repr(float(l_vecf[i])))
-        f.write(' ')
-    for i in trange(d_vec.shape[0] * d_vec.shape[1] * d_vec.shape[2]):
-        f.write(repr(float(d_vecf[i])))
-        f.write(' ')
-    for i in trange(grad_output.shape[0] * grad_output.shape[1] * grad_output.shape[2] * grad_output.shape[3]):
-        f.write(repr(float(og_f[i])))
-        f.write(' ')
-    for i in trange(q_grad.shape[0] * q_grad.shape[1] * q_grad.shape[2] * q_grad.shape[3]):
-        f.write(repr(float(qg_f[i])))
-        f.write(' ')
-    for i in trange(k_grad.shape[0] * k_grad.shape[1] * k_grad.shape[2] * k_grad.shape[3]):
-        f.write(repr(float(kg_f[i])))
-        f.write(' ')
-    for i in trange(v_grad.shape[0] * v_grad.shape[1] * v_grad.shape[2] * v_grad.shape[3]):
-        f.write(repr(float(vg_f[i])))
-        f.write(' ')
+# Convert tensors to numpy arrays
+qf = q.to(torch.float32).flatten().detach().cpu().numpy()
+kf = k.to(torch.float32).flatten().detach().cpu().numpy()
+vf = v.to(torch.float32).flatten().detach().cpu().numpy()
+of = o.to(torch.float32).flatten().detach().cpu().numpy()
+og_f = grad_output.to(torch.float32).flatten().detach().cpu().numpy()
+l_vecf = l_vec.to(torch.float32).flatten().detach().cpu().numpy()
+d_vecf = d_vec.to(torch.float32).flatten().detach().cpu().numpy()
+qg_f = q_grad.to(torch.float32).flatten().detach().cpu().numpy()
+kg_f = k_grad.to(torch.float32).flatten().detach().cpu().numpy()
+vg_f = v_grad.to(torch.float32).flatten().detach().cpu().numpy()
+
+with open(filename, 'wb') as f:
+    for name, arr in [('Q', qf), ('K', kf), ('V', vf), ('O', of),
+                      ('L', l_vecf), ('D', d_vecf), ('grad_output', og_f),
+                      ('q_grad', qg_f), ('k_grad', kg_f), ('v_grad', vg_f)]:
+        print(f"Writing {name}...")
+        np.savetxt(f, arr.reshape(1, -1), fmt='%.8g', delimiter=' ', newline=' ')

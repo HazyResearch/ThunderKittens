@@ -53,11 +53,11 @@ o = torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=False)
 
 fn = f'{TESTNAME}_{N}_{D}.txt'
 
-# Convert tensors to numpy arrays
-qf = q.transpose(1,2).to(torch.float32).flatten().detach().cpu().numpy()
-kf = k.transpose(1,2).to(torch.float32).flatten().detach().cpu().numpy()
-vf = v.transpose(1,2).to(torch.float32).flatten().detach().cpu().numpy()
-of = o.transpose(1,2).to(torch.float32).flatten().detach().cpu().numpy()
+# Convert tensors to numpy arrays (BHND layout, no transpose needed)
+qf = q.to(torch.float32).flatten().detach().cpu().numpy()
+kf = k.to(torch.float32).flatten().detach().cpu().numpy()
+vf = v.to(torch.float32).flatten().detach().cpu().numpy()
+of = o.to(torch.float32).flatten().detach().cpu().numpy()
 
 with open(fn, 'wb') as f:
     for name, arr in [('Q', qf), ('K', kf), ('V', vf), ('O', of)]:
