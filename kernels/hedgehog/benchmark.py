@@ -1,3 +1,6 @@
+# Optional dependency for fla_triton_hedgehog baseline comparison:
+#   pip install flash-linear-attention
+
 import os
 import numpy as np
 import torch
@@ -24,6 +27,7 @@ try:
     from fla.ops.linear_attn import fused_chunk_linear_attn
     print(f"Successfully imported flash_linear_attention")
 except:
+    fused_chunk_linear_attn = None
     print("Could not import flash_linear_attention. Install from https://github.com/sustcsonglin/flash-linear-attention")
 
 
@@ -180,6 +184,8 @@ def hedgehog_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10
                     torch.cuda.synchronize()
 
                 elif method_str == 'fla_triton_hedgehog':
+                    if fused_chunk_linear_attn is None:
+                        raise ImportError("flash_linear_attention not installed")
                     torch.cuda.synchronize()
                     start_events[i].record()
                     Q = pytorch_softmax_gt(Q, Qmap)
@@ -191,7 +197,7 @@ def hedgehog_test(dt, b, h, n, dv, causal, is_forwards, method_str, num_iters=10
                 elif method_str == 'tk_hedgehog':
                     torch.cuda.synchronize()
                     start_events[i].record()
-                    o, kv_state, k_state = tk.hedgehog(Q, K, V, Qmap, Kmap, alphas, betas)
+                    o, kv_state, k_state = hedgehog(Q, K, V, Qmap, Kmap, alphas, betas)
                     end_events[i].record()
                     torch.cuda.synchronize()
 
@@ -298,6 +304,9 @@ if __name__ == "__main__":
                     continue
                 if "mamba2_triton" in m and n not in [1024, 2048, 4096, 8192]:
                     # the kernel results in DEVICE_SIDE_ASSERTS
+                    continue
+                if "fla_triton" in m and fused_chunk_linear_attn is None:
+                    # flash_linear_attention not installed
                     continue
                 if "layernorm" in m and dv*h != 1024:
                     # restrict to sizes we have implemented

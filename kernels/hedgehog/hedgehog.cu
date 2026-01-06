@@ -325,7 +325,9 @@ void hedgehog_linear_attention_smd (
     k_state_vec (&k_state_smem) = *reinterpret_cast<k_state_vec*>(&cumsum_k_smem[0].data[0]);
     // store out kv state into smem.
     kv_state_tile (&kv_state_smem) = reinterpret_cast<kv_state_tile&>(q_smem[0].data[0]); // we can overwrite early stuff, it's fine
-    group<8>::store(kv_state_smem, local_kv); // all 8 warps store their own chunk.
+    // Each warpgroup stores its 64x128 portion of the KV state
+    auto kv_subtile = kv_state_smem.template subtile<64, 128>({warpgroupid, 0});
+    warpgroup::store(kv_subtile, local_kv);
     __syncthreads();
     // write out kv state
     if(warpid == 0){
@@ -401,7 +403,7 @@ void dispatch_hedgehog(
     );
 
     // launch
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY;
+    unsigned long mem_size = kittens::MAX_SHARED_MEMORY - 1024;
     cudaFuncSetAttribute(
         hedgehog_linear_attention_smd,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
