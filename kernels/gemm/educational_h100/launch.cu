@@ -2,22 +2,9 @@
 #include <random>
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
-#include <omp.h>
 #include <chrono>
 
-void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
-    #pragma omp parallel for collapse(2) // otherwise the CPU version takes for everrrrrr
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            float sum = 0.0f;
-            for (int k = 0; k < K; k++) {
-                sum += a[i * K + k] * b[k * N + j]; // mma_AB
-                // sum += a[i * K + k] * b[j * K + k]; // mma_ABt
-            }
-            c[i * N + j] = sum;
-        }
-    }
-}
+#include "../common.cuh"
 
 int run_benchmark(size_t M, size_t N, size_t K) {
     cudaError_t cudaStatus;
@@ -27,7 +14,6 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     float *h_A = new float[M * K];
     float *h_B = new float[K * N];
     float *h_C = new float[M * N];
-    float *h_C_ref = new float[M * N];
     std::cout << "Allocated host memory" << std::endl;
 
     // Initialize random number generator
@@ -40,15 +26,12 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     for (int i = 0; i < K * N; ++i) h_B[i] = dis(gen);
     std::cout << "Initialized matrices" << std::endl;
 
-    // Perform CPU matrix multiplication for reference
-    if(true) cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
-    std::cout << "Performed CPU matrix multiplication" << std::endl;
-
     // Allocate device memory
-    __nv_bfloat16 *d_A, *d_B, *d_C;
+    __nv_bfloat16 *d_A, *d_B, *d_C, *d_C_ref;
     cudaMalloc(&d_A, M*K*sizeof(__nv_bfloat16));
     cudaMalloc(&d_B, K*N*sizeof(__nv_bfloat16));
     cudaMalloc(&d_C, M*N*sizeof(__nv_bfloat16));
+    cudaMalloc(&d_C_ref, M*N*sizeof(__nv_bfloat16));
     // Check for CUDA errors
     cudaStatus = cudaGetLastError();
     if (cudaStatus != cudaSuccess) {
@@ -66,6 +49,11 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     cudaMemcpy(d_A, h_A_bf16, M*K*2, cudaMemcpyHostToDevice);
     cudaMemcpy(d_B, h_B_bf16, K*N*2, cudaMemcpyHostToDevice);
     std::cout << "Copied matrices to device" << std::endl;
+
+    // Compute reference GEMM on GPU
+    reference_gemm<__nv_bfloat16, __nv_bfloat16, false>(d_C_ref, d_A, d_B, M, N, K);
+    cudaDeviceSynchronize();
+    std::cout << "Computed reference GEMM on device" << std::endl;
     printf("\n");
 
     // Launch kernel
@@ -104,11 +92,15 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 
     // Copy result back to host
     __nv_bfloat16 *h_C_bf16 = new __nv_bfloat16[M * N];
+    __nv_bfloat16 *h_C_ref_bf16 = new __nv_bfloat16[M * N];
     cudaMemcpy(h_C_bf16, d_C, M*N*2, cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_C_ref_bf16, d_C_ref, M*N*2, cudaMemcpyDeviceToHost);
     std::cout << "Copied result back to host" << std::endl;
 
     // Convert result back to float for comparison
+    float *h_C_ref = new float[M * N];
     for (int i = 0; i < M * N; ++i) h_C[i] = __bfloat162float(h_C_bf16[i]);
+    for (int i = 0; i < M * N; ++i) h_C_ref[i] = __bfloat162float(h_C_ref_bf16[i]);
     std::cout << "Converted result back to float" << std::endl;
 
     // Check result
@@ -136,9 +128,11 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     delete[] h_A_bf16;
     delete[] h_B_bf16;
     delete[] h_C_bf16;
+    delete[] h_C_ref_bf16;
     cudaFree(d_A);
     cudaFree(d_B);
     cudaFree(d_C);
+    cudaFree(d_C_ref);
 
     return 0;
 }
