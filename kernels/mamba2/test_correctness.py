@@ -37,7 +37,7 @@ import torch
 import torch.nn.functional as F
 from einops import rearrange, repeat
 
-from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
+# from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined  # Optional - only for comparison
 
 
 # Simple test

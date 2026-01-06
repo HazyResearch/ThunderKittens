@@ -117,27 +117,60 @@ def get_inputs_mamba(dtype: torch.dtype, b: int, h: int, n: int, dv: int, verbos
     
     return x, dt, A, B, C, D, chunk_size, torch.float32
 
+class Mamba2Baseline(torch.nn.Module):
+    """Baseline using ssd_minimal_discrete from the paper."""
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x, dt, A, B, C, chunk_size, D=None):
+        # ssd_minimal_discrete expects:
+        # X: (batch, length, n_heads, d_head)
+        # A: (batch, length, n_heads)
+        # B: (batch, length, n_heads, d_state)
+        # C: (batch, length, n_heads, d_state)
+        batch, seqlen, nheads, headdim = x.shape
+        ngroups = B.shape[2]
+        dstate = B.shape[3]
+
+        # Expand B and C from (batch, seqlen, ngroups, dstate) to (batch, seqlen, nheads, dstate)
+        heads_per_group = nheads // ngroups
+        B_expanded = B.repeat_interleave(heads_per_group, dim=2)
+        C_expanded = C.repeat_interleave(heads_per_group, dim=2)
+
+        # Compute A_full = A * dt, shape (batch, seqlen, nheads)
+        A_full = A * dt
+
+        # X for ssd_minimal is x * dt
+        X = x * dt.unsqueeze(-1)
+
+        y, _ = ssd_minimal_discrete(X, A_full, B_expanded, C_expanded, chunk_size)
+        return y
+
+
 class Mamba2Triton(torch.nn.Module):
     def __init__(self):
         super().__init__()
         
     def forward(self, x, dt, A, B, C, chunk_size, D=None):
+        if mamba_chunk_scan_combined is None:
+            raise RuntimeError("mamba_ssm not installed")
         return mamba_chunk_scan_combined(x, dt, A, B, C, chunk_size, D=None)
 
 def mamba2_test(dtype, b, h, n, dv, causal, is_forwards, method_str, num_iters=10, verbose=True, torch_compile=False, **kwargs):
-    
+
+    baseline_method = Mamba2Baseline()
     triton_method = Mamba2Triton()
     if torch_compile and method_str == "mamba2_triton":
         try:
             triton_method = torch.compile(triton_method)
         except Exception as e:
             print(f"Could not compile triton_method: {e}")
-            
+
     for stage in ['warmup', 'timed']:
 
         start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
         end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_iters)]
-    
+
         for i in range(num_iters):
 
             x, dt, A, B, C, D, chunk_size, _ = get_inputs_mamba(dtype, b, h, n, dv, verbose)
@@ -147,10 +180,16 @@ def mamba2_test(dtype, b, h, n, dv, causal, is_forwards, method_str, num_iters=1
             a = rearrange(A*dt, "b h l -> b l h").to(torch.float32).contiguous().requires_grad_()
 
             try:
-                if method_str == "mamba2_tk": 
+                if method_str == "mamba2_tk":
                     torch.cuda.synchronize()
                     start_events[i].record()
                     y = mamba2(q, k, v, a)
+                    end_events[i].record()
+                    torch.cuda.synchronize()
+                elif method_str == "mamba2_baseline":
+                    torch.cuda.synchronize()
+                    start_events[i].record()
+                    y = baseline_method(x, dt, A, B, C, chunk_size, D=None)
                     end_events[i].record()
                     torch.cuda.synchronize()
                 elif method_str == "mamba2_triton":
@@ -173,9 +212,9 @@ def mamba2_test(dtype, b, h, n, dv, causal, is_forwards, method_str, num_iters=1
     tot = sum([s.elapsed_time(e) for s, e in zip(start_events, end_events)])/num_iters
     return y, tot
 
-    
+
 IMPLEMENTATIONS = {
-    "mamba2_triton": partial(mamba2_test, causal=True, is_forwards=True, method_str="mamba2_triton"),
+    "mamba2_baseline": partial(mamba2_test, causal=True, is_forwards=True, method_str="mamba2_baseline"),
     "mamba2_tk": partial(mamba2_test, causal=True, is_forwards=True, method_str="mamba2_tk"),
 }
 

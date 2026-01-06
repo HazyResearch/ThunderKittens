@@ -95,7 +95,7 @@ struct mamba2_fwd_template {
 			warpgroup::consumer_registers<NUM_CONSUMER_WARPS/WARPGROUP_WARPS>();
             warp::zero(args.state.kv);
 		}
-		__device__ static bool compute(consumer_compute_args<layout> args) {
+		__device__ static void compute(consumer_compute_args<layout> args) {
             int warpgroupid = warpgroup::groupid();
             // Start by doing cumsum into shared memory
             warpgroup::sync(warpgroupid);
