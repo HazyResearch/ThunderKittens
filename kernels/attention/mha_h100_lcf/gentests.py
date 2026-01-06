@@ -1,15 +1,15 @@
 import torch
-from tqdm import trange
 import numpy as np
 import sys
-from einops import rearrange, repeat
 import math
+
+print("Generating tests. This will take a few minutes")
 
 # only generate a single batch/head of data, which makes file loading much faster.
 # it does mean we'll have to check batch/head behavior separately later, but that should be much easier to debug.
-B = 256
-H = 1
-N = 924
+B = 16
+H = 16
+N = 3072  # Must be multiple of kv_tile rows (192 for D=64, 128 for D=128)
 D = 128
 
 softmax_scale = 1 / math.sqrt(D)
@@ -52,22 +52,14 @@ else:
 o = torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=False)
 
 fn = f'{TESTNAME}_{N}_{D}.txt'
-with open(fn, 'w') as f:
-    # inputs
-    qf = q.transpose(1,2).to(torch.float32).flatten().detach().cpu().numpy() #
-    kf = k.transpose(1,2).to(torch.float32).flatten().detach().cpu().numpy()
-    vf = v.transpose(1,2).to(torch.float32).flatten().detach().cpu().numpy()
-    of = o.transpose(1,2).to(torch.float32).flatten().detach().cpu().numpy()
-    
-    for i in trange(B*H*N*D):
-        f.write(repr(qf[i]))
-        f.write(' ')
-    for i in trange(B*H*N*D):
-        f.write(repr(kf[i]))
-        f.write(' ')
-    for i in trange(B*H*N*D):
-        f.write(repr(vf[i]))
-        f.write(' ')
-    for i in trange(B*H*N*D):
-        f.write(repr(of[i]))
-        f.write(' ')
+
+# Convert tensors to numpy arrays
+qf = q.transpose(1,2).to(torch.float32).flatten().detach().cpu().numpy()
+kf = k.transpose(1,2).to(torch.float32).flatten().detach().cpu().numpy()
+vf = v.transpose(1,2).to(torch.float32).flatten().detach().cpu().numpy()
+of = o.transpose(1,2).to(torch.float32).flatten().detach().cpu().numpy()
+
+with open(fn, 'wb') as f:
+    for name, arr in [('Q', qf), ('K', kf), ('V', vf), ('O', of)]:
+        print(f"Writing {name}...")
+        np.savetxt(f, arr.reshape(1, -1), fmt='%.8g', delimiter=' ', newline=' ')

@@ -45,7 +45,7 @@ template<int D> struct attn_fwd_template {
             if(warpgroup::warpid() == 0) {
                 warp::tma::expect(args.inputs_arrived, args.input);
                 warp::tma::load_async(args.input.k, args.globals.K, {args.common.batch, args.common.head, args.iter, 0}, args.inputs_arrived);
-                tma::load_async(args.input.v, args.globals.V, {args.common.batch, args.common.head, args.iter, 0}, args.inputs_arrived);
+                warp::tma::load_async(args.input.v, args.globals.V, {args.common.batch, args.common.head, args.iter, 0}, args.inputs_arrived);
             }
             else if(laneid() == 0) arrive(args.inputs_arrived);
         }
@@ -102,10 +102,10 @@ template<int D> struct attn_fwd_template {
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B = 256;
-constexpr int ATTN_H = 1;
-constexpr int ATTN_N = 924; // 768*2; // 4096;
-constexpr int ATTN_D = 128; // hardcoded into this kernel
+constexpr int ATTN_B = 16;
+constexpr int ATTN_H = 16;
+constexpr int ATTN_N = 3072; // Must be multiple of kv_tile rows (192 for D=64, 128 for D=128)
+constexpr int ATTN_D = 128;
 constexpr int ITER   = 10;
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
@@ -188,10 +188,10 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS * sizeof(bf16), cudaMemcpyHostToDevice);
 
-    ker_template::layout::qo_global Qg(d_q, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    ker_template::layout::kv_global Kg(d_k, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    ker_template::layout::kv_global Vg(d_v, ATTN_B, ATTN_H, ATTN_N, nullptr);
-    ker_template::layout::qo_global Og(d_o, ATTN_B, ATTN_H, ATTN_N, nullptr);
+    ker_template::layout::qo_global Qg(d_q, (size_t)ATTN_B, (size_t)ATTN_H, (size_t)ATTN_N, nullptr);
+    ker_template::layout::kv_global Kg(d_k, (size_t)ATTN_B, (size_t)ATTN_H, (size_t)ATTN_N, nullptr);
+    ker_template::layout::kv_global Vg(d_v, (size_t)ATTN_B, (size_t)ATTN_H, (size_t)ATTN_N, nullptr);
+    ker_template::layout::qo_global Og(d_o, (size_t)ATTN_B, (size_t)ATTN_H, (size_t)ATTN_N, nullptr);
     ker_template::layout::globals globals = {Og, Qg, Kg, Vg};
     
     unsigned long mem_size = kittens::MAX_SHARED_MEMORY - 2000; // have the flag tell us
@@ -204,7 +204,6 @@ int main(int argc, char **argv) {
 
     cudaDeviceSynchronize();
     std::cout << "Starting kernel\n";
-    constexpr int NUM_WORKERS = prototype::detail::NUM_CONSUMER_WARPGROUPS_v<ker_template>;
     constexpr int BLOCK_SIZE = prototype::detail::NUM_THREADS_v<ker_template>;
     dim3 grid(132, 1, 1);
     // dim3 bad_grid(grid.z, grid.y, grid.x);
@@ -228,6 +227,14 @@ int main(int argc, char **argv) {
     for(int i = 0; i < TOTAL_ELEMENTS; i++) {
         o[i] = __bfloat162float(o_bf[i]);
     }
+
+    // Print first 10 elements of O and O_REF
+    std::cout << "First 10 elements of O:     ";
+    for(int i = 0; i < 10; i++) std::cout << o[i] << " ";
+    std::cout << std::endl;
+    std::cout << "First 10 elements of O_REF: ";
+    for(int i = 0; i < 10; i++) std::cout << o_ref[i] << " ";
+    std::cout << std::endl;
 
     bool good = true;
     std::ofstream o_ref_file("printouts/o_ref.txt");
