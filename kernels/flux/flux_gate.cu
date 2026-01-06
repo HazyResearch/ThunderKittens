@@ -257,7 +257,7 @@ void run_bench(int M, int N, int K) {
 
     std::cout << "Copied matrices to device" << std::endl;
 
-    unsigned long mem_size = MAX_SHARED_MEMORY; // need to launch two blocks if possible.
+    unsigned long mem_size = MAX_SHARED_MEMORY - 1024; // need to launch two blocks if possible.
     
     cudaFuncSetAttribute(prototype::lcf::kernel<fmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
     // Launch kernel
@@ -385,7 +385,7 @@ void dispatch_fused_flux_linear_gate(
     bias_global Gateg{d_gate, nullptr, nullptr, nullptr, N};
     globals G{Ag, Bg, Biasg, Gateg, Yg, Cg};
 
-    unsigned long mem_size = MAX_SHARED_MEMORY; // need to launch two blocks if possible.
+    unsigned long mem_size = MAX_SHARED_MEMORY - 1024; // need to launch two blocks if possible.
     
     cudaFuncSetAttribute(prototype::lcf::kernel<fmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
     // Launch kernel
