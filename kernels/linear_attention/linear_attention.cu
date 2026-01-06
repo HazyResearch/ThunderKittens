@@ -115,10 +115,16 @@ __device__ static inline void wg_mask(RT &dst, const RT &src, float slope) {
 }
 
 __device__ static inline void wg_arange(auto &vec) {
+    // Each warp in the warpgroup writes to its own portion to avoid races
+    // vec.length = 64 (CHUNK_SIZE), 4 warps per warpgroup -> 16 elements per warp
+    constexpr int WARPS_PER_WG = kittens::WARPGROUP_WARPS;
+    int warp_in_group = warpid() % WARPS_PER_WG;
+    int elements_per_warp = vec.length / WARPS_PER_WG;
+    int start = warp_in_group * elements_per_warp;
     #pragma unroll
-    for(int i = 0; i < vec.length; i++) {
-        float val = static_cast<float>(i) + ((warpid() % kittens::WARPGROUP_WARPS) * vec.length); 
-        vec.data[i] = val; 
+    for(int i = 0; i < elements_per_warp; i++) {
+        float val = static_cast<float>(start + i);
+        vec.data[start + i] = val;
     }
     group<4>::sync(5 + warpgroupid());
 }
@@ -263,8 +269,10 @@ void la_kernel (const __grid_constant__ la_globals g, int N)
             warpgroup::load(decay, k_decay);
             warp::mul_row(local_k_0, local_k_0, decay);
             warp::mul_row(local_k_1, local_k_1, decay);
-            warpgroup::store(k_smem_split[toc][0], local_k_0);
-            warpgroup::store(k_smem_split[toc][1], local_k_1);
+            // Store decayed K back to tic (safe since TMA is done with it)
+            // NOT to toc, which races with TMA loading the next block
+            warpgroup::store(k_smem_split[tic][0], local_k_0);
+            warpgroup::store(k_smem_split[tic][1], local_k_1);
 
             if (block != 0 && warpid == 4) { warp::tma::store_async_wait(); }
             if               (warpid == 4) { warp::tma::store_add_async(g.o, o_smem[warpgroupid], {batch, head, block, 0}); }
@@ -425,7 +433,7 @@ int main(int argc, char **argv) {
     CudaCheckError();
 
     // Set up kernel configuration
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY; 
+    unsigned long mem_size = kittens::MAX_SHARED_MEMORY - 1024; 
 
     // Initialize kernel configuration
     la_globals g = la_init(
