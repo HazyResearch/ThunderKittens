@@ -1,16 +1,13 @@
 import torch
 import numpy as np
-import sys
 import math
 
-# only generate a single batch/head of data, which makes file loading much faster.
-# it does mean we'll have to check batch/head behavior separately later, but that should be much easier to debug.
-B = 1
-N = int(sys.argv[1])
-D = int(sys.argv[2])
-
-H_QO = int(sys.argv[3])
-H_KV = int(sys.argv[4])
+# Fixed configuration matching harness.impl
+B = 16
+N = 3072
+D = 128
+H_QO = 16
+H_KV = 16
 
 causal = False
 
@@ -103,14 +100,7 @@ print(f'Average magnitude of D tensor:      {d_vec.abs().mean()}')
 print(f'1/100 magnitude of D tensor:        {d_vec.abs().mean()/100}')
 print("--------------------------------------")
 
-filename = f'randn_{N}N_{D}D_{H_QO}QO_{H_KV}KV'
-
-if causal:
-    filename += '_causal'
-if H_QO != H_KV:
-    filename += '_gqa'
-
-filename += '.txt'
+filename = 'randn_inputs.txt'
 
 # Convert tensors to numpy arrays
 qf = q.to(torch.float32).flatten().detach().cpu().numpy()
