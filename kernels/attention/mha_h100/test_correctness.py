@@ -1,10 +1,11 @@
 import torch
 from flash_attn_interface import flash_attn_func
-from _C import 
 import random
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
+
+import _C as tk
 
 def pytorch_test(Q, K, V, dO, causal):
     q_ = Q.to(torch.float64).requires_grad_()

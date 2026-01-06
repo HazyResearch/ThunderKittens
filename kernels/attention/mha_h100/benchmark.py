@@ -1,7 +1,8 @@
 import torch
 from functools import partial
 import numpy as np
-from _C import 
+
+import _C as tk
 
 try:
     # To compare to Flash Attention 2
