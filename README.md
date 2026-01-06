@@ -294,14 +294,9 @@ huggingface-cli login
 ```
 Set the directory at which you want the models to download in the `_model_config.yaml` file in the `demos/configs/` directory.
 
-Next, install the TK kernels: 
-
-1. From the `ThunderKittens/` directory, run `source env.src` to set the environment variables.
-2. In `ThunderKittens/config.py` select `hedgehog` and `attn` and run `python setup.py install` to install the TK kernels.
-
 #### Attention 
 
-Attention powers a large number of current LLMs. TK includes forwards / prefill and backwards kernels. We include causal, non-causal, and GQA variants.
+Attention powers a large number of current LLMs. TK includes forwards / prefill and backwards kernels. We include causal and non-causal variants.
 
 We include LLM inference integrations:
 
