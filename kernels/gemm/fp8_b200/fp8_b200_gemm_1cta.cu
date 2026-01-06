@@ -1,4 +1,5 @@
 #include "kittens.cuh"
+#include "../common.cuh"
 #include <iostream>
 
 constexpr int NUM_CONSUMERS = (2); 
@@ -181,20 +182,7 @@ constexpr bool NCU = false;
 #include <iostream>
 #include <random>
 #include <cuda_bf16.h>
-#include <omp.h>
 
-void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
-    #pragma omp parallel for collapse(2) // otherwise the CPU version takes for everrrrrr
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            float sum = 0.0f;
-            for (int k = 0; k < K; k++) {
-                sum += a[i * K + k] * b[j * K + k];
-            }
-            c[i * N + j] = sum;
-        }
-    }
-}
 
 void inner_run(fp8e4m3 *d_A, fp8e4m3 *d_B, half *d_C, size_t M, size_t N, size_t K, dim3 grid, dim3 block) {
     using globals  = matmul_globals;
@@ -215,7 +203,6 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     float *h_A = new float[M * K];
     float *h_B = new float[K * N];
     float *h_C = new float[M * N];
-    float *h_C_ref = new float[M * N];
 
     std::cout << "Allocated host memory" << std::endl;
 
@@ -232,10 +219,11 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 
     // Allocate device memory
     fp8e4m3 *d_A, *d_B;
-    half *d_C;
+    half *d_C, *d_C_ref;
     cudaMalloc(&d_A, M*K*sizeof(fp8e4m3));
     cudaMalloc(&d_B, K*N*sizeof(fp8e4m3));
     cudaMalloc(&d_C, M*N*sizeof(half));
+    cudaMalloc(&d_C_ref, M*N*sizeof(half));
 
     // Check for CUDA errors
     cudaStatus = cudaGetLastError();
@@ -257,13 +245,12 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 
     cudaMemcpy(d_A, h_A_fp8, M*K*sizeof(fp8e4m3), cudaMemcpyHostToDevice);
     cudaMemcpy(d_B, h_B_fp8, K*N*sizeof(fp8e4m3), cudaMemcpyHostToDevice);
-
     std::cout << "Copied matrices to device" << std::endl;
 
-    // Perform CPU matrix multiplication for reference
-    if(true) cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
-
-    std::cout << "Performed CPU matrix multiplication" << std::endl;
+    // Compute reference GEMM on GPU (transpose_b=true for ABt layout)
+    reference_gemm<fp8e4m3, half, true>(d_C_ref, d_A, d_B, M, N, K);
+    cudaDeviceSynchronize();
+    std::cout << "Computed reference GEMM on device" << std::endl;
 
     unsigned long mem_size = MAX_SHARED_MEMORY - 1024;
     cudaFuncSetAttribute(matmul, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
@@ -311,12 +298,16 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 
     // Copy result back to host
     half *h_C_fp16 = new half[M * N];
+    half *h_C_ref_fp16 = new half[M * N];
     cudaMemcpy(h_C_fp16, d_C, M*N*sizeof(half), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_C_ref_fp16, d_C_ref, M*N*sizeof(half), cudaMemcpyDeviceToHost);
 
     std::cout << "Copied result back to host" << std::endl;
 
     // Convert result back to float for comparison
+    float *h_C_ref = new float[M * N];
     for (int i = 0; i < M * N; ++i) h_C[i] = __half2float(h_C_fp16[i]);
+    for (int i = 0; i < M * N; ++i) h_C_ref[i] = __half2float(h_C_ref_fp16[i]);
 
     std::cout << "Converted result back to float" << std::endl;
 
@@ -344,9 +335,11 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     delete[] h_A_fp8;
     delete[] h_B_fp8;
     delete[] h_C_fp16;
+    delete[] h_C_ref_fp16;
     cudaFree(d_A);
     cudaFree(d_B);
     cudaFree(d_C);
+    cudaFree(d_C_ref);
 
     return 0;
 }

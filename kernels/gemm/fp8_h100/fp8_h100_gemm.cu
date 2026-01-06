@@ -106,7 +106,6 @@ struct matmul_template {
 #include <random>
 #include <cuda_bf16.h>
 #include <cuda_fp8.h>
-#include <omp.h>
 
 template<typename mmt>
 void inner_run(fp8e4m3 *d_A, fp8e4m3 *d_B, fp8e4m3 *d_C, size_t M, size_t N, size_t K, dim3 grid, dim3 block) {

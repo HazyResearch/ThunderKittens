@@ -2,7 +2,6 @@
 #include <iostream>
 #include <random>
 #include <cuda_bf16.h>
-#include <omp.h>
 #include <chrono>
 
 using my_dtype = float;

@@ -4,10 +4,10 @@
 #include <random>
 #include <cuda_bf16.h>
 #include <cuda_fp8.h>
-#include <omp.h>
 
 #include "kittens.cuh"
 #include "prototype.cuh"
+#include "../common.cuh"
 
 using namespace kittens;
 using namespace kittens::prototype;
@@ -170,19 +170,6 @@ void write_matrix_to_csv(const std::string& filename, float* matrix, int rows, i
     file.close();
 }
 
-void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
-    std::cout << "CPU M=" << M << " N=" << N << " K=" << K << std::endl;
-    #pragma omp parallel for collapse(2) // otherwise the CPU version takes for everrrrrr
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            float sum = 0.0f;
-            for (int k = 0; k < K; k++) {
-                sum += a[i * K + k] * b[j * K + k]; // mma_ABt
-            }
-            c[i * N + j] = sum;
-        }
-    }
-}
 
 template<typename mmt>
 int run_benchmark(size_t M, size_t N, size_t K) {
@@ -194,7 +181,6 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     float *h_A = new float[M * K];
     float *h_B = new float[K * N];
     float *h_C = new float[M * N];
-    float *h_C_ref = new float[M * N];
 
     std::cout << "Allocated host memory" << std::endl;
 
@@ -221,6 +207,11 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     c_dtype *d_scale_a, *d_scale_b;
     cudaMalloc(&d_scale_a, M*sizeof(c_dtype));
     cudaMalloc(&d_scale_b, N*sizeof(c_dtype));
+    // float buffers for reference GEMM
+    float *d_A_float, *d_B_float, *d_C_ref;
+    cudaMalloc(&d_A_float, M*K*sizeof(float));
+    cudaMalloc(&d_B_float, K*N*sizeof(float));
+    cudaMalloc(&d_C_ref, M*N*sizeof(float));
 
     // Check for CUDA errors
     cudaStatus = cudaGetLastError();
@@ -232,9 +223,12 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 
     std::cout << "Allocated device memory" << std::endl;
 
-    // Perform CPU matrix multiplication for reference
-    if(true) cpu_gemm(h_A, h_B, h_C_ref, M, N, K);
-    std::cout << "Performed CPU matrix multiplication" << std::endl;
+    // Copy float matrices to device and compute reference GEMM on GPU
+    cudaMemcpy(d_A_float, h_A, M*K*sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B_float, h_B, K*N*sizeof(float), cudaMemcpyHostToDevice);
+    reference_gemm<float, float, true>(d_C_ref, d_A_float, d_B_float, M, N, K);
+    cudaDeviceSynchronize();
+    std::cout << "Computed reference GEMM on device" << std::endl;
 
     //  Obtain inputs on GPU device
     const float FP8_E4M3_MAX = 448.0f;
@@ -340,7 +334,9 @@ int run_benchmark(size_t M, size_t N, size_t K) {
 
     // Copy result back to host
     c_dtype *h_C_out = new c_dtype[M * N];
+    float *h_C_ref = new float[M * N];
     cudaMemcpy(h_C_out, d_C, M*N*sizeof(c_dtype), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_C_ref, d_C_ref, M*N*sizeof(float), cudaMemcpyDeviceToHost);
 
     std::cout << "Copied result back to host" << std::endl;
 
@@ -397,6 +393,9 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     cudaFree(d_A);
     cudaFree(d_B);
     cudaFree(d_C);
+    cudaFree(d_A_float);
+    cudaFree(d_B_float);
+    cudaFree(d_C_ref);
 
     return 0;
 }
