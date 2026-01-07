@@ -207,6 +207,8 @@ NAME = "ATTENTION"
 # TODO: this code is redundant on every benchmark currently
 
 import pandas as pd
+pd.set_option('display.max_columns', None)
+pd.set_option('display.width', None)
 
 import warnings
 warnings.filterwarnings("ignore", message=".*not a leaf Tensor is being accessed.*")
