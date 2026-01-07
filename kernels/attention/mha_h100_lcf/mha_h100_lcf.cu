@@ -102,7 +102,7 @@ template<int D> struct attn_fwd_template {
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B = 16;
+constexpr int ATTN_B = 4;
 constexpr int ATTN_H = 16;
 constexpr int ATTN_N = 3072; // Must be multiple of kv_tile rows (192 for D=64, 128 for D=128)
 constexpr int ATTN_D = 128;

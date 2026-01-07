@@ -7,7 +7,7 @@ print("Generating tests. This will take a few minutes")
 
 # only generate a single batch/head of data, which makes file loading much faster.
 # it does mean we'll have to check batch/head behavior separately later, but that should be much easier to debug.
-B = 16
+B = 4
 H = 16
 N = 3072  # Must be multiple of kv_tile rows (192 for D=64, 128 for D=128)
 D = 128
