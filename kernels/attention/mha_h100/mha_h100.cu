@@ -162,7 +162,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
                       int k_blk = (kv_idx * (K::kv_height/kittens::TILE_ROW_DIM<bf16>)); 
 
                 #pragma unroll
-                for(int _ = 0; k_blk == (kv_iters-1)*(K::kv_height/kittens::TILE_ROW_DIM<bf16>) || k_blk == (kv_iters)*(K::kv_height/kittens::TILE_ROW_DIM<bf16>); k_blk+=10000) {
+                for(; k_blk == (kv_iters-1)*(K::kv_height/kittens::TILE_ROW_DIM<bf16>) || k_blk == (kv_iters)*(K::kv_height/kittens::TILE_ROW_DIM<bf16>); k_blk+=10000) {
                     #pragma unroll
                     for (auto j = 0; j < (K::kv_height/kittens::TILE_ROW_DIM<bf16>); j++) {
                         auto k_idx = k_blk + j;
@@ -589,9 +589,6 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
     }
     else {
         rt_fl<16, G::tile_width> kg_reg, vg_reg;
-    
-        row_vec<rt_fl<16, 64>> row_reg; 
-
         rt_fl<16, 64> s_block_t,  p_block_t; 
         rt_fl<16, 64> ds_block_t, dp_block_t; 
         rt_bf<16, 64> ds_block_t_mma, p_block_t_mma;
@@ -648,6 +645,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
 
 #include "pyutils/torchutils.cuh"
 #include <ATen/cuda/CUDAContext.h>
+#include <ATen/Functions.h>
 #include <iostream>
 
 std::vector<at::Tensor> 
@@ -699,11 +697,11 @@ attention_forward(at::Tensor q, at::Tensor k, at::Tensor v, bool causal)
                                         static_cast<const uint>(seq_len), 
                                         static_cast<const uint>(head_dim)}, v.options());
     
-    at::Tensor l_vec = at::empty({static_cast<const uint>(batch), 
-                                        static_cast<const uint>(qo_heads), 
-                                        static_cast<const uint>(seq_len), 
-                                        static_cast<const uint>(1)}, 
-                                        torch::TensorOptions().dtype(torch::kFloat).device(q.device()).memory_format(at::MemoryFormat::Contiguous));
+    at::Tensor l_vec = at::empty({static_cast<long>(batch),
+                                        static_cast<long>(qo_heads),
+                                        static_cast<long>(seq_len),
+                                        static_cast<long>(1)},
+                                        q.options().dtype(at::kFloat));
         
 
     bf16*  o_ptr = reinterpret_cast<bf16*>(o.data_ptr<c10::BFloat16>());
@@ -716,50 +714,38 @@ attention_forward(at::Tensor q, at::Tensor k, at::Tensor v, bool causal)
     auto stream = at::cuda::getCurrentCUDAStream().stream(); 
 
     if (head_dim == 64) {
-        using q_tile    =         st_bf<fwd_attend_ker_tile_dims<64>::qo_height, fwd_attend_ker_tile_dims<64>::tile_width>;
-        using k_tile    =         st_bf<fwd_attend_ker_tile_dims<64>::kv_height, fwd_attend_ker_tile_dims<64>::tile_width>;
-        using v_tile    =         st_bf<fwd_attend_ker_tile_dims<64>::kv_height, fwd_attend_ker_tile_dims<64>::tile_width>;
-        using l_col_vec = col_vec<st_fl<fwd_attend_ker_tile_dims<64>::qo_height, fwd_attend_ker_tile_dims<64>::tile_width>>;
-        using o_tile    =         st_bf<fwd_attend_ker_tile_dims<64>::qo_height, fwd_attend_ker_tile_dims<64>::tile_width>;
-
-        using q_global = gl<bf16,  -1, -1, -1, -1, q_tile>;
-        using k_global = gl<bf16,  -1, -1, -1, -1, k_tile>;
-        using v_global = gl<bf16,  -1, -1, -1, -1, v_tile>;
-        using l_global = gl<float, -1, -1, -1, -1, l_col_vec>;
-        using o_global = gl<bf16,  -1, -1, -1, -1, o_tile>;
-
-        using globals      = fwd_globals<64>;
+        using globals = fwd_globals<64>;
+        using q_global = typename globals::q_gl;
+        using k_global = typename globals::k_gl;
+        using v_global = typename globals::v_gl;
+        using l_global = typename globals::l_gl;
+        using o_global = typename globals::o_gl;
 
         q_global qg_arg{d_q, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 64U};
         k_global kg_arg{d_k, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(seq_len), 64U};
         v_global vg_arg{d_v, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(seq_len), 64U};
-        l_global lg_arg{d_l, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), 1U,  static_cast<unsigned int>(seq_len)};
+        l_global lg_arg{d_l, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), 1U, static_cast<unsigned int>(seq_len)};
         o_global og_arg{d_o, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 64U};
 
-        globals g{qg_arg, kg_arg, vg_arg, lg_arg, og_arg, static_cast<int>(seq_len), static_cast<int>(hr)};
+        globals g{
+            qg_arg,
+            kg_arg,
+            vg_arg,
+            lg_arg,
+            og_arg,
+            static_cast<int>(seq_len),
+            static_cast<int>(hr)
+        };
 
-        auto mem_size = kittens::MAX_SHARED_MEMORY;
-        auto threads  = NUM_WORKERS * kittens::WARP_THREADS;
+        auto mem_size = kittens::MAX_SHARED_MEMORY - 1024;  // Reduce slightly to avoid edge cases
 
-        // TORCH_CHECK(seq_len % (CONSUMER_WARPGROUPS*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 192");
         dim3 grid(seq_len/(CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>*4), qo_heads, batch);
 
         if (is_causal) {
-            cudaFuncSetAttribute(
-                fwd_attend_ker<64, true>,
-                cudaFuncAttributeMaxDynamicSharedMemorySize,
-                mem_size
-            );
-
+            cudaFuncSetAttribute(fwd_attend_ker<64, true>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
             fwd_attend_ker<64, true><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
-        }
-        else {
-            cudaFuncSetAttribute(
-                fwd_attend_ker<64, false>,
-                cudaFuncAttributeMaxDynamicSharedMemorySize,
-                mem_size
-            );
-
+        } else {
+            cudaFuncSetAttribute(fwd_attend_ker<64, false>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
             fwd_attend_ker<64, false><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
         }
         CHECK_CUDA_ERROR(cudaGetLastError());
@@ -767,50 +753,38 @@ attention_forward(at::Tensor q, at::Tensor k, at::Tensor v, bool causal)
     }
 
     if (head_dim == 128) {
-        using q_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width>;
-        using k_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::kv_height, fwd_attend_ker_tile_dims<128>::tile_width>;
-        using v_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::kv_height, fwd_attend_ker_tile_dims<128>::tile_width>;
-        using l_col_vec = col_vec<st_fl<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width>>;
-        using o_tile    =         st_bf<fwd_attend_ker_tile_dims<128>::qo_height, fwd_attend_ker_tile_dims<128>::tile_width>;
-
-        using q_global = gl<bf16,  -1, -1, -1, -1, q_tile>;
-        using k_global = gl<bf16,  -1, -1, -1, -1, k_tile>;
-        using v_global = gl<bf16,  -1, -1, -1, -1, v_tile>;
-        using l_global = gl<float, -1, -1, -1, -1, l_col_vec>;
-        using o_global = gl<bf16,  -1, -1, -1, -1, o_tile>;
-
-        using globals      = fwd_globals<128>;
+        using globals = fwd_globals<128>;
+        using q_global = typename globals::q_gl;
+        using k_global = typename globals::k_gl;
+        using v_global = typename globals::v_gl;
+        using l_global = typename globals::l_gl;
+        using o_global = typename globals::o_gl;
 
         q_global qg_arg{d_q, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 128U};
         k_global kg_arg{d_k, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(seq_len), 128U};
         v_global vg_arg{d_v, static_cast<unsigned int>(batch), static_cast<unsigned int>(kv_heads), static_cast<unsigned int>(seq_len), 128U};
-        l_global lg_arg{d_l, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), 1U,   static_cast<unsigned int>(seq_len)};
+        l_global lg_arg{d_l, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), 1U, static_cast<unsigned int>(seq_len)};
         o_global og_arg{d_o, static_cast<unsigned int>(batch), static_cast<unsigned int>(qo_heads), static_cast<unsigned int>(seq_len), 128U};
 
-        globals g{qg_arg, kg_arg, vg_arg, lg_arg, og_arg, static_cast<int>(seq_len), static_cast<int>(hr)};
+        globals g{
+            qg_arg,
+            kg_arg,
+            vg_arg,
+            lg_arg,
+            og_arg,
+            static_cast<int>(seq_len),
+            static_cast<int>(hr)
+        };
 
-        auto mem_size = kittens::MAX_SHARED_MEMORY;
-        auto threads  = NUM_WORKERS * kittens::WARP_THREADS;
+        auto mem_size = kittens::MAX_SHARED_MEMORY - 1024;  // Reduce slightly to avoid edge cases
 
-        // TORCH_CHECK(seq_len % (CONSUMER_WARPGROUPS*kittens::TILE_DIM*4) == 0, "sequence length must be divisible by 192");
         dim3 grid(seq_len/(CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>*4), qo_heads, batch);
 
         if (is_causal) {
-            cudaFuncSetAttribute(
-                fwd_attend_ker<128, true>,
-                cudaFuncAttributeMaxDynamicSharedMemorySize,
-                mem_size
-            );
-
+            cudaFuncSetAttribute(fwd_attend_ker<128, true>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
             fwd_attend_ker<128, true><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
-        }
-        else {
-            cudaFuncSetAttribute(
-                fwd_attend_ker<128, false>,
-                cudaFuncAttributeMaxDynamicSharedMemorySize,
-                mem_size
-            );
-
+        } else {
+            cudaFuncSetAttribute(fwd_attend_ker<128, false>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
             fwd_attend_ker<128, false><<<grid, (32*NUM_WORKERS), mem_size, stream>>>(g);
         }
 
@@ -888,23 +862,23 @@ attention_backward(at::Tensor q,
     c10::BFloat16* og_ptr = og.data_ptr<c10::BFloat16>();
     float*         l_ptr  = l_vec.data_ptr<float>();
 
-    at::Tensor qg = torch::zeros({static_cast<const uint>(batch), 
-                                     static_cast<const uint>(qo_heads), 
-                                     static_cast<const uint>(seq_len), 
-                                     static_cast<const uint>(head_dim)},   l_vec.options());
-    at::Tensor kg = torch::zeros({static_cast<const uint>(batch), 
-                                     static_cast<const uint>(kv_heads), 
-                                     static_cast<const uint>(seq_len), 
-                                     static_cast<const uint>(head_dim)},   l_vec.options());
-    at::Tensor vg = torch::zeros({static_cast<const uint>(batch), 
-                                     static_cast<const uint>(kv_heads), 
-                                     static_cast<const uint>(seq_len), 
-                                     static_cast<const uint>(head_dim)},   l_vec.options());
-    
-    at::Tensor d_vec = at::empty({static_cast<const uint>(batch), 
-                                        static_cast<const uint>(qo_heads), 
-                                        static_cast<const uint>(seq_len), 
-                                        static_cast<const uint>(1)},       l_vec.options());
+    at::Tensor qg = at::zeros({static_cast<long>(batch),
+                                     static_cast<long>(qo_heads),
+                                     static_cast<long>(seq_len),
+                                     static_cast<long>(head_dim)},   l_vec.options());
+    at::Tensor kg = at::zeros({static_cast<long>(batch),
+                                     static_cast<long>(kv_heads),
+                                     static_cast<long>(seq_len),
+                                     static_cast<long>(head_dim)},   l_vec.options());
+    at::Tensor vg = at::zeros({static_cast<long>(batch),
+                                     static_cast<long>(kv_heads),
+                                     static_cast<long>(seq_len),
+                                     static_cast<long>(head_dim)},   l_vec.options());
+
+    at::Tensor d_vec = at::empty({static_cast<long>(batch),
+                                        static_cast<long>(qo_heads),
+                                        static_cast<long>(seq_len),
+                                        static_cast<long>(1)},       l_vec.options());
 
     float*         qg_ptr = qg.data_ptr<float>();
     float*         kg_ptr = kg.data_ptr<float>();
@@ -950,13 +924,18 @@ attention_backward(at::Tensor q,
 
         bwd_prep_globals bwd_g{prep_og_arg, prep_o_arg, prep_d_arg};
 
+        using prep_og_tile = st_bf<64, 64>;
+        using prep_o_tile  = st_bf<64, 64>;
+        using prep_d_tile  = col_vec<st_fl<64, 64>>;
+        size_t prep_mem_size = sizeof(prep_og_tile) * 4 + sizeof(prep_o_tile) * 4 + sizeof(prep_d_tile) * 4 + 4096;
+
         cudaFuncSetAttribute(
             bwd_attend_prep_ker<64>,
             cudaFuncAttributeMaxDynamicSharedMemorySize,
-            mem_size
+            prep_mem_size
         );
 
-        bwd_attend_prep_ker<64><<<grid_bwd, threads, mem_size, stream>>>(bwd_g); 
+        bwd_attend_prep_ker<64><<<grid_bwd, threads, prep_mem_size, stream>>>(bwd_g);
 
         using bwd_q_tile    =         st_bf<bwd_attend_ker_tile_dims<64>::tile_h_qo, bwd_attend_ker_tile_dims<64>::tile_width>;
         using bwd_k_tile    =         st_bf<bwd_attend_ker_tile_dims<64>::tile_h,    bwd_attend_ker_tile_dims<64>::tile_width>;
@@ -1012,32 +991,11 @@ attention_backward(at::Tensor q,
         cudaDeviceSynchronize();
 
         if (is_causal) {
-            cudaFuncSetAttribute(
-                bwd_attend_ker<64, true>,
-                cudaFuncAttributeMaxDynamicSharedMemorySize,
-                194000
-            );
-            cudaFuncSetAttribute(
-                bwd_attend_ker<64, true>,
-                cudaFuncAttributePreferredSharedMemoryCarveout,
-                85
-            );
-            
-            bwd_attend_ker<64, true><<<grid_bwd_2, threads, 194000, stream>>>(bwd_global); 
-        }
-        else {
-            cudaFuncSetAttribute(
-                bwd_attend_ker<64, false>,
-                cudaFuncAttributeMaxDynamicSharedMemorySize,
-                194000
-            );
-            cudaFuncSetAttribute(
-                bwd_attend_ker<64, false>,
-                cudaFuncAttributePreferredSharedMemoryCarveout,
-                85
-            );
-            
-            bwd_attend_ker<64, false><<<grid_bwd_2, threads, 194000, stream>>>(bwd_global); 
+            cudaFuncSetAttribute(bwd_attend_ker<64, true>, cudaFuncAttributeMaxDynamicSharedMemorySize, 117760);
+            bwd_attend_ker<64, true><<<grid_bwd_2, threads, 117760, stream>>>(bwd_global);
+        } else {
+            cudaFuncSetAttribute(bwd_attend_ker<64, false>, cudaFuncAttributeMaxDynamicSharedMemorySize, 117760);
+            bwd_attend_ker<64, false><<<grid_bwd_2, threads, 117760, stream>>>(bwd_global);
         }
 
         // CHECK_CUDA_ERROR(cudaGetLastError());
@@ -1065,13 +1023,18 @@ attention_backward(at::Tensor q,
 
         bwd_prep_globals bwd_g{prep_og_arg, prep_o_arg, prep_d_arg};
 
+        using prep_og_tile = st_bf<64, 128>;
+        using prep_o_tile  = st_bf<64, 128>;
+        using prep_d_tile  = col_vec<st_fl<64, 128>>;
+        size_t prep_mem_size = sizeof(prep_og_tile) * 4 + sizeof(prep_o_tile) * 4 + sizeof(prep_d_tile) * 4 + 4096;
+
         cudaFuncSetAttribute(
             bwd_attend_prep_ker<128>,
             cudaFuncAttributeMaxDynamicSharedMemorySize,
-            mem_size
+            prep_mem_size
         );
 
-        bwd_attend_prep_ker<128><<<grid_bwd, threads, mem_size, stream>>>(bwd_g); 
+        bwd_attend_prep_ker<128><<<grid_bwd, threads, prep_mem_size, stream>>>(bwd_g); 
 
         using bwd_q_tile    =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h_qo, bwd_attend_ker_tile_dims<128>::tile_width>;
         using bwd_k_tile    =         st_bf<bwd_attend_ker_tile_dims<128>::tile_h,    bwd_attend_ker_tile_dims<128>::tile_width>;
@@ -1129,32 +1092,11 @@ attention_backward(at::Tensor q,
         cudaDeviceSynchronize(); 
         
         if (is_causal) {
-            cudaFuncSetAttribute(
-                bwd_attend_ker<128, true>,
-                cudaFuncAttributeMaxDynamicSharedMemorySize,
-                194000
-            );
-            cudaFuncSetAttribute(
-                bwd_attend_ker<128, true>,
-                cudaFuncAttributePreferredSharedMemoryCarveout,
-                85
-            );
-            
-            bwd_attend_ker<128, true><<<grid_bwd_2, threads, 194000, stream>>>(bwd_global); 
-        }
-        else {
-            cudaFuncSetAttribute(
-                bwd_attend_ker<128, false>,
-                cudaFuncAttributeMaxDynamicSharedMemorySize,
-                194000
-            );
-            cudaFuncSetAttribute(
-                bwd_attend_ker<128, false>,
-                cudaFuncAttributePreferredSharedMemoryCarveout,
-                85
-            );
-            
-            bwd_attend_ker<128, false><<<grid_bwd_2, threads, 194000, stream>>>(bwd_global); 
+            cudaFuncSetAttribute(bwd_attend_ker<128, true>, cudaFuncAttributeMaxDynamicSharedMemorySize, 183296);
+            bwd_attend_ker<128, true><<<grid_bwd_2, threads, 183296, stream>>>(bwd_global);
+        } else {
+            cudaFuncSetAttribute(bwd_attend_ker<128, false>, cudaFuncAttributeMaxDynamicSharedMemorySize, 183296);
+            bwd_attend_ker<128, false><<<grid_bwd_2, threads, 183296, stream>>>(bwd_global);
         }
 
         // CHECK_CUDA_ERROR(cudaGetLastError());
@@ -1167,8 +1109,8 @@ attention_backward(at::Tensor q,
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("mha_forward",  torch::wrap_pybind_function(attention_forward), "Bidirectional forward MHA. Takes Q,K,V,O in (B,H,N,D) where D must be 64 or 128, and N must be a multiple of 64. Additionally writes out norm vector L of shape (B,H,N), used in backward pass.");
-    m.def("mha_backward", torch::wrap_pybind_function(attention_backward), "Bidirectional backward MHA. Takes Q,K,V,O,Og,Qg,Kg,Vg in (B,H,N,D) where D must be 64 or 128, and N must be a multiple of 64. Additionally requres norm vec l_vec, and (TODO) d_vec memory.");
+    m.def("mha_forward",  attention_forward, "Bidirectional forward MHA. Takes Q,K,V,O in (B,H,N,D) where D must be 64 or 128, and N must be a multiple of 64. Additionally writes out norm vector L of shape (B,H,N), used in backward pass.");
+    m.def("mha_backward", attention_backward, "Bidirectional backward MHA. Takes Q,K,V,O,Og,Qg,Kg,Vg in (B,H,N,D) where D must be 64 or 128, and N must be a multiple of 64. Additionally requres norm vec l_vec, and (TODO) d_vec memory.");
 }
 
 #else

@@ -1,11 +1,16 @@
 import torch
-from flash_attn_interface import flash_attn_func
 import random
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
 
 import _C as tk
+
+try:
+    from flash_attn_interface import flash_attn_func
+except ImportError:
+    flash_attn_func = None
+    print("Warning: flash_attn_interface not available, FA3 tests will be skipped")
 
 def pytorch_test(Q, K, V, dO, causal):
     q_ = Q.to(torch.float64).requires_grad_()
@@ -45,85 +50,90 @@ def fa2_test(Q, K, V, dO, causal):
     return output, Q.grad, K.grad, V.grad
 
 def fa3_test(Q, K, V, dO, causal):
+    if not flash_attn_func:
+        return None, None, None, None
     Q_  = Q.permute(0, 2, 1, 3).clone().detach().contiguous()
     K_  = K.permute(0, 2, 1, 3).clone().detach().contiguous()
     V_  = V.permute(0, 2, 1, 3).clone().detach().contiguous()
     dO_ = dO.permute(0, 2, 1, 3).clone().detach().contiguous()
-    
+
     Q_.requires_grad = True
     K_.requires_grad = True
     V_.requires_grad = True
-    
+
     out, _ = flash_attn_func(Q_, K_, V_, causal=causal)
     out.backward(dO_)
-    
+
     qgrad = Q_.grad
     kgrad = K_.grad
     vgrad = V_.grad
-    
+
     qg_ = qgrad.permute(0, 2, 1, 3).contiguous()
     kg_ = kgrad.permute(0, 2, 1, 3).contiguous()
     vg_ = vgrad.permute(0, 2, 1, 3).contiguous()
-    
+
     output = out.permute(0, 2, 1, 3).contiguous()
-    
+
     return output, qg_, kg_, vg_
 
 
-def h100_fwd_kernel_test(Q, K, V, dO, causal, mode): 
+def h100_fwd_kernel_test(Q, K, V, dO, causal, mode):
     if mode == 'backward':
         o = torch.nn.functional.scaled_dot_product_attention(Q, K, V, is_causal=causal)
-        
+
         q_ = Q.to(torch.float64)
         k_ = K.to(torch.float64)
-        
+
         QK = torch.einsum('bhnd,bhmd->bhnm', q_, k_)
-        
+
         if causal:
             mask = torch.triu(torch.ones(QK.size(-2), QK.size(-1)), 1).to(torch.bool).to(QK.device)
             QK.masked_fill_(mask, float('-inf'))
-        
+
         # compute rowmax
         max_vec = QK.max(dim=-1, keepdim=True).values
-        
+
         QK = QK * (1.0 / (q_.size(-1) ** 0.5))
         QK = QK * (1.44269504089)
-        
+
         max_vec = max_vec * (1.44269504089) * (1.0 / (q_.size(-1) ** 0.5))
 
         QK = QK - max_vec
         QK = torch.exp2(QK)
-        
+
         norm_vec = QK.sum(dim=-1, keepdim=True)
-        
+
         max_vec  = max_vec * 0.69314718056
         norm_vec = torch.log(norm_vec)
         l_vec   = max_vec + norm_vec
-        
+
         if (q_.size(-1) == 64):
             l_vec = l_vec * -8.0
         if (q_.size(-1) == 128):
             l_vec = l_vec * -11.313708499
         l_vec = l_vec.to(torch.float)
-        
-        _, l_vec_fa3 = flash_attn_func(Q.permute(0, 2, 1, 3), K.permute(0, 2, 1, 3), V.permute(0, 2, 1, 3), causal=causal)
-        if (q_.size(-1) == 64):
-            l_vec_fa3 = l_vec_fa3 * -8.0
-        if (q_.size(-1) == 128):
-            l_vec_fa3 = l_vec_fa3 * -11.313708499
-        l_vec_fa3 = l_vec_fa3.to(torch.float)
-        
+
+        if flash_attn_func:
+            _, l_vec_fa3 = flash_attn_func(Q.permute(0, 2, 1, 3), K.permute(0, 2, 1, 3), V.permute(0, 2, 1, 3), causal=causal)
+            if (q_.size(-1) == 64):
+                l_vec_fa3 = l_vec_fa3 * -8.0
+            if (q_.size(-1) == 128):
+                l_vec_fa3 = l_vec_fa3 * -11.313708499
+            l_vec_fa3 = l_vec_fa3.to(torch.float)
+        else:
+            l_vec_fa3 = l_vec.squeeze(-1)
+
         qg, kg, vg = tk.mha_backward(Q, K, V, o, l_vec_fa3, dO, causal)
-        
+
         return o, qg, kg, vg
     else:
         Q.requires_grad = True
         K.requires_grad = True
         V.requires_grad = True
-        
+
         o, l_vec   = tk.mha_forward(Q, K, V, causal)
         qg, kg, vg = tk.mha_backward(Q, K, V, o, l_vec, dO, causal)
-        
+
         return o, qg, kg, vg
 
 
@@ -140,22 +150,23 @@ def check_correctness(b, h, n, d, causal, mean, std, num_iterations=100, error_m
     results = {
         'TK vs PT': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0},
         'FA2 vs PT': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0},
-        'FA3 vs PT': {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0}
     }
+    if flash_attn_func:
+        results['FA3 vs PT'] = {'sum_diff': 0, 'sum_abs': 0, 'max_diff': 0}
 
     for _ in range(num_iterations):
         torch.manual_seed(0)
-        
+
         Q  = generate_tensor((b, h, n, d), mean, std, torch.bfloat16, 'cuda')
         K  = generate_tensor((b, h, n, d), mean, std, torch.bfloat16, 'cuda')
         V  = generate_tensor((b, h, n, d), mean, std, torch.bfloat16, 'cuda')
         dO = generate_tensor((b, h, n, d), mean, std, torch.bfloat16, 'cuda')
-        
+
         pt_o, pt_qg, pt_kg, pt_vg = pytorch_test(Q, K, V, dO, causal)
         fa2_o, fa2_qg, fa2_kg, fa2_vg = fa2_test(Q, K, V, dO, causal)
         fa3_o, fa3_qg, fa3_kg, fa3_vg = fa3_test(Q, K, V, dO, causal)
         tk_o, tk_qg, tk_kg, tk_vg = h100_fwd_kernel_test(Q, K, V, dO, causal, error_mode)
-        
+
         if error_mode == 'output':
             tensors = [(pt_o, tk_o, fa2_o, fa3_o)]
         elif error_mode == 'backward':
@@ -167,15 +178,18 @@ def check_correctness(b, h, n, d, causal, mean, std, num_iterations=100, error_m
                        (pt_qg, tk_qg, fa2_qg, fa3_qg),
                        (pt_kg, tk_kg, fa2_kg, fa3_kg),
                        (pt_vg, tk_vg, fa2_vg, fa3_vg)]
-        
+
         for pt, tk, fa2, fa3 in tensors:
-            for name, impl in [('TK vs PT', tk), ('FA2 vs PT', fa2), ('FA3 vs PT', fa3)]:
+            comparisons = [('TK vs PT', tk), ('FA2 vs PT', fa2)]
+            if flash_attn_func and fa3 is not None:
+                comparisons.append(('FA3 vs PT', fa3))
+            for name, impl in comparisons:
                 diff = pt - impl
                 abs_diff = torch.abs(diff)
                 results[name]['sum_diff'] += torch.sum(abs_diff).item()
                 results[name]['sum_abs'] += torch.sum(torch.abs(pt)).item()
                 results[name]['max_diff'] = max(results[name]['max_diff'], torch.max(abs_diff).item())
-                
+
         torch.cuda.empty_cache()
 
     total_elements = b * h * n * d * num_iterations * (1 if error_mode == 'output' else 3 if error_mode == 'backward' else 4)
@@ -195,19 +209,21 @@ def generate_error_graphs(b, h, d, causal, mean, std, error_mode='all'):
 
     for n in tqdm(seq_lengths, desc="Generating error data"):
         results = check_correctness(b, h, n, d, causal, mean, std, error_mode=error_mode)
-        
+
         tk_avg_errors.append(results['TK vs PT']['avg_diff'])
         tk_max_errors.append(results['TK vs PT']['max_diff'])
         fa2_avg_errors.append(results['FA2 vs PT']['avg_diff'])
         fa2_max_errors.append(results['FA2 vs PT']['max_diff'])
-        fa3_avg_errors.append(results['FA3 vs PT']['avg_diff'])
-        fa3_max_errors.append(results['FA3 vs PT']['max_diff'])
+        if flash_attn_func:
+            fa3_avg_errors.append(results['FA3 vs PT']['avg_diff'])
+            fa3_max_errors.append(results['FA3 vs PT']['max_diff'])
 
     # Generate average error graph
     plt.figure(figsize=(12, 8))
     plt.plot(seq_lengths, tk_avg_errors, label='TK',   marker='o')
     plt.plot(seq_lengths, fa2_avg_errors, label='FA2', marker='s')
-    plt.plot(seq_lengths, fa3_avg_errors, label='FA3', marker='^')
+    if flash_attn_func:
+        plt.plot(seq_lengths, fa3_avg_errors, label='FA3', marker='^')
 
     plt.xlabel('Sequence Length')
     plt.ylabel('Average Error')
@@ -224,7 +240,8 @@ def generate_error_graphs(b, h, d, causal, mean, std, error_mode='all'):
     plt.figure(figsize=(12, 8))
     plt.plot(seq_lengths, tk_max_errors,  label='TK',  marker='o')
     plt.plot(seq_lengths, fa2_max_errors, label='FA2', marker='s')
-    plt.plot(seq_lengths, fa3_max_errors, label='FA3', marker='^')
+    if flash_attn_func:
+        plt.plot(seq_lengths, fa3_max_errors, label='FA3', marker='^')
 
     plt.xlabel('Sequence Length')
     plt.ylabel('Maximum Error')
