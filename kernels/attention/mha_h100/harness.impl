@@ -2,19 +2,19 @@
 #include <string>
 #include <fstream>
 
-constexpr int ATTN_B     = 16;
+constexpr int ATTN_B     = 4;
 constexpr int QO_HEADS   = 16;
 constexpr int KV_HEADS   = 16;
 
 constexpr int QK_HEAD_RATIO = (QO_HEADS)/(KV_HEADS);
 static_assert(QO_HEADS >= KV_HEADS && QO_HEADS % KV_HEADS == 0);
 
-constexpr int ATTN_N     = 768; 
+constexpr int ATTN_N     = 3072; 
 constexpr int ATTN_D     = 128; 
 constexpr int BLOCK_SIZE = (32*NUM_WORKERS); 
 constexpr int ITER       = 10; 
 
-constexpr bool causal    = true; 
+constexpr bool causal    = false; 
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -109,40 +109,42 @@ int main(int argc, char **argv) {
 
     std::cout << "Starting to enter!" << std::endl;
 
-    for(int i = 0; i < TOTAL_ELEMENTS_QO/ATTN_B; i++) infile >> q[i];
+    for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) infile >> q[i];
     std::cout << "Finished loading Q" << std::endl;
-    for(int i = 0; i < TOTAL_ELEMENTS_KV/ATTN_B; i++) infile >> k[i];
+    for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) infile >> k[i];
     std::cout << "Finished loading K" << std::endl;
-    for(int i = 0; i < TOTAL_ELEMENTS_KV/ATTN_B; i++) infile >> v[i];
+    for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) infile >> v[i];
     std::cout << "Finished loading V" << std::endl;
-    for(int i = 0; i < TOTAL_ELEMENTS_QO/ATTN_B; i++) infile >> o_ref[i];
+    for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) infile >> o_ref[i];
     std::cout << "Finished loading O_REF" << std::endl;
-    for(int i = 0; i < TOTAL_ELEMENTS_QO/(ATTN_D*ATTN_B); i++) infile >> l_ref[i];
+    for(int i = 0; i < TOTAL_ELEMENTS_QO/ATTN_D; i++) infile >> l_ref[i];
     std::cout << "Finished loading L_REF" << std::endl;
-    for(int i = 0; i < TOTAL_ELEMENTS_QO/(ATTN_D*ATTN_B); i++) infile >> d_ref[i];
-    std::cout << "Finished loading D_REF" << std::endl; 
-    for(int i = 0; i < TOTAL_ELEMENTS_QO/ATTN_B; i++) infile >> og[i];
+    for(int i = 0; i < TOTAL_ELEMENTS_QO/ATTN_D; i++) infile >> d_ref[i];
+    std::cout << "Finished loading D_REF" << std::endl;
+    for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) infile >> og[i];
     std::cout << "Finished loading OG" << std::endl;
-    for(int i = 0; i < TOTAL_ELEMENTS_QO/ATTN_B; i++) infile >> qg_ref[i];
+    for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) infile >> qg_ref[i];
     std::cout << "Finished loading QG_REF" << std::endl;
-    for(int i = 0; i < TOTAL_ELEMENTS_KV/ATTN_B; i++) infile >> kg_ref[i];
+    for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) infile >> kg_ref[i];
     std::cout << "Finished loading KG_REF" << std::endl;
-    for(int i = 0; i < TOTAL_ELEMENTS_KV/ATTN_B; i++) infile >> vg_ref[i];
+    for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) infile >> vg_ref[i];
     std::cout << "Finished loading VG_REF" << std::endl;
 
     std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
-    
-    // replicate into batch
-    for (int i = 0; i < TOTAL_ELEMENTS_QO; i++) {
-        q_bf[i] = __float2bfloat16(q[i % (TOTAL_ELEMENTS_QO/ATTN_B)]);
-        og_bf[i] = __float2bfloat16(og[i % (TOTAL_ELEMENTS_QO/ATTN_B)]);
 
+    std::cout << "First 10 Q (loaded): ";
+    for(int i = 0; i < 10; i++) std::cout << q[i] << " ";
+    std::cout << std::endl;
+
+    // Convert to bf16
+    for (int i = 0; i < TOTAL_ELEMENTS_QO; i++) {
+        q_bf[i] = __float2bfloat16(q[i]);
+        og_bf[i] = __float2bfloat16(og[i]);
         qg_fl[i] = 0.0f;
     }
     for (int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
-        k_bf[i] = __float2bfloat16(k[i % (TOTAL_ELEMENTS_KV/ATTN_B)]);
-        v_bf[i] = __float2bfloat16(v[i % (TOTAL_ELEMENTS_KV/ATTN_B)]);
-
+        k_bf[i] = __float2bfloat16(k[i]);
+        v_bf[i] = __float2bfloat16(v[i]);
         kg_fl[i] = 0.0f;
         vg_fl[i] = 0.0f;
     }
@@ -167,6 +169,7 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS_QO * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS_KV * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS_KV * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemset(d_o, 0, TOTAL_ELEMENTS_QO * sizeof(bf16)); // Initialize output to zero
 
     cudaMemcpy(d_og, og_bf, TOTAL_ELEMENTS_QO * sizeof(bf16), cudaMemcpyHostToDevice);
 
@@ -198,8 +201,8 @@ int main(int argc, char **argv) {
 
     std::cout << "Allocated and set memory on GPU!" << std::endl;
     
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY; // need to launch two blocks if possible.
-    
+    unsigned long mem_size = kittens::MAX_SHARED_MEMORY - 1024; // need to launch two blocks if possible.
+
     cudaFuncSetAttribute(
         fwd_attend_ker<ATTN_D, causal>,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
@@ -209,12 +212,14 @@ int main(int argc, char **argv) {
 
     dim3 grid(ATTN_N/(CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>*4), QO_HEADS, ATTN_B);
     static_assert(ATTN_N % (CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>*4) == 0);
+    std::cout << "Grid: " << grid.x << " x " << grid.y << " x " << grid.z << ", Block: " << BLOCK_SIZE << std::endl;
     cudaDeviceSynchronize();
     std::cout << "Starting warmup" << std::endl;
-    for(int i = 0; i < ITER; i++) {    
+    for(int i = 0; i < ITER; i++) {
         fwd_attend_ker<ATTN_D, causal><<<grid, BLOCK_SIZE, mem_size>>>(g);
     }
     cudaDeviceSynchronize();
+    CudaCheckError();
     std::cout << "Starting kernel" << std::endl;
     const auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITER; i++) {
@@ -234,8 +239,15 @@ int main(int argc, char **argv) {
     }
     cudaMemcpy(l_fl, d_l, TOTAL_ELEMENTS_QO/ATTN_D * sizeof(float), cudaMemcpyDeviceToHost);
     for (int i = 0; i < TOTAL_ELEMENTS_QO/ATTN_D; i++) {
-        l[i] = l_fl[i]; 
+        l[i] = l_fl[i];
     }
+
+    std::cout << "First 10 elements of O:     ";
+    for(int i = 0; i < 10; i++) std::cout << o[i] << " ";
+    std::cout << std::endl;
+    std::cout << "First 10 elements of O_REF: ";
+    for(int i = 0; i < 10; i++) std::cout << o_ref[i] << " ";
+    std::cout << std::endl;
 
     bool good = true;
     std::ofstream o_ref_file("printouts/o_ref.txt");
@@ -244,7 +256,7 @@ int main(int argc, char **argv) {
 
     float total_diff = 0;
     for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) {
-        float diff = o[i] - o_ref[i % (TOTAL_ELEMENTS_QO/ATTN_B)];
+        float diff = o[i] - o_ref[i];
         if (i < TOTAL_UNIQUE_ELEMENTS) {
             o_ref_file << o_ref[i] << ' ';
             o_file << o[i] << ' ';
@@ -435,6 +447,26 @@ int main(int argc, char **argv) {
         vg[i] = (vg_fl[i]);
     }
 
+    // Debug: print first 10 elements of gradients
+    std::cout << "First 10 QG:     ";
+    for(int i = 0; i < 10; i++) std::cout << qg[i] << " ";
+    std::cout << std::endl;
+    std::cout << "First 10 QG_REF: ";
+    for(int i = 0; i < 10; i++) std::cout << qg_ref[i] << " ";
+    std::cout << std::endl;
+    std::cout << "First 10 KG:     ";
+    for(int i = 0; i < 10; i++) std::cout << kg[i] << " ";
+    std::cout << std::endl;
+    std::cout << "First 10 KG_REF: ";
+    for(int i = 0; i < 10; i++) std::cout << kg_ref[i] << " ";
+    std::cout << std::endl;
+    std::cout << "First 10 VG:     ";
+    for(int i = 0; i < 10; i++) std::cout << vg[i] << " ";
+    std::cout << std::endl;
+    std::cout << "First 10 VG_REF: ";
+    for(int i = 0; i < 10; i++) std::cout << vg_ref[i] << " ";
+    std::cout << std::endl;
+
     float total_diff_qg = 0.0f;
     float total_diff_kg = 0.0f;
     float total_diff_vg = 0.0f;
@@ -448,7 +480,7 @@ int main(int argc, char **argv) {
     std::ofstream qg_file("printouts/qg.txt");
     std::ofstream diff_qg_file("printouts/diff_qg.txt");
     for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) {
-        float diff = qg[i] - qg_ref[i % (TOTAL_ELEMENTS_QO/ATTN_B)];
+        float diff = qg[i] - qg_ref[i];
         if (i < TOTAL_UNIQUE_ELEMENTS) {
             qg_ref_file << qg_ref[i] << ' ';
             qg_file << qg[i] << ' ';
@@ -457,7 +489,7 @@ int main(int argc, char **argv) {
         if(abs(diff) > 0.015 || isnan(diff)) {
             good = false;
         }
-        total_diff_qg += abs(diff); 
+        total_diff_qg += abs(diff);
 
         if (abs(diff) > max_diff_qg) {
             max_diff_qg = abs(diff);
@@ -471,7 +503,7 @@ int main(int argc, char **argv) {
     std::ofstream kg_file("printouts/kg.txt");
     std::ofstream diff_kg_file("printouts/diff_kg.txt");
     for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
-        float diff = kg[i] - kg_ref[i % (TOTAL_ELEMENTS_KV/ATTN_B)];
+        float diff = kg[i] - kg_ref[i];
         if (i < TOTAL_UNIQUE_ELEMENTS) {
             kg_ref_file << kg_ref[i] << ' ';
             kg_file << kg[i] << ' ';
@@ -480,7 +512,7 @@ int main(int argc, char **argv) {
         if(abs(diff) > 0.015 || isnan(diff)) {
             good = false;
         }
-        total_diff_kg += abs(diff); 
+        total_diff_kg += abs(diff);
 
         if (abs(diff) > max_diff_kg) {
             max_diff_kg = abs(diff);
@@ -494,7 +526,7 @@ int main(int argc, char **argv) {
     std::ofstream vg_file("printouts/vg.txt");
     std::ofstream diff_vg_file("printouts/diff_vg.txt");
     for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
-        float diff = vg[i] - vg_ref[i % (TOTAL_ELEMENTS_KV/ATTN_B)];
+        float diff = vg[i] - vg_ref[i];
         if (i < TOTAL_UNIQUE_ELEMENTS) {
             vg_ref_file << vg_ref[i] << ' ';
             vg_file << vg[i] << ' ';

@@ -3,7 +3,7 @@ import numpy as np
 import math
 
 # Fixed configuration matching harness.impl
-B = 16
+B = 4
 N = 3072
 D = 128
 H_QO = 16
