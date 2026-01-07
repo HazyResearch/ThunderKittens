@@ -23,7 +23,7 @@ template<> struct fwd_attend_ker_tile_dims<128> {
     constexpr static int tile_width = (128);
     constexpr static int qo_height  = (4*16);
     constexpr static int kv_height  = (8*16);
-    constexpr static int stages     = (2);
+    constexpr static int stages     = (2); 
 };
 
 template<int D> struct fwd_globals {
@@ -103,8 +103,8 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
     int pipe_idx = K::stages - 1; 
     
     if(warpgroupid == NUM_WARPGROUPS-1) {
-        warpgroup::decrease_registers<24>();
-
+        warpgroup::decrease_registers<32>();      
+        
         int kv_iters; 
         if constexpr (is_causal) {
             kv_iters = (seq_idx * (K::qo_height/kittens::TILE_ROW_DIM<bf16>)) - 1 + (CONSUMER_WARPGROUPS * (K::qo_height/kittens::TILE_ROW_DIM<bf16>)); 
@@ -125,7 +125,7 @@ void fwd_attend_ker(const __grid_constant__ fwd_globals<D> g) {
         }
     }
     else {
-        warpgroup::increase_registers<168>();
+        warpgroup::increase_registers<160>();
 
         rt_fl<16, K::kv_height>  att_block;
         rt_bf<16, K::kv_height>  att_block_mma;
@@ -394,7 +394,6 @@ causal_mask(auto &reg_tile, int qo_idx) {
                 + ((kittens::warpid()/kittens::WARPGROUP_WARPS) * (tile_h/kittens::TILE_ROW_DIM<bf16>)) 
                 + (kittens::warpid() % kittens::WARPGROUP_WARPS);
 
-    #pragma unroll
     for (int j = 0; j < (tile_h_qo/kittens::TILE_ROW_DIM<bf16>); j++) {
         int q_idx = q_blk + j;
         auto &attn_subtile = reinterpret_cast<rt_fl<16, 16>&>(reg_tile.tiles[0][j]);
@@ -598,7 +597,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
         warp::zero(vg_reg);
 
         if (warpgroupid == 0) {
-            warpgroup::increase_registers<248>();
+            warpgroup::increase_registers<256>();
             wait(kv_b, 0);
             for (int qo_idx = q_start; qo_idx < qo_blocks; qo_idx++, tic ^= 1, toc ^= 1) {
                 compute_bwd_loop<is_causal, G::tile_h_qo, G::tile_h, G::tile_width, D>(
@@ -626,7 +625,7 @@ void bwd_attend_ker(const __grid_constant__ bwd_globals<D> g) {
             kv_store<kg_tile, vg_tile>(kg_smem, kg_reg, vg_smem, vg_reg, g, qg_ready, kv_head_idx, toc);
         }
         else {
-            warpgroup::increase_registers<240>();
+            warpgroup::increase_registers<224>();
             wait(kv_b, 0);
             for (int qo_idx = q_start; qo_idx < qo_blocks; qo_idx++, tic ^= 1, toc ^= 1) {
                 compute_bwd_loop<is_causal, G::tile_h_qo, G::tile_h, G::tile_width, D>(
