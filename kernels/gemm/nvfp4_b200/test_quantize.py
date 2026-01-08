@@ -121,10 +121,12 @@ if __name__ == '__main__':
     A_bf16_dequantized = torch_nvfp4_dequantize(A_fp4x2_ref, A_sc_unswizzled_ref, A_sc_global_ref)
     check_diff("Quantization error", A_bf16_dequantized, A_bf16)
 
-    # # Run our version and check correctness
-    # A_fp8_tk = torch.zeros_like(A_fp8_ref)
-    # A_sc_tk = torch.zeros_like(A_sc_ref)
-    # nvfp4_quantize(A_bf16, A_fp8_tk, A_sc_tk)
-    # torch.cuda.synchronize()
-    # check_diff("TK-FP8", A_fp8_tk, A_fp8_ref)
-    # check_diff("TK-SC", A_sc_tk, A_sc_ref)
+    # Run our version and check correctness
+    A_fp4x2 = torch.empty_like(A_fp4x2_ref)
+    A_sc = torch.empty_like(A_sc_ref)
+    A_sc_global = torch.empty_like(A_sc_global_ref)
+    nvfp4_quantize(A_bf16, A_fp4x2, A_sc, A_sc_global)
+    torch.cuda.synchronize()
+    check_diff("TK-FP8", A_fp4x2, A_fp4x2_ref)
+    check_diff("TK-SC", A_sc, A_sc_ref)
+    check_diff("TK-SC-GLOBAL", A_sc_global, A_sc_global_ref)
