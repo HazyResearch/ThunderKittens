@@ -21,7 +21,7 @@ struct config {
     static constexpr int PRODUCER_REGISTERS = 256;
     static constexpr int CONSUMER_REGISTERS = 256;
 
-    static constexpr int LOAD_PIPE_DEPTH = 5;
+    static constexpr int LOAD_PIPE_DEPTH = 4;
     static constexpr int EPI_PIPE_DEPTH = 4;
 
     static constexpr int SUPERGROUP_BLOCKS = 2;
@@ -99,11 +99,11 @@ __device__ inline void kernel(const globals<C> &g) {
     if (threadIdx.x == 32) {
         #pragma unroll
         for (int i = 0; i < C::LOAD_PIPE_DEPTH; ++i) {
-            init_semaphore(inputs_arrived[i], 0, C::CLUSTER_SIZE);
+            init_semaphore(inputs_arrived[i], 0, 1);
             init_semaphore(inputs_finished[i], 0, 1);
         }
         init_semaphore(scales_arrived, 0, 1);
-        init_semaphore(outputs_arrived, 0, 1); // local
+        init_semaphore(outputs_arrived, 0, 1);
         init_semaphore(outputs_finished, 0, C::CLUSTER_SIZE);
     }
     everyone::tma::cluster::sync();
@@ -158,7 +158,7 @@ __device__ inline void kernel(const globals<C> &g) {
                 tma::cluster::wait(outputs_finished, get_phasebit<1>(phasebits, 0));
                 update_phasebit<1>(phasebits, 0);
                 for (int i = 0; i < num_red_blocks; i++) {
-                    tma::cluster::expect_bytes(inputs_arrived[stage], 2 * (sizeof(G::A_fp4x2_tile) + sizeof(G::B_fp4x2_tile) + sizeof(G::A_sc_tile) + sizeof(G::B_sc_tile)));
+                    tma::cluster::expect_bytes(inputs_arrived[stage], 2 * (sizeof(input_tiles_t) + sizeof(input_scales_t)));
                     tma::cluster::wait(inputs_arrived[stage], get_phasebit<0>(phasebits, stage));
                     update_phasebit<0>(phasebits, stage);
                     #pragma unroll
@@ -177,13 +177,13 @@ __device__ inline void kernel(const globals<C> &g) {
                     wait(scales_arrived, get_phasebit<0>(phasebits, C::LOAD_PIPE_DEPTH));
                     update_phasebit<0>(phasebits, C::LOAD_PIPE_DEPTH);
                     if (i == 0) mm2_ABt(out_tm, input_tiles[stage].A, input_tiles[stage].B,
-                                        A_sc_tm.template subtile<full_tt_fp8e4m3<C::MMA_PER_TILE * 16>>(stage * C::MMA_PER_TILE * 16),
-                                        B_sc_tm.template subtile<full_tt_fp8e4m3<C::MMA_PER_TILE * 32>>(stage * C::MMA_PER_TILE * 32),
+                                        A_sc_tm.template subtile<full_tt_fp8e4m3<C::MMA_PER_TILE*16>>(stage*C::MMA_PER_TILE*16),
+                                        B_sc_tm.template subtile<full_tt_fp8e4m3<C::MMA_PER_TILE*32>>(stage*C::MMA_PER_TILE*32),
                                         inputs_finished[stage]);
-                    else mma2_ABt(out_tm, input_tiles[stage].A, input_tiles[stage].B,
-                                    A_sc_tm.template subtile<full_tt_fp8e4m3<C::MMA_PER_TILE * 16>>(stage * C::MMA_PER_TILE * 16),
-                                    B_sc_tm.template subtile<full_tt_fp8e4m3<C::MMA_PER_TILE * 32>>(stage * C::MMA_PER_TILE * 32),
-                                    inputs_finished[stage]);
+                    else       mma2_ABt(out_tm, input_tiles[stage].A, input_tiles[stage].B,
+                                        A_sc_tm.template subtile<full_tt_fp8e4m3<C::MMA_PER_TILE*16>>(stage*C::MMA_PER_TILE*16),
+                                        B_sc_tm.template subtile<full_tt_fp8e4m3<C::MMA_PER_TILE*32>>(stage*C::MMA_PER_TILE*32),
+                                        inputs_finished[stage]);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
                 kittens::detail::tcgen05::commit<2>(outputs_arrived);
