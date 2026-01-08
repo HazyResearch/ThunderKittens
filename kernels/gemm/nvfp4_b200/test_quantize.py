@@ -161,5 +161,6 @@ if __name__ == '__main__':
     gb = M * N * (2 + 0.5 + 1 / 16) * 1e-9
     gbps = gb / avg_time
 
+    print(f"===============================================================================")
     print(f"Average time: {avg_time * 1e6:.2f} us")
     print(f"Average throughput: {gbps:.2f} GB/s")
