@@ -148,7 +148,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     tma::cluster::load_async(input_tiles[stage].A, g.A, {row_block_idx*2 + cta_id, i}, inputs_arrived[stage], (uint16_t)(1<<cta_id), 0);
                     tma::cluster::load_async(input_tiles[stage].B, g.B, {col_block_idx*2 + cta_id, i}, inputs_arrived[stage], (uint16_t)(1<<cta_id), 0);
                     tma::cluster::load_async(input_scales[stage].A, g.A_sc, {row_block_idx*2 + cta_id, i, 0}, inputs_arrived[stage], (uint16_t)(1<<cta_id), 0);
-                    tma::cluster::load_async(input_scales[stage].B[cta_id], g.B_sc, {row_block_idx*2 + cta_id, i, 0}, inputs_arrived[stage], (uint16_t)(0b11), 0);
+                    tma::cluster::load_async(input_scales[stage].B[cta_id], g.B_sc, {col_block_idx*2 + cta_id, i, 0}, inputs_arrived[stage], (uint16_t)(0b11), 0);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
             }
