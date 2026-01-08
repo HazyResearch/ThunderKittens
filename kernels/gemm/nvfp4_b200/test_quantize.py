@@ -110,23 +110,56 @@ if __name__ == '__main__':
     # Matrix dimensions
     M = int(sys.argv[1]) if len(sys.argv) > 1 else 204800
     N = int(sys.argv[2]) if len(sys.argv) > 2 else 2048
-    print(f"{M=}, {N=}")
 
-    # Generate reference input and outputs
-    A_bf16 = torch.randn(M, N, dtype=torch.bfloat16, device="cuda")
-    A_fp4x2_ref, A_sc_unswizzled_ref, A_sc_global_ref = torch_nvfp4_quantize(A_bf16)
-    A_sc_ref = scale_swizzle(A_sc_unswizzled_ref)
+    # Group size
+    l2_size = 128 * 1024 * 1024
+    size_per_group = M * N * 2
+    num_groups = (l2_size // size_per_group + 1) * 100
+    print(f"{M=}, {N=}, {num_groups=}")
 
-    # Check quantization error
+    # Generate reference outputs and input matrix
+    groups = []
+    for i in range(num_groups):
+        A_bf16 = torch.randn(M, N, dtype=torch.bfloat16, device="cuda")
+        A_fp4x2_ref, A_sc_unswizzled_ref, A_sc_global_ref = torch_nvfp4_quantize(A_bf16)
+        A_sc_ref = scale_swizzle(A_sc_unswizzled_ref)
+        A_fp4x2 = torch.empty_like(A_fp4x2_ref)
+        A_sc = torch.empty_like(A_sc_ref)
+        A_sc_global = torch.empty_like(A_sc_global_ref)
+        groups.append((A_bf16, A_fp4x2, A_sc, A_sc_global))
+
+    # Check quantization error (use last group)
     A_bf16_dequantized = torch_nvfp4_dequantize(A_fp4x2_ref, A_sc_unswizzled_ref, A_sc_global_ref)
     check_diff("Quantization error", A_bf16_dequantized, A_bf16)
 
     # Run our version and check correctness
-    A_fp4x2 = torch.empty_like(A_fp4x2_ref)
-    A_sc = torch.empty_like(A_sc_ref)
-    A_sc_global = torch.empty_like(A_sc_global_ref)
     nvfp4_quantize(A_bf16, A_fp4x2, A_sc, A_sc_global)
     torch.cuda.synchronize()
-    check_diff("TK-FP8", A_fp4x2, A_fp4x2_ref)
+    check_diff("TK-FP4", A_fp4x2, A_fp4x2_ref)
     check_diff("TK-SC", A_sc, A_sc_ref)
     check_diff("TK-SC-GLOBAL", A_sc_global, A_sc_global_ref)
+
+    # Benchmark
+    NUM_WARMUPS = 500
+    NUM_ITERS = 100
+
+    start_event = torch.cuda.Event(enable_timing=True)
+    end_event = torch.cuda.Event(enable_timing=True)
+
+    for i in range(NUM_WARMUPS):
+        nvfp4_quantize(*groups[i % num_groups])
+    torch.cuda.synchronize()
+
+    start_event.record()
+    for i in range(NUM_ITERS):
+        nvfp4_quantize(*groups[i % num_groups])
+    end_event.record()
+    torch.cuda.synchronize()
+
+    total_time = start_event.elapsed_time(end_event) * 1e-3
+    avg_time = total_time / NUM_ITERS
+    gb = M * N * (2 + 0.5 + 1 / 16) * 1e-9
+    gbps = gb / avg_time
+
+    print(f"Average time: {avg_time * 1e6:.2f} us")
+    print(f"Average throughput: {gbps:.2f} GB/s")
