@@ -173,9 +173,12 @@ __device__ inline void kernel(const globals<C> &g) {
                         load_mxnv_scale_async2(B_sc_tm_subtile_0, B_sc_sm_subtile_0);
                         load_mxnv_scale_async2(B_sc_tm_subtile_1, B_sc_sm_subtile_1);
                     }
-                    kittens::detail::tcgen05::commit<2>(scales_arrived, 0b1);
-                    wait(scales_arrived, get_phasebit<0>(phasebits, C::LOAD_PIPE_DEPTH));
-                    update_phasebit<0>(phasebits, C::LOAD_PIPE_DEPTH);
+
+                    // It appears that tcgen05.cp and tcgen05.mma are implicitly pipelined. In case a race condition is found, try uncommenting these lines.
+                    // kittens::detail::tcgen05::commit<2>(scales_arrived, 0b1);
+                    // wait(scales_arrived, get_phasebit<0>(phasebits, C::LOAD_PIPE_DEPTH));
+                    // update_phasebit<0>(phasebits, C::LOAD_PIPE_DEPTH);
+
                     if (i == 0) mm2_ABt(out_tm, input_tiles[stage].A, input_tiles[stage].B,
                                         A_sc_tm.template subtile<full_tt_fp8e4m3<C::MMA_PER_TILE*16>>(stage*C::MMA_PER_TILE*16),
                                         B_sc_tm.template subtile<full_tt_fp8e4m3<C::MMA_PER_TILE*32>>(stage*C::MMA_PER_TILE*32),
