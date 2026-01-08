@@ -76,7 +76,7 @@ struct KITTENS_DEFAULT_ALIGN st {
     static constexpr int cols                = _cols; ///< Total number of cols in the tile.
     static constexpr int num_elements        = rows * cols; ///< Total number of elements in the tile.
 
-    static_assert((swizzle && (rows % kittens::TILE_ROW_DIM<T> == 0)) || (!swizzle && (rows % kittens::BASE_TILE_DIM == 0)), "Rows must be divisible by the tile dimension");
+    static_assert(!swizzle || (rows % kittens::TILE_ROW_DIM<T> == 0), "Rows must be divisible by the tile dimension");
     static_assert((swizzle && (cols % kittens::TILE_COL_DIM<T> == 0)) || (!swizzle && (cols % kittens::BASE_TILE_DIM == 0)), "Cols must be divisible by the tile dimension");
 
 #ifdef KITTENS_BLACKWELL
