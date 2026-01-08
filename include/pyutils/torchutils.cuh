@@ -105,6 +105,13 @@ static inline GL tensor_to_gl(const at::Tensor &t) {
     return ::kittens::make_gl<GL>(data_ptr, shape[0], shape[1], shape[2], shape[3]);
 }
 
+template <kittens::ducks::gl::all GL, bool TypeCheck = true>
+static inline GL tensor_to_gl(const at::Tensor &t, int B, int D, int R, int C) {
+    tensor_check<GL, TypeCheck>(t);
+
+    return ::kittens::make_gl<GL>(reinterpret_cast<uint64_t>(t.data_ptr()), B, D, R, C);
+}
+
 template <kittens::ducks::pgl::all PGL, bool TypeCheck = true>
 static inline PGL parallel_tensor_to_pgl(TKParallelTensor &t) {
     parallel_tensor_check<PGL, TypeCheck>(t);
@@ -120,6 +127,18 @@ static inline PGL parallel_tensor_to_pgl(TKParallelTensor &t) {
     else
         return ::kittens::make_pgl<PGL>(
             reinterpret_cast<uint64_t *>(t.raw_ptrs_.data()), shape[0], shape[1], shape[2], shape[3]);
+}
+
+template <kittens::ducks::pgl::all PGL, bool TypeCheck = true>
+static inline PGL parallel_tensor_to_pgl(TKParallelTensor &t, int B, int D, int R, int C) {
+    parallel_tensor_check<PGL, TypeCheck>(t);
+
+    if constexpr (PGL::multicast)
+        return ::kittens::make_pgl<PGL>(
+            reinterpret_cast<uint64_t>(t.multicast_ptr_), reinterpret_cast<uint64_t *>(t.raw_ptrs_.data()), B, D, R, C);
+    else
+        return ::kittens::make_pgl<PGL>(
+            reinterpret_cast<uint64_t *>(t.raw_ptrs_.data()), B, D, R, C);
 }
 
 template <kittens::ducks::gl::all GL>
