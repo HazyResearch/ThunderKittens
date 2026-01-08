@@ -275,12 +275,18 @@ void entrypoint(
 
 } // namespace nvfp4_gemm
 
-#include "ATen/ops/linalg_vector_norm.h" 
-#include "ATen/ops/unsqueeze.h"
-
 namespace nvfp4_quantize {
 
-struct config {
+struct absmax_config {
+    static constexpr int CLUSTER_SIZE = 1;
+    static constexpr int NUM_BLOCKS = 148 * 4;
+    static constexpr int NUM_WARPGROUPS = 4;
+    static constexpr int NUM_WARPS = NUM_WARPGROUPS * WARPGROUP_WARPS;
+    static constexpr int NUM_THREADS = NUM_WARPS * WARP_THREADS;
+    static constexpr int DYNAMIC_SHARED_MEMORY = 0;
+};
+
+struct quantize_config {
     static constexpr int CLUSTER_SIZE = 1;
     static constexpr int NUM_WARPGROUPS = 1;
     static constexpr int NUM_WARPS = NUM_WARPGROUPS * WARPGROUP_WARPS;
@@ -293,7 +299,7 @@ struct globals {
     static constexpr int K_BLOCK_SIZE = 16; // This should not change
 
     using A_bf16_tile  = st_bf<TILE_M, TILE_N, false>;
-    using A_fp4x2_tile = st_fp4e2m1_2<TILE_M, TILE_N, false>;
+    using A_fp4x2_tile = st_fp4e2m1_2<TILE_M, TILE_N/2, false>;
     using A_sc_vec     = sv_hf<256>;
 
     using A_bf16_gl      = gl<bf16,      1,  1, -1, -1, A_bf16_tile>;
@@ -309,27 +315,189 @@ struct globals {
     __host__ inline dim3 grid() const {
         return dim3(A_bf16.cols() / TILE_N, A_bf16.rows() / TILE_M);
     }
-    __host__ inline int dynamic_shared_memory() const { 
-        return TILE_M * TILE_N * sizeof(bf16) + 1024; 
+    __host__ inline int dynamic_shared_memory() const {
+        return TILE_M * TILE_N * sizeof(bf16) + 1024;
     }
 };
 
-__device__ inline void kernel(const globals &G) {
+__global__ void zero_kernel(const globals g) {
+    g.A_sc_global.raw_ptr[0] = 0.0f;
+}
+
+__global__ void absmax_kernel(const globals g) {
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    const int num_threads = gridDim.x * blockDim.x;
+    const size_t numel = g.A_bf16.rows() * g.A_bf16.cols();
+
+    bf16 local_max = __float2bfloat16(0.0f);
+    bf16_2 *base_ptr = reinterpret_cast<bf16_2*>(g.A_bf16.raw_ptr);
+
+    for (size_t i = tid; i < numel / 8; i += num_threads) {
+        bf16_2 v0, v1, v2, v3;
+        asm volatile(
+            "ld.global.v4.b32 {%0, %1, %2, %3}, [%4];"
+            : "=r"(*(uint32_t*)&v0), "=r"(*(uint32_t*)&v1), "=r"(*(uint32_t*)&v2), "=r"(*(uint32_t*)&v3)
+            : "l"(base_ptr + i*4)
+        );
+
+        bf16_2 abs0 = __habs2(v0);
+        bf16_2 abs1 = __habs2(v1);
+        bf16_2 abs2 = __habs2(v2);
+        bf16_2 abs3 = __habs2(v3);
+
+        bf16_2 max01 = __hmax2(abs0, abs1);
+        bf16_2 max23 = __hmax2(abs2, abs3);
+        bf16_2 max0123 = __hmax2(max01, max23);
+
+        bf16 curr_max = __hmax(max0123.x, max0123.y);
+        local_max = __hmax(local_max, curr_max);
+    }
+
+    for (size_t i = (numel / 8) * 8 + tid; i < numel; i += num_threads)
+        local_max = __hmax(local_max, __habs(g.A_bf16.raw_ptr[i]));
+
+    #pragma unroll
+    for (int offset = WARP_THREADS / 2; offset > 0; offset /= 2) {
+        uint32_t local_bits = *reinterpret_cast<unsigned short*>(&local_max);
+        uint32_t other_bits = __shfl_xor_sync(0xffffffff, local_bits, offset);
+        local_max = __hmax(local_max, *reinterpret_cast<bf16*>(&other_bits));
+    }
+
+    __shared__ bf16 shared_max[absmax_config::NUM_WARPS];
+    if (laneid() == 0) shared_max[warpid()] = local_max;
+    __syncthreads();
+
+    if (warpid() == 0) {
+        bf16 val = (laneid() < absmax_config::NUM_WARPS) ? shared_max[laneid()] : __float2bfloat16(0.0f);
+
+        #pragma unroll
+        for (int offset = absmax_config::NUM_WARPS / 2; offset > 0; offset /= 2) {
+            uint32_t val_bits = *reinterpret_cast<unsigned short*>(&val);
+            uint32_t other_bits = __shfl_xor_sync(0xffffffff, val_bits, offset);
+            val = __hmax(val, *reinterpret_cast<bf16*>(&other_bits));
+        }
+
+        if (laneid() == 0) {
+            float val_fl = __bfloat162float(val); // Positive float values keep bit ordering
+            atomicMax(reinterpret_cast<uint32_t*>(g.A_sc_global.raw_ptr), *reinterpret_cast<uint32_t*>(&val_fl));
+        }
+    }
+}
+
+__global__ void divide_kernel(const globals g) {
+    g.A_sc_global.raw_ptr[0] = g.A_sc_global.raw_ptr[0] / (6.0f * 448.0f);
+}
+
+__device__ inline void quantize_kernel(const globals &G) {
     // Allocate shared memory
     extern __shared__ int __shm[];
     tma_swizzle_allocator sm_allocator((int*)&__shm[0]);
     globals::A_bf16_tile &A_bf16_smem = sm_allocator.allocate<globals::A_bf16_tile>();
     globals::A_fp4x2_tile &A_fp4x2_smem = *reinterpret_cast<globals::A_fp4x2_tile *>(&A_bf16_smem);
-    globals::A_sc_tile &A_sc_smem = *reinterpret_cast<globals::A_sc_tile *>(
+    globals::A_sc_vec &A_sc_smem = *reinterpret_cast<globals::A_sc_vec *>(
         reinterpret_cast<uint64_t>(&A_fp4x2_smem) + sizeof(A_fp4x2_smem));
 
-    // TODO: Implement
-}
+    // Calculate indices
+    const int tid = threadIdx.x;
+    const int row = blockIdx.y;
+    const int col = blockIdx.x;
 
-__host__ inline void absmax(const at::Tensor &x, at::Tensor &out) {
-    const at::Scalar pos_infty = at::Scalar(std::numeric_limits<double>::infinity());
-    auto out_view = at::_ops::squeeze::call(out);
-    at::_ops::linalg_vector_norm_out::call(x, pos_infty, c10::nullopt, false, c10::nullopt, out_view);
+    // Initialize mbarrier and initiate TMA load
+    __shared__ semaphore inputs_arrived;
+    if (tid == 0) {
+        init_semaphore(inputs_arrived, 0, 1);
+        tma::expect(inputs_arrived, A_bf16_smem);
+        tma::load_async(A_bf16_smem, G.A_bf16, {row, col}, inputs_arrived);
+    }
+
+    // Wait for the TMA load to complete
+    __syncthreads();
+    wait(inputs_arrived, 0);
+
+    // Get global scale (already computed in entrypoint using absmax)
+    float s_global_dec = G.A_sc_global[{0}];
+    float s_global_enc = 1.0f / s_global_dec;
+
+    // We have 128 threads per block. Each thread handles a row of 64 elements = 4 K blocks
+    constexpr int NUM_K_BLOCKS = globals::TILE_N / globals::K_BLOCK_SIZE; // 4
+    constexpr int N_PER_K_BLOCK = globals::K_BLOCK_SIZE / 2;              // 8 (bf16x2 per K block)
+    bf16_2 A_bf16_reg[NUM_K_BLOCKS][N_PER_K_BLOCK];
+    fp8e4m3 A_sc_reg[NUM_K_BLOCKS];
+
+    const int tile_row = tid;
+
+    // Load input matrix from shared memory (custom swizzling to avoid bank conflicts)
+    #pragma unroll
+    for (int i = 0; i < NUM_K_BLOCKS; i++) {
+        int k_block_idx = (i + tid / 8) % NUM_K_BLOCKS;
+        #pragma unroll
+        for (int j = 0; j < N_PER_K_BLOCK; j++) {
+            int tile_col = k_block_idx * globals::K_BLOCK_SIZE + ((tid + j) * 2) % globals::K_BLOCK_SIZE;
+            int offset = (tile_row * globals::TILE_N + tile_col) * sizeof(bf16);
+            move<bf16_2>::lds(A_bf16_reg[i][j],
+                static_cast<uint32_t>(__cvta_generic_to_shared(&A_bf16_smem)) + offset);
+        }
+    }
+    __syncthreads();
+
+    // Perform NVFP4 quantization
+    #pragma unroll
+    for (int i = 0; i < NUM_K_BLOCKS; i++) {
+        int k_block_idx = (i + tid / 8) % NUM_K_BLOCKS;
+
+        // Calculate absolute maximum for this K block (in float32 for precision)
+        float amax_f = 0.0f;
+        #pragma unroll
+        for (int j = 0; j < N_PER_K_BLOCK; j++) {
+            amax_f = max(amax_f, fabsf(__bfloat162float(A_bf16_reg[i][j].x)));
+            amax_f = max(amax_f, fabsf(__bfloat162float(A_bf16_reg[i][j].y)));
+        }
+        amax_f = max(amax_f, 1e-12f);
+
+        // Compute the local scale following NVIDIA recipe:
+        // s_local_enc = 6. / (s_global_enc * amax_block)
+        // s_local_dec = 1. / s_local_enc = s_global_enc * amax_block / 6.
+        float s_local_enc = 6.0f / (s_global_enc * amax_f);
+        float s_local_dec = 1.0f / s_local_enc;
+        A_sc_reg[k_block_idx] = __nv_fp8_e4m3(s_local_dec); // round-to-even for output
+
+        // Quantize input matrix to FP4 and store to shared memory
+        #pragma unroll
+        for (int j = 0; j < N_PER_K_BLOCK; j++) {
+            int tile_col = k_block_idx * globals::K_BLOCK_SIZE + ((tid + j) * 2) % globals::K_BLOCK_SIZE;
+            int offset = (tile_row * globals::TILE_N + tile_col) / 2;
+
+            float2 scaled = {
+                __bfloat162float(A_bf16_reg[i][j].x) * s_global_enc * s_local_enc,
+                __bfloat162float(A_bf16_reg[i][j].y) * s_global_enc * s_local_enc
+            };
+            __nv_fp4x2_e2m1 packed;
+            packed.__x = __nv_cvt_float2_to_fp4x2(scaled, __NV_E2M1, cudaRoundNearest);
+
+            asm volatile("{st.shared.b8 [%0], %1;}"
+                :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&A_fp4x2_smem)) + offset)
+                   "r"(static_cast<uint32_t>(packed.__x)));
+        }
+    }
+
+    // Store the scales to shared memory following NVIDIA's layout
+    // Python scale_swizzle transforms (128, 4) -> (32, 4, 4) -> flatten to 512
+    // Formula: offset = (row % 32) * 16 + (row / 32) * 4 + k_block
+    int row_mod = tile_row % 32;
+    int row_div = tile_row / 32;
+    int scale_base = row_mod * 16 + row_div * 4;
+
+    // Store 4 scales (one per K block) - they're contiguous in the last dimension
+    asm volatile("{st.shared.b32 [%0], %1;}"
+        :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&A_sc_smem)) + scale_base)
+           "r"(*reinterpret_cast<uint32_t *>(&A_sc_reg[0])));
+
+    // Store to global memory
+    __syncthreads();
+    if (tid == 0) {
+        tma::store_async(G.A_fp4x2, A_fp4x2_smem, {row, col});
+        tma::store_async(G.A_sc,    A_sc_smem,    {row, col, 0});
+    }
 }
 
 __host__ void entrypoint(
@@ -338,14 +506,17 @@ __host__ void entrypoint(
     at::Tensor &A_sc,
     at::Tensor &A_sc_global
 ) {
-    absmax(A_bf16, A_sc_global);
     globals G {
         .A_bf16 = kittens::py::tensor_to_gl<globals::A_bf16_gl>(A_bf16),
         .A_fp4x2 = kittens::py::tensor_to_gl<globals::A_fp4x2_gl>(A_fp4x2),
-        .A_sc = kittens::py::tensor_to_gl<globals::A_sc_gl>(A_sc),
+        .A_sc = kittens::py::tensor_to_gl<globals::A_sc_gl, false>(A_sc, 1, A_sc.size(0), A_sc.size(1), 256),
         .A_sc_global = kittens::py::tensor_to_gl<globals::A_sc_global_gl>(A_sc_global)
     };
-    kittens::py::launch_kernel<config, globals, kernel>(G);
+
+    zero_kernel<<<1, 1>>>(G);
+    absmax_kernel<<<absmax_config::NUM_BLOCKS, absmax_config::NUM_THREADS>>>(G);
+    divide_kernel<<<1, 1>>>(G);
+    kittens::py::launch_kernel<quantize_config, globals, quantize_kernel>(G);
 }
 
 } // namespace nvfp4_quantize
