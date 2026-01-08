@@ -158,7 +158,7 @@ if __name__ == '__main__':
 
     total_time = start_event.elapsed_time(end_event) * 1e-3
     avg_time = total_time / NUM_ITERS
-    gb = M * N * (2 + 0.5 + 1 / 16) * 1e-9
+    gb = M * N * (2 + 2 + 0.5 + 1 / 16) * 1e-9  # bf16 read (absmax + quantize), fp4 & scales write
     gbps = gb / avg_time
 
     print(f"===============================================================================")
