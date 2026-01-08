@@ -94,8 +94,8 @@ def check_diff(
     A: torch.Tensor,
     A_ref: torch.Tensor
 ) -> None:
-    A = A.to(torch.float32)
-    A_ref = A_ref.to(torch.float32)
+    A = fp4x2_to_fp32(A) if A.dtype == torch.float4_e2m1fn_x2 else A.to(torch.float32)
+    A_ref = fp4x2_to_fp32(A_ref) if A_ref.dtype == torch.float4_e2m1fn_x2 else A_ref.to(torch.float32)
     print(f"===============================================================================")
     print(f"<{name}>")
     print(f"Max diff:  {((A - A_ref).abs().max().item()):.10f}")
