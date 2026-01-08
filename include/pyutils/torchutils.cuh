@@ -39,13 +39,15 @@ void global_kernel_clustered(const __grid_constant__ Globals G) {
     Kernel(G);
 }
 
-template <typename Layout>
+template <typename Layout, bool TypeCheck = true>
 static inline void tensor_check(const at::Tensor &t) {
     TORCH_CHECK(t.is_cuda(), "Tensor must be on CUDA device")
     TORCH_CHECK(t.is_contiguous(), "Tensor must be contiguous")
     TORCH_CHECK(t.dim() <= 4, "Expected Tensor.dim() <= 4");
 
-    if constexpr (std::is_same_v<typename Layout::dtype, char>) {
+    if constexpr (!TypeCheck) {
+        return;
+    } else if constexpr (std::is_same_v<typename Layout::dtype, char>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Char, "Tensor has invalid dtype (expected int8)");
     } else if constexpr (std::is_same_v<typename Layout::dtype, short>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Short, "Tensor has invalid dtype (expected int16)");
@@ -78,9 +80,9 @@ static inline void tensor_check(const at::Tensor &t) {
     }
 }
 
-template <kittens::ducks::pgl::all PGL>
+template <kittens::ducks::pgl::all PGL, bool TypeCheck = true>
 static inline void parallel_tensor_check(const TKParallelTensor& t) {
-    tensor_check<PGL>(t.data_);
+    tensor_check<PGL, TypeCheck>(t.data_);
     TORCH_CHECK(t.data_.sizes().vec() == t.shape_, "Shape mismatch between TKParallelTensor and the underlying tensor");
     TORCH_CHECK(t.data_.dtype() == t.dtype_, "Dtype mismatch between TKParallelTensor and the underlying tensor");
     TORCH_CHECK(t.raw_ptrs_.size() == PGL::num_devices, "Number of devices mismatch between PGL and TKParallelTensor");
@@ -90,9 +92,9 @@ static inline void parallel_tensor_check(const TKParallelTensor& t) {
     TORCH_CHECK(t.raw_ptrs_[t.local_rank_] == reinterpret_cast<void *>(t.data_.data_ptr()), "Current tensor data pointer not found in TKParallelTensor's raw_ptrs_");
 }
 
-template <kittens::ducks::gl::all GL>
+template <kittens::ducks::gl::all GL, bool TypeCheck = true>
 static inline GL tensor_to_gl(const at::Tensor &t) {
-    tensor_check<GL>(t);
+    tensor_check<GL, TypeCheck>(t);
 
     std::array<int, 4> shape = {1, 1, 1, 1};
     for (int i = 0; i < static_cast<int>(t.dim()); ++i)
@@ -103,9 +105,9 @@ static inline GL tensor_to_gl(const at::Tensor &t) {
     return ::kittens::make_gl<GL>(data_ptr, shape[0], shape[1], shape[2], shape[3]);
 }
 
-template <kittens::ducks::pgl::all PGL>
+template <kittens::ducks::pgl::all PGL, bool TypeCheck = true>
 static inline PGL parallel_tensor_to_pgl(TKParallelTensor &t) {
-    parallel_tensor_check<PGL>(t);
+    parallel_tensor_check<PGL, TypeCheck>(t);
 
     std::array<int, 4> shape = {1, 1, 1, 1};
     for (int i = 0; i < static_cast<int>(t.data_.dim()); ++i) {
