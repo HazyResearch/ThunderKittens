@@ -107,11 +107,11 @@ __device__ inline void kernel(const globals &G) {
     int cluster_id = clusterIdx().x;
 
     // Pipeline configuration
-    int num_blocks_per_row = G.C.cols() / globals::COL_BLOCK;
-    int num_blocks_per_col = G.C.rows() / globals::ROW_BLOCK;
-    int num_blocks = num_blocks_per_row * num_blocks_per_col;
-    int num_iters_per_block = G.A.cols() / globals::REDUCTION_BLOCK;
-    int num_blocks_per_supergroup = globals::SUPERGROUP_BLOCKS * num_blocks_per_row;
+    const int num_blocks_per_row = G.C.cols() / globals::COL_BLOCK;
+    const int num_blocks_per_col = G.C.rows() / globals::ROW_BLOCK;
+    const int num_blocks = num_blocks_per_row * num_blocks_per_col;
+    const int num_iters_per_block = G.A.cols() / globals::REDUCTION_BLOCK;
+    const int num_blocks_per_supergroup = globals::SUPERGROUP_BLOCKS * num_blocks_per_row;
 
     // Declare stage and phasebits for semaphore waits
     uint32_t stage = 0;
@@ -164,6 +164,7 @@ __device__ inline void kernel(const globals &G) {
                 }
             } else if (cta_id == 0 && warp_id == 1 && lane_id == 0) {
                 // Load scale matrices to tensor memory
+                #pragma unroll 2
                 for (int i = 0; i < num_iters_per_block; i++) {
                     tma::cluster::expect_bytes(scales_sm_arrived[stage], sizeof(globals::A_sc_tile) * 2 + sizeof(globals::B_sc_tile) * 4);
                     tma::cluster::wait(scales_sm_arrived[stage], get_phasebit<0>(phasebits, stage));
@@ -184,6 +185,7 @@ __device__ inline void kernel(const globals &G) {
                 // Launch tensor core matrix multiply
                 tma::cluster::wait(tensor_finished, get_phasebit<1>(phasebits, globals::PIPELINE_STAGES));
                 update_phasebit<1>(phasebits, globals::PIPELINE_STAGES);
+                #pragma unroll 8
                 for (int i = 0; i < num_iters_per_block; i++) {
                     tma::cluster::expect_bytes(inputs_arrived[stage], (sizeof(globals::A_fp8_tile) + sizeof(globals::B_fp8_tile)) * 2);
                     tma::cluster::wait(inputs_arrived[stage], get_phasebit<0>(phasebits, stage));
