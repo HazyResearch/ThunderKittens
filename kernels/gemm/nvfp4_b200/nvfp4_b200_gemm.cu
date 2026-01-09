@@ -462,10 +462,10 @@ __device__ inline void quantize_kernel(const globals &G) {
             A_sc_reg[r][k_block_idx] = __nv_fp8_e4m3(s_local_dec); // round-to-even
 
             // Quantize input matrix to FP4 and store to shared memory
-            const int offset_base = tile_row*globals::TILE_N/2 + k_block_idx*globals::K_BLOCK_SIZE;
+            const int offset_base = tile_row*globals::TILE_N/2 + k_block_idx*globals::K_BLOCK_SIZE/2;
             #pragma unroll
             for (int j = 0; j < N_PER_K_BLOCK; j++) {
-                const int offset = offset_base + (tid+j)&7;
+                const int offset = offset_base + ((tid+j)&7);
                 const float2 scaled = {
                     __bfloat162float(A_bf16_reg[r][i][j].x)*s_global_enc*s_local_enc,
                     __bfloat162float(A_bf16_reg[r][i][j].y)*s_global_enc*s_local_enc
