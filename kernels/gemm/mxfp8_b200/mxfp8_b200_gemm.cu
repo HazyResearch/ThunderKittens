@@ -12,20 +12,23 @@ struct config {
     static constexpr int STATIC_SHARED_MEMORY = 1024;
     static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - STATIC_SHARED_MEMORY;
 
-    static constexpr int CONSUMER_WARPGROUPS = 2;
+    static constexpr int CONSUMER_WARPGROUPS = 1;
     static constexpr int PRODUCER_WARPGROUPS = 1;
     static constexpr int NUM_WARPGROUPS = CONSUMER_WARPGROUPS + PRODUCER_WARPGROUPS;
     static constexpr int NUM_WARPS = NUM_WARPGROUPS * WARPGROUP_WARPS;
     static constexpr int NUM_THREADS = NUM_WARPS * WARP_THREADS;
 
-    static constexpr int PRODUCER_REGISTERS = 40;
-    static constexpr int CONSUMER_REGISTERS = 232;
+    static constexpr int PRODUCER_REGISTERS = 256;
+    static constexpr int CONSUMER_REGISTERS = 256;
 
     static constexpr int PIPELINE_STAGES = 5;
     static constexpr int SUPERGROUP_BLOCKS = 12;
     static constexpr int ROW_BLOCK = 256;
     static constexpr int COL_BLOCK = 256;
     static constexpr int REDUCTION_BLOCK = 128;
+
+    static constexpr int EPI_PIPE_DEPTH = 4;
+    static constexpr int NUM_D_TILES = EPI_PIPE_DEPTH > 1 ? 2 : 1;
 };
 
 template <typename C>
@@ -34,7 +37,7 @@ struct globals {
     using A_sc_tile  = st_fp8e8m0<32, 16, false>;
     using B_fp8_tile = st_fp8e4m3<C::COL_BLOCK / 2, C::REDUCTION_BLOCK>; // CTA distributed
     using B_sc_tile  = st_fp8e8m0<32, 16, false>;
-    using D_tile     = st_bf<C::ROW_BLOCK / 2, C::COL_BLOCK / 2>;        // CTA/WG distributed
+    using D_tile     = st_bf<C::ROW_BLOCK / 2, C::COL_BLOCK / C::EPI_PIPE_DEPTH>;
 
     using A_gl    = gl<fp8e4m3,  1,  1, -1, -1, A_fp8_tile>;
     using A_sc_gl = gl<fp8e8m0, -1, -1, 32, 16, A_sc_tile>;
@@ -62,7 +65,7 @@ __device__ inline void kernel(const globals<C> &g) {
         typename G::B_sc_tile B[2];
     };
     struct outputs_t {
-        typename G::D_tile D;
+        typename G::D_tile D[C::NUM_D_TILES];
     };
 
     // Allocate shared memory
@@ -97,7 +100,7 @@ __device__ inline void kernel(const globals<C> &g) {
             init_semaphore(matmul_finished[i], 0, 1); // even CTA
         }
         init_semaphore(tensor_finished, 0, C::CLUSTER_SIZE);
-        init_semaphore(outputs_arrived, 0, 1); // local
+        init_semaphore(outputs_arrived, 0, 1);
     }
     everyone::tma::cluster::sync();
 
@@ -118,12 +121,11 @@ __device__ inline void kernel(const globals<C> &g) {
     // Declare stage and phasebits for semaphore waits
     uint32_t stage = 0;
     uint32_t phasebits = 0xFFFF0000;
-    uint32_t last_stage = C::PIPELINE_STAGES;
 
     // Main divergence
     if (warpgroup_id == C::NUM_WARPGROUPS - 1) {
         // Producer group
-        warpgroup::decrease_registers<C::PRODUCER_REGISTERS>();
+        warpgroup::increase_registers<C::PRODUCER_REGISTERS>();
 
         for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
             // Compute block indices
@@ -139,19 +141,8 @@ __device__ inline void kernel(const globals<C> &g) {
                 for (int i = 0; i < num_iters_per_block; ++i) {
                     tma::cluster::wait(matmul_finished[stage], get_phasebit<1>(phasebits, stage));
                     update_phasebit<1>(phasebits, stage);
-
-                    if (stage == last_stage) {
-                        arrive(outputs_arrived);
-                        last_stage = C::PIPELINE_STAGES;
-                    }
-
                     tma::cluster::load_async(input_tiles[stage].A, g.A, {row_block_idx * 2 + cta_id, i}, inputs_arrived[stage], (uint16_t)(1 << cta_id), 0);
                     tma::cluster::load_async(input_tiles[stage].B, g.B, {col_block_idx * 2 + cta_id, i}, inputs_arrived[stage], (uint16_t)(1 << cta_id), 0);
-
-                    if (i == num_iters_per_block - 1) {
-                        last_stage = stage;
-                    }
-
                     stage = (stage + 1) % C::PIPELINE_STAGES;
                 }
             } else if (warp_id == 2 && lane_id == 0) {
@@ -185,8 +176,8 @@ __device__ inline void kernel(const globals<C> &g) {
                 }
             } else if (cta_id == 0 && warp_id == 0 && lane_id == 0) {
                 // Launch tensor core matrix multiply
-                tma::cluster::wait(tensor_finished, get_phasebit<1>(phasebits, C::PIPELINE_STAGES));
-                update_phasebit<1>(phasebits, C::PIPELINE_STAGES);
+                tma::cluster::wait(tensor_finished, get_phasebit<1>(phasebits, 0));
+                update_phasebit<1>(phasebits, 0);
                 #pragma unroll 8
                 for (int i = 0; i < num_iters_per_block; i++) {
                     tma::cluster::expect_bytes(inputs_arrived[stage], (sizeof(typename G::A_fp8_tile) + sizeof(typename G::B_fp8_tile)) * 2);
@@ -203,15 +194,11 @@ __device__ inline void kernel(const globals<C> &g) {
                                   matmul_finished[stage]);
                     stage = (stage + 1) % C::PIPELINE_STAGES;
                 }
+                kittens::detail::tcgen05::commit<2>(outputs_arrived);
             }
-        }
-        if (warp_id == 3 && lane_id == 0 && last_stage < C::PIPELINE_STAGES) {
-            tma::cluster::wait(matmul_finished[last_stage], get_phasebit<1>(phasebits, last_stage));
-            arrive(outputs_arrived);
         }
     } else {
         // Consumer group
-        using consumer = group<C::CONSUMER_WARPGROUPS * WARPGROUP_WARPS>;
         warpgroup::increase_registers<C::CONSUMER_REGISTERS>();
 
         for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
@@ -224,28 +211,26 @@ __device__ inline void kernel(const globals<C> &g) {
             int col_block_idx = idx_within_supergroup / rows_in_supergroup;
 
             // Wait for the last matmul to complete
-            wait(outputs_arrived, get_phasebit<0>(phasebits, C::PIPELINE_STAGES));
-            update_phasebit<0>(phasebits, C::PIPELINE_STAGES);
+            wait(outputs_arrived, get_phasebit<0>(phasebits, 0));
+            update_phasebit<0>(phasebits, 0);
 
             // Load the output from tensor memory into registers
-            rt_bf<C::ROW_BLOCK / 8, C::COL_BLOCK / 2> D_reg;
-            warpgroup::load_async(D_reg, out_tm.template subtile<tt_fl<C::ROW_BLOCK / 2, C::COL_BLOCK / 2>>(0, warpgroup::groupid() * C::COL_BLOCK / 2));
-            tensor_load_wait();
-            consumer::sync(1);
-            if (consumer::laneid() == 0)
-                tma::cluster::arrive(tensor_finished, 0, 1); // signal CTA 0
-
+            rt_bf<C::ROW_BLOCK / 8, C::COL_BLOCK / C::EPI_PIPE_DEPTH> D_reg[C::EPI_PIPE_DEPTH];
             #pragma unroll
-            for (int i = 0; i < 2; i++) {
-                if (warpgroup::groupid() == i) {
-                    warpgroup::store(output_tiles.D, D_reg);
-                    warpgroup::sync(2 + i);
-                    if (warpgroup::laneid() == 0) {
-                        tma::store_async(g.D, output_tiles.D, {row_block_idx * 2 + cta_id, col_block_idx * 2 + i});
-                        tma::store_async_read_wait();
-                    }
-                }
-                consumer::sync(1);
+            for (int i = 0; i < C::EPI_PIPE_DEPTH; i++)
+                warpgroup::load_async(D_reg[i], out_tm.template subtile<full_tt_fl<C::COL_BLOCK / C::EPI_PIPE_DEPTH>>(0, C::COL_BLOCK / C::EPI_PIPE_DEPTH * i));
+            tensor_load_wait();
+            warpgroup::sync(1);
+            warpgroup::tma::cluster::arrive(tensor_finished, 0, 1); // signal CTA 0
+
+            // Store to HBM with pipelined epilogue
+            #pragma unroll
+            for (int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
+                warpgroup::tma::store_async_read_wait<C::NUM_D_TILES-1>();
+                warpgroup::sync(1);
+                warpgroup::store(output_tiles.D[i%C::NUM_D_TILES], D_reg[i]);
+                warpgroup::sync(1);
+                warpgroup::tma::store_async(g.D, output_tiles.D[i%C::NUM_D_TILES], {row_block_idx * 2 + cta_id, col_block_idx * C::EPI_PIPE_DEPTH + i});
             }
         }
     }

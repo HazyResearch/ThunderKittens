@@ -234,6 +234,7 @@ __device__ inline void kernel(const globals<C> &g) {
             for (int i = 0; i < C::EPI_PIPE_DEPTH; i++)
                 warpgroup::load_async(D_reg[i], out_tm.template subtile<full_tt_fl<C::COL_BLOCK/C::EPI_PIPE_DEPTH>>(0, C::COL_BLOCK/C::EPI_PIPE_DEPTH*i));
             tensor_load_wait();
+            warpgroup::sync(1);
             warpgroup::tma::cluster::arrive(outputs_finished, 0, 1); // signal CTA 0
 
             // Decode with global scale and save to HBM (interleaved)
