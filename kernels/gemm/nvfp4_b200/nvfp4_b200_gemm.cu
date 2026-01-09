@@ -289,7 +289,7 @@ struct absmax_config {
 struct quantize_config {
     static constexpr int CLUSTER_SIZE = 1;
     static constexpr int NUM_WARPGROUPS = 1;
-    static constexpr int NUM_WARPS = NUM_WARPGROUPS * WARPGROUP_WARPS;
+    static constexpr int NUM_WARPS = 2;
     static constexpr int NUM_THREADS = NUM_WARPS * WARP_THREADS;
 };
 
@@ -414,13 +414,12 @@ __device__ inline void quantize_kernel(const globals &G) {
     float s_global_dec = G.A_sc_global[{0}];
     float s_global_enc = 1.0f / s_global_dec;
 
-    // We have 128 threads per block. Each thread handles a row of 64 elements = 4 K blocks
-    constexpr int NUM_K_BLOCKS = globals::TILE_N / globals::K_BLOCK_SIZE; // 4
+    // We have 64 threads per block. Each thread handles 2 rows of 64 elements / 16 elements per block = 8 K blocks
+    constexpr int ROWS_PER_THREAD = 2;
+    constexpr int NUM_K_BLOCKS = globals::TILE_N / globals::K_BLOCK_SIZE; // 4 (per row)
     constexpr int N_PER_K_BLOCK = globals::K_BLOCK_SIZE / 2;              // 8 (bf16x2 per K block)
-    bf16_2 A_bf16_reg[NUM_K_BLOCKS][N_PER_K_BLOCK];
-    fp8e4m3 A_sc_reg[NUM_K_BLOCKS];
-
-    const int tile_row = tid;
+    bf16_2 A_bf16_reg[ROWS_PER_THREAD][NUM_K_BLOCKS][N_PER_K_BLOCK];
+    fp8e4m3 A_sc_reg[ROWS_PER_THREAD][NUM_K_BLOCKS];
 
     // Wait for the inputs to arrive
     __syncthreads();
@@ -428,55 +427,63 @@ __device__ inline void quantize_kernel(const globals &G) {
 
     // Load input matrix from shared memory (custom swizzling to avoid bank conflicts)
     #pragma unroll
-    for (int i = 0; i < NUM_K_BLOCKS; i++) {
-        int k_block_idx = (i + tid/N_PER_K_BLOCK) % NUM_K_BLOCKS; // each block takes 8 SMEM banks
+    for (int r = 0; r < ROWS_PER_THREAD; r++) {
+        const int tile_row = tid + r*64;
         #pragma unroll
-        for (int j = 0; j < N_PER_K_BLOCK; j++) {
-            int tile_col = k_block_idx*globals::K_BLOCK_SIZE + ((tid+j)*2)%globals::K_BLOCK_SIZE;
-            int offset = (tile_row*globals::TILE_N + tile_col) * sizeof(bf16);
-            move<bf16_2>::lds(A_bf16_reg[i][j], static_cast<uint32_t>(__cvta_generic_to_shared(&A_bf16_smem)) + offset);
+        for (int i = 0; i < NUM_K_BLOCKS; i++) {
+            const int k_block_idx = (i + tid/8) % NUM_K_BLOCKS; // each block takes 8 SMEM banks
+            #pragma unroll
+            for (int j = 0; j < N_PER_K_BLOCK; j++) {
+                const int tile_col = k_block_idx*globals::K_BLOCK_SIZE + ((tid+j)*2)%globals::K_BLOCK_SIZE;
+                const int offset = (tile_row*globals::TILE_N + tile_col) * sizeof(bf16);
+                move<bf16_2>::lds(A_bf16_reg[r][i][j], static_cast<uint32_t>(__cvta_generic_to_shared(&A_bf16_smem)) + offset);
+            }
         }
     }
     __syncthreads();
 
     // Perform NVFP4 quantization
     #pragma unroll
-    for (int i = 0; i < NUM_K_BLOCKS; i++) {
-        int k_block_idx = (i + tid/N_PER_K_BLOCK) % NUM_K_BLOCKS;
-
-        // Calculate absolute maximum for this K block (in float32 for precision)
-        bf16_2 amax = __habs2(A_bf16_reg[i][0]);
+    for (int r = 0; r < ROWS_PER_THREAD; r++) {
+        const int tile_row = tid + r*64;
         #pragma unroll
-        for (int j = 0; j < N_PER_K_BLOCK; j++)
-            amax = __hmax2(amax, __habs2(A_bf16_reg[i][j]));
+        for (int i = 0; i < NUM_K_BLOCKS; i++) {
+            const int k_block_idx = (i + tid/8) % NUM_K_BLOCKS;
 
-        // Compute the local scale
-        float s_local_enc = 6.0f / (s_global_enc * __bfloat162float(__hmax(amax.x, amax.y)));
-        float s_local_dec = 1.0f / s_local_enc;
-        A_sc_reg[k_block_idx] = __nv_fp8_e4m3(s_local_dec); // round-to-even
+            // Calculate absolute maximum for this K block
+            bf16_2 amax = __habs2(A_bf16_reg[r][i][0]);
+            #pragma unroll
+            for (int j = 1; j < N_PER_K_BLOCK; j++)
+                amax = __hmax2(amax, __habs2(A_bf16_reg[r][i][j]));
 
-        // Quantize input matrix to FP4 and store to shared memory
-        #pragma unroll
-        for (int j = 0; j < N_PER_K_BLOCK; j++) {
-            int tile_col = k_block_idx*globals::K_BLOCK_SIZE + ((tid+j)*2)%globals::K_BLOCK_SIZE;
-            int offset = (tile_row*globals::TILE_N + tile_col) / 2;
-            float2 scaled = {
-                __bfloat162float(A_bf16_reg[i][j].x)*s_global_enc*s_local_enc,
-                __bfloat162float(A_bf16_reg[i][j].y)*s_global_enc*s_local_enc
-            };
-            asm volatile("{st.shared.b8 [%0], %1;}"
-                :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&A_fp4x2_smem)) + offset)
-                   "r"(static_cast<uint32_t>(__nv_cvt_float2_to_fp4x2(scaled, __NV_E2M1, cudaRoundNearest))));
+            // Compute the local scale
+            float s_local_enc = 6.0f / (s_global_enc * __bfloat162float(__hmax(amax.x, amax.y)));
+            float s_local_dec = 1.0f / s_local_enc;
+            A_sc_reg[r][k_block_idx] = __nv_fp8_e4m3(s_local_dec); // round-to-even
+
+            // Quantize input matrix to FP4 and store to shared memory
+            const int offset_base = tile_row*globals::TILE_N/2 + k_block_idx*globals::K_BLOCK_SIZE;
+            #pragma unroll
+            for (int j = 0; j < N_PER_K_BLOCK; j++) {
+                const int offset = offset_base + (tid+j)&7;
+                const float2 scaled = {
+                    __bfloat162float(A_bf16_reg[r][i][j].x)*s_global_enc*s_local_enc,
+                    __bfloat162float(A_bf16_reg[r][i][j].y)*s_global_enc*s_local_enc
+                };
+                asm volatile("{st.shared.b8 [%0], %1;}"
+                    :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&A_fp4x2_smem)) + offset)
+                       "r"(static_cast<uint32_t>(__nv_cvt_float2_to_fp4x2(scaled, __NV_E2M1, cudaRoundNearest))));
+            }
         }
+
+        // Store the scales to shared memory following NVIDIA's scale swizzle layout
+        const int scale_offset = (tile_row%32) * 16 + (tile_row/32) * 4;
+
+        // Store 4 scales (one per K block)
+        asm volatile("{st.shared.b32 [%0], %1;}"
+            :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&A_sc_smem)) + scale_offset)
+               "r"(*reinterpret_cast<uint32_t *>(&A_sc_reg[r][0])));
     }
-
-    // Store the scales to shared memory following NVIDIA's scale swizzle layout
-    int scale_offset = (tile_row%32) * 16 + (tile_row/32) * 4;
-
-    // Store 4 scales (one per K block)
-    asm volatile("{st.shared.b32 [%0], %1;}"
-        :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&A_sc_smem)) + scale_offset)
-           "r"(*reinterpret_cast<uint32_t *>(&A_sc_reg[0])));
 
     // Store to global memory
     __syncthreads();
