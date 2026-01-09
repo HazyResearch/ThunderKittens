@@ -86,21 +86,19 @@ __device__ inline void kernel(const globals<C> &g) {
 
     // Set up mbarriers
     __shared__ semaphore inputs_arrived[C::PIPELINE_STAGES];
-    __shared__ semaphore scales_sm_arrived[C::PIPELINE_STAGES];
-    __shared__ semaphore scales_tm_arrived[C::PIPELINE_STAGES];
-    __shared__ semaphore matmul_finished[C::PIPELINE_STAGES];
-    __shared__ semaphore tensor_finished;
+    __shared__ semaphore scales_arrived[C::PIPELINE_STAGES];
+    __shared__ semaphore inputs_finished[C::PIPELINE_STAGES];
     __shared__ semaphore outputs_arrived;
+    __shared__ semaphore outputs_finished;
     if (threadIdx.x == 32) {
         #pragma unroll
         for (int i = 0; i < C::PIPELINE_STAGES; ++i) {
-            init_semaphore(inputs_arrived[i], 0, 1); // even CTA
-            init_semaphore(scales_sm_arrived[i], 0, 1); // even CTA
-            init_semaphore(scales_tm_arrived[i], 0, 1); // even CTA
-            init_semaphore(matmul_finished[i], 0, 1); // even CTA
+            init_semaphore(inputs_arrived[i], 0, 1);
+            init_semaphore(scales_arrived[i], 0, 2);
+            init_semaphore(inputs_finished[i], 0, 1);
         }
-        init_semaphore(tensor_finished, 0, C::CLUSTER_SIZE);
         init_semaphore(outputs_arrived, 0, 1);
+        init_semaphore(outputs_finished, 0, C::CLUSTER_SIZE);
     }
     everyone::tma::cluster::sync();
 
@@ -137,61 +135,55 @@ __device__ inline void kernel(const globals<C> &g) {
             int col_block_idx = idx_within_supergroup / rows_in_supergroup;
 
             if (warp_id == 3 && lane_id == 0) {
-                // Load input matrices to shared memory
+                // Load input matrices and scales to shared memory
                 for (int i = 0; i < num_iters_per_block; ++i) {
-                    tma::cluster::wait(matmul_finished[stage], get_phasebit<1>(phasebits, stage));
+                    tma::cluster::wait(inputs_finished[stage], get_phasebit<1>(phasebits, stage));
                     update_phasebit<1>(phasebits, stage);
-                    tma::cluster::load_async(input_tiles[stage].A, g.A, {row_block_idx * 2 + cta_id, i}, inputs_arrived[stage], (uint16_t)(1 << cta_id), 0);
-                    tma::cluster::load_async(input_tiles[stage].B, g.B, {col_block_idx * 2 + cta_id, i}, inputs_arrived[stage], (uint16_t)(1 << cta_id), 0);
-                    stage = (stage + 1) % C::PIPELINE_STAGES;
-                }
-            } else if (warp_id == 2 && lane_id == 0) {
-                // Load scale matrices to shared memory
-                for (int i = 0; i < num_iters_per_block; ++i) {
-                    tma::cluster::wait(scales_tm_arrived[stage], get_phasebit<1>(phasebits, stage));
-                    update_phasebit<1>(phasebits, stage);
-                    tma::cluster::load_async(input_scales[stage].A,    g.A_sc, {row_block_idx * 2 + cta_id, i, 0, 0}, scales_sm_arrived[stage], (uint16_t)(1 << cta_id), 0);
-                    tma::cluster::load_async(input_scales[stage].B[0], g.B_sc, {col_block_idx * 2 + 0,      i, 0, 0}, scales_sm_arrived[stage], (uint16_t)(1 << cta_id), 0);
-                    tma::cluster::load_async(input_scales[stage].B[1], g.B_sc, {col_block_idx * 2 + 1,      i, 0, 0}, scales_sm_arrived[stage], (uint16_t)(1 << cta_id), 0);
+                    tma::cluster::load_async(input_tiles[stage].A,          g.A,    {row_block_idx * 2 + cta_id, i},       inputs_arrived[stage], (uint16_t)(1 << cta_id), 0);
+                    tma::cluster::load_async(input_tiles[stage].B,          g.B,    {col_block_idx * 2 + cta_id, i},       inputs_arrived[stage], (uint16_t)(1 << cta_id), 0);
+                    tma::cluster::load_async(input_scales[stage].A,         g.A_sc, {row_block_idx * 2 + cta_id, i, 0, 0}, inputs_arrived[stage], (uint16_t)(1 << cta_id), 0);
+                    tma::cluster::load_async(input_scales[stage].B[cta_id], g.B_sc, {col_block_idx * 2 + cta_id, i, 0, 0}, inputs_arrived[stage], (uint16_t)(0b11), 0);
                     stage = (stage + 1) % C::PIPELINE_STAGES;
                 }
             } else if (cta_id == 0 && warp_id == 1 && lane_id == 0) {
-                // Load scale matrices to tensor memory
-                #pragma unroll 2
+                // Load A scales from shared memory to tensor memory
                 for (int i = 0; i < num_iters_per_block; i++) {
-                    tma::cluster::expect_bytes(scales_sm_arrived[stage], sizeof(typename G::A_sc_tile) * 2 + sizeof(typename G::B_sc_tile) * 4);
-                    tma::cluster::wait(scales_sm_arrived[stage], get_phasebit<0>(phasebits, stage));
+                    tma::cluster::expect_bytes(inputs_arrived[stage], 2 * (sizeof(input_tiles_t) + sizeof(input_scales_t)));
+                    tma::cluster::wait(inputs_arrived[stage], get_phasebit<0>(phasebits, stage));
                     update_phasebit<0>(phasebits, stage);
-                    tma::cluster::wait(matmul_finished[stage], get_phasebit<1>(phasebits, stage));
-                    update_phasebit<1>(phasebits, stage);
-
-                    auto A_sc_tm_subtile   = A_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 16);
+                    auto A_sc_tm_subtile = A_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 16);
+                    load_mxnv_scale_async2(A_sc_tm_subtile, input_scales[stage].A);
+                    kittens::detail::tcgen05::commit<2>(scales_arrived[stage], 0b1);
+                    stage = (stage + 1) % C::PIPELINE_STAGES;
+                }
+            } else if (cta_id == 0 && warp_id == 2 && lane_id == 0) {
+                // Load B scales from shared memory to tensor memory
+                for (int i = 0; i < num_iters_per_block; i++) {
+                    tma::cluster::wait(inputs_arrived[stage], get_phasebit<0>(phasebits, stage));
+                    update_phasebit<0>(phasebits, stage);
                     auto B_sc_tm_subtile_0 = B_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 32);
                     auto B_sc_tm_subtile_1 = B_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 32 + 16);
-                    load_mxnv_scale_async2(A_sc_tm_subtile,   input_scales[stage].A);
                     load_mxnv_scale_async2(B_sc_tm_subtile_0, input_scales[stage].B[0]);
-                    load_mxnv_scale_async2(B_sc_tm_subtile_1, input_scales[stage].B[1], scales_tm_arrived[stage]);
-
+                    load_mxnv_scale_async2(B_sc_tm_subtile_1, input_scales[stage].B[1]);
+                    kittens::detail::tcgen05::commit<2>(scales_arrived[stage], 0b1);
                     stage = (stage + 1) % C::PIPELINE_STAGES;
                 }
             } else if (cta_id == 0 && warp_id == 0 && lane_id == 0) {
                 // Launch tensor core matrix multiply
-                tma::cluster::wait(tensor_finished, get_phasebit<1>(phasebits, 0));
+                tma::cluster::wait(outputs_finished, get_phasebit<1>(phasebits, 0));
                 update_phasebit<1>(phasebits, 0);
                 #pragma unroll 8
                 for (int i = 0; i < num_iters_per_block; i++) {
-                    tma::cluster::expect_bytes(inputs_arrived[stage], (sizeof(typename G::A_fp8_tile) + sizeof(typename G::B_fp8_tile)) * 2);
-                    tma::cluster::wait(inputs_arrived[stage], get_phasebit<0>(phasebits, stage));
-                    tma::cluster::wait(scales_tm_arrived[stage], get_phasebit<0>(phasebits, stage));
+                    wait(scales_arrived[stage], get_phasebit<0>(phasebits, stage));
                     update_phasebit<0>(phasebits, stage);
                     if (i == 0) mm2_ABt(out_tm, input_tiles[stage].A, input_tiles[stage].B,
                                         A_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 16),
                                         B_sc_tm.template subtile<full_tt_fp8e8m0<32>>(stage * 32),
-                                        matmul_finished[stage]);
+                                        inputs_finished[stage]);
                     else mma2_ABt(out_tm, input_tiles[stage].A, input_tiles[stage].B,
                                   A_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 16),
                                   B_sc_tm.template subtile<full_tt_fp8e8m0<32>>(stage * 32),
-                                  matmul_finished[stage]);
+                                  inputs_finished[stage]);
                     stage = (stage + 1) % C::PIPELINE_STAGES;
                 }
                 kittens::detail::tcgen05::commit<2>(outputs_arrived);
@@ -221,7 +213,7 @@ __device__ inline void kernel(const globals<C> &g) {
                 warpgroup::load_async(D_reg[i], out_tm.template subtile<full_tt_fl<C::COL_BLOCK / C::EPI_PIPE_DEPTH>>(0, C::COL_BLOCK / C::EPI_PIPE_DEPTH * i));
             tensor_load_wait();
             warpgroup::sync(1);
-            warpgroup::tma::cluster::arrive(tensor_finished, 0, 1); // signal CTA 0
+            warpgroup::tma::cluster::arrive(outputs_finished, 0, 1); // signal CTA 0
 
             // Store to HBM with pipelined epilogue
             #pragma unroll
