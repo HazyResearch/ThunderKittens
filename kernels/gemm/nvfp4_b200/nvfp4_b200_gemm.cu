@@ -133,7 +133,7 @@ __device__ inline void kernel(const globals<C> &g) {
 
         if (warp_id == 3 && lane_id == 0) {
             // Load input matrices to shared memory
-            for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / config::CLUSTER_SIZE) {
+            for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 int supergroup_idx = block_idx / num_blocks_per_supergroup;
                 int idx_within_supergroup = block_idx % num_blocks_per_supergroup;
                 int rows_in_supergroup = min(C::SUPERGROUP_BLOCKS, num_row_blocks - supergroup_idx * C::SUPERGROUP_BLOCKS);
@@ -153,7 +153,7 @@ __device__ inline void kernel(const globals<C> &g) {
             }
         } else if (cta_id == 0 && warp_id == 1 && lane_id == 0) {
             // Load A scales from shared memory to tensor memory
-            for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / config::CLUSTER_SIZE) {
+            for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 #pragma unroll 4
                 for (int i = 0; i < num_red_blocks; i++) {
                     tma::cluster::expect_bytes(inputs_arrived[stage], 2 * (sizeof(input_tiles_t) + sizeof(input_scales_t)));
@@ -171,7 +171,7 @@ __device__ inline void kernel(const globals<C> &g) {
             }
         } else if (cta_id == 0 && warp_id == 2 && lane_id == 0) {
             // Load B scales from shared memory to tensor memory
-            for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / config::CLUSTER_SIZE) {
+            for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 #pragma unroll 4
                 for (int i = 0; i < num_red_blocks; i++) {
                     tma::cluster::wait(inputs_arrived[stage], get_phasebit<0>(phasebits, stage));
@@ -191,7 +191,7 @@ __device__ inline void kernel(const globals<C> &g) {
             }
         } else if (cta_id == 0 && warp_id == 0 && lane_id == 0) {
             // Launch tensor core matrix multiplies
-            for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / config::CLUSTER_SIZE) {
+            for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 tma::cluster::wait(outputs_finished, get_phasebit<1>(phasebits, 0));
                 update_phasebit<1>(phasebits, 0);
                 for (int i = 0; i < num_red_blocks; i++) {
@@ -216,7 +216,7 @@ __device__ inline void kernel(const globals<C> &g) {
         const bf16 global_scale_bf16 = __float2bfloat16(g.A_sc_global[{0}] * g.B_sc_global[{0}]);
         const bf16_2 global_scale = {global_scale_bf16, global_scale_bf16};
 
-        for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / config::CLUSTER_SIZE) {
+        for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
             int supergroup_idx = block_idx / num_blocks_per_supergroup;
             int idx_within_supergroup = block_idx % num_blocks_per_supergroup;
             int rows_in_supergroup = min(C::SUPERGROUP_BLOCKS, num_row_blocks - supergroup_idx * C::SUPERGROUP_BLOCKS);
