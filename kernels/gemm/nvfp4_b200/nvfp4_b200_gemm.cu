@@ -154,6 +154,7 @@ __device__ inline void kernel(const globals<C> &g) {
         } else if (cta_id == 0 && warp_id == 1 && lane_id == 0) {
             // Load A scales from shared memory to tensor memory
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / config::CLUSTER_SIZE) {
+                #pragma unroll 4
                 for (int i = 0; i < num_red_blocks; i++) {
                     tma::cluster::expect_bytes(inputs_arrived[stage], 2 * (sizeof(input_tiles_t) + sizeof(input_scales_t)));
                     tma::cluster::wait(inputs_arrived[stage], get_phasebit<0>(phasebits, stage));
@@ -171,6 +172,7 @@ __device__ inline void kernel(const globals<C> &g) {
         } else if (cta_id == 0 && warp_id == 2 && lane_id == 0) {
             // Load B scales from shared memory to tensor memory
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / config::CLUSTER_SIZE) {
+                #pragma unroll 4
                 for (int i = 0; i < num_red_blocks; i++) {
                     tma::cluster::wait(inputs_arrived[stage], get_phasebit<0>(phasebits, stage));
                     update_phasebit<0>(phasebits, stage);
