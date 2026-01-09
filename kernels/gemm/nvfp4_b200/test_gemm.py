@@ -5,9 +5,6 @@ torch.set_printoptions(sci_mode=False)
 
 from _C import nvfp4_gemm, nvfp4_quantize  # type: ignore
 
-# TEMPORARY
-from test_quantize import torch_nvfp4_quantize, scale_swizzle, torch_nvfp4_dequantize
-
 
 def check_diff(
     name: str,
@@ -46,31 +43,19 @@ if __name__ == '__main__':
         C = torch.zeros(M, N, dtype=torch.bfloat16, device="cuda")
 
         # Quantize matrices
-        # A_fp4x2 = torch.empty(M, K // 2, dtype=torch.float4_e2m1fn_x2, device="cuda")
-        # A_sc = torch.zeros(M // 128, K // 64, 32, 16, dtype=torch.float8_e4m3fn, device="cuda")
-        # A_sc_global = torch.zeros(1, dtype=torch.float32, device="cuda")
-        # B_fp4x2 = torch.empty(N, K // 2, dtype=torch.float4_e2m1fn_x2, device="cuda")
-        # B_sc = torch.zeros(N // 128, K // 64, 32, 16, dtype=torch.float8_e4m3fn, device="cuda")
-        # B_sc_global = torch.zeros(1, dtype=torch.float32, device="cuda")
-        # nvfp4_quantize(A, A_fp4x2, A_sc, A_sc_global)
-        # nvfp4_quantize(B, B_fp4x2, B_sc, B_sc_global)
-
-        # TEMPORARY
-        A_fp4x2, A_sc_unswizzled, A_sc_global = torch_nvfp4_quantize(A)
-        A_sc = scale_swizzle(A_sc_unswizzled)
-        B_fp4x2, B_sc_unswizzled, B_sc_global = torch_nvfp4_quantize(B)
-        B_sc = scale_swizzle(B_sc_unswizzled)
+        A_fp4x2 = torch.empty(M, K // 2, dtype=torch.float4_e2m1fn_x2, device="cuda")
+        A_sc = torch.empty(M // 128, K // 64, 512, dtype=torch.float8_e4m3fn, device="cuda")
+        A_sc_global = torch.empty(1, dtype=torch.float32, device="cuda")
+        B_fp4x2 = torch.empty(N, K // 2, dtype=torch.float4_e2m1fn_x2, device="cuda")
+        B_sc = torch.empty(N // 128, K // 64, 512, dtype=torch.float8_e4m3fn, device="cuda")
+        B_sc_global = torch.empty(1, dtype=torch.float32, device="cuda")
+        nvfp4_quantize(A, A_fp4x2, A_sc, A_sc_global)
+        nvfp4_quantize(B, B_fp4x2, B_sc, B_sc_global)
 
         groups.append((A_fp4x2, A_sc, A_sc_global, B_fp4x2, B_sc, B_sc_global, C))
 
-    # Run PyTorch version using the last input 
-    A_torch = torch_nvfp4_dequantize(A_fp4x2, A_sc_unswizzled, A_sc_global)
-    B_torch = torch_nvfp4_dequantize(B_fp4x2, B_sc_unswizzled, B_sc_global)
-    C_torch = torch.matmul(A_torch, B_torch.T)
-
     # Run kernel and check correctness using the last input
     nvfp4_gemm(A_fp4x2, A_sc, A_sc_global, B_fp4x2, B_sc, B_sc_global, C)
-    check_diff("TK NVFP4 vs PyTorch NVFP4", C, C_torch)
     check_diff("TK NVFP4 vs PyTorch BF16", C, torch.matmul(A, B.T).to(torch.bfloat16))
 
     # Benchmark
