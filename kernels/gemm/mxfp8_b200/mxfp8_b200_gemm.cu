@@ -21,21 +21,22 @@ struct config {
     static constexpr int PRODUCER_REGISTERS = 256;
     static constexpr int CONSUMER_REGISTERS = 256;
 
-    static constexpr int PIPELINE_STAGES = 5;
+    static constexpr int LOAD_PIPE_DEPTH = 5;
+    static constexpr int EPI_PIPE_DEPTH = 4;
+
     static constexpr int SUPERGROUP_BLOCKS = 12;
     static constexpr int ROW_BLOCK = 256;
     static constexpr int COL_BLOCK = 256;
     static constexpr int REDUCTION_BLOCK = 128;
 
-    static constexpr int EPI_PIPE_DEPTH = 4;
     static constexpr int NUM_D_TILES = EPI_PIPE_DEPTH > 1 ? 2 : 1;
 };
 
 template <typename C>
 struct globals {
-    using A_fp8_tile = st_fp8e4m3<C::ROW_BLOCK / 2, C::REDUCTION_BLOCK>; // CTA distributed
+    using A_fp8_tile = st_fp8e4m3<C::ROW_BLOCK / 2, C::REDUCTION_BLOCK>;
     using A_sc_tile  = st_fp8e8m0<32, 16, false>;
-    using B_fp8_tile = st_fp8e4m3<C::COL_BLOCK / 2, C::REDUCTION_BLOCK>; // CTA distributed
+    using B_fp8_tile = st_fp8e4m3<C::COL_BLOCK / 2, C::REDUCTION_BLOCK>;
     using B_sc_tile  = st_fp8e8m0<32, 16, false>;
     using D_tile     = st_bf<C::ROW_BLOCK / 2, C::COL_BLOCK / C::EPI_PIPE_DEPTH>;
 
@@ -71,28 +72,28 @@ __device__ inline void kernel(const globals<C> &g) {
     // Allocate shared memory
     extern __shared__ int __shm[];
     tma_swizzle_allocator sm_allocator((int*)&__shm[0]);
-    static_assert(sizeof(input_tiles_t) * C::PIPELINE_STAGES +
-                  sizeof(input_scales_t) * C::PIPELINE_STAGES + 1024 +
+    static_assert(sizeof(input_tiles_t) * C::LOAD_PIPE_DEPTH +
+                  sizeof(input_scales_t) * C::LOAD_PIPE_DEPTH + 1024 +
                   sizeof(outputs_t) <= C::DYNAMIC_SHARED_MEMORY);
-    input_tiles_t  (&input_tiles) [C::PIPELINE_STAGES] = sm_allocator.allocate<input_tiles_t, C::PIPELINE_STAGES>();
-    input_scales_t (&input_scales)[C::PIPELINE_STAGES] = sm_allocator.allocate<input_scales_t, C::PIPELINE_STAGES>();
+    input_tiles_t  (&input_tiles) [C::LOAD_PIPE_DEPTH] = sm_allocator.allocate<input_tiles_t, C::LOAD_PIPE_DEPTH>();
+    input_scales_t (&input_scales)[C::LOAD_PIPE_DEPTH] = sm_allocator.allocate<input_scales_t, C::LOAD_PIPE_DEPTH>();
     outputs_t &output_tiles = sm_allocator.allocate<outputs_t>();
 
     // Allocate tensor memory
     tensor_allocator<1, C::CLUSTER_SIZE> tm_allocator;
     auto out_tm  = tm_allocator.template allocate<full_tt_fl<C::COL_BLOCK>>(0);                 // columns 000-255
-    auto A_sc_tm = tm_allocator.template allocate<full_tt_fp8e8m0<16*C::PIPELINE_STAGES>>(256); // columns 256-383
-    auto B_sc_tm = tm_allocator.template allocate<full_tt_fp8e8m0<32*C::PIPELINE_STAGES>>(384); // columns 384-511
+    auto A_sc_tm = tm_allocator.template allocate<full_tt_fp8e8m0<16*C::LOAD_PIPE_DEPTH>>(256); // columns 256-383
+    auto B_sc_tm = tm_allocator.template allocate<full_tt_fp8e8m0<32*C::LOAD_PIPE_DEPTH>>(384); // columns 384-511
 
     // Set up mbarriers
-    __shared__ semaphore inputs_arrived[C::PIPELINE_STAGES];
-    __shared__ semaphore scales_arrived[C::PIPELINE_STAGES];
-    __shared__ semaphore inputs_finished[C::PIPELINE_STAGES];
+    __shared__ semaphore inputs_arrived[C::LOAD_PIPE_DEPTH];
+    __shared__ semaphore scales_arrived[C::LOAD_PIPE_DEPTH];
+    __shared__ semaphore inputs_finished[C::LOAD_PIPE_DEPTH];
     __shared__ semaphore outputs_arrived;
     __shared__ semaphore outputs_finished;
     if (threadIdx.x == 32) {
         #pragma unroll
-        for (int i = 0; i < C::PIPELINE_STAGES; ++i) {
+        for (int i = 0; i < C::LOAD_PIPE_DEPTH; ++i) {
             init_semaphore(inputs_arrived[i], 0, 1);
             init_semaphore(scales_arrived[i], 0, 2);
             init_semaphore(inputs_finished[i], 0, 1);
@@ -102,14 +103,14 @@ __device__ inline void kernel(const globals<C> &g) {
     }
     everyone::tma::cluster::sync();
 
-    // Warpgroup configuration
+    // Thread metadata
     int lane_id = warp::laneid();
     int warp_id = warpgroup::warpid();
     int warpgroup_id = warpgroup::groupid();
     int cta_id = cluster_ctarank();
     int cluster_id = clusterIdx().x;
 
-    // Pipeline configuration
+    // Block dimensions
     const int num_blocks_per_row = g.D.cols() / C::COL_BLOCK;
     const int num_blocks_per_col = g.D.rows() / C::ROW_BLOCK;
     const int num_blocks = num_blocks_per_row * num_blocks_per_col;
@@ -143,7 +144,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     tma::cluster::load_async(input_tiles[stage].B,          g.B,    {col_block_idx * 2 + cta_id, i},       inputs_arrived[stage], (uint16_t)(1 << cta_id), 0);
                     tma::cluster::load_async(input_scales[stage].A,         g.A_sc, {row_block_idx * 2 + cta_id, i, 0, 0}, inputs_arrived[stage], (uint16_t)(1 << cta_id), 0);
                     tma::cluster::load_async(input_scales[stage].B[cta_id], g.B_sc, {col_block_idx * 2 + cta_id, i, 0, 0}, inputs_arrived[stage], (uint16_t)(0b11), 0);
-                    stage = (stage + 1) % C::PIPELINE_STAGES;
+                    stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
             } else if (cta_id == 0 && warp_id == 1 && lane_id == 0) {
                 // Load A scales from shared memory to tensor memory
@@ -154,7 +155,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     auto A_sc_tm_subtile = A_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 16);
                     load_mxnv_scale_async2(A_sc_tm_subtile, input_scales[stage].A);
                     kittens::detail::tcgen05::commit<2>(scales_arrived[stage], 0b1);
-                    stage = (stage + 1) % C::PIPELINE_STAGES;
+                    stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
             } else if (cta_id == 0 && warp_id == 2 && lane_id == 0) {
                 // Load B scales from shared memory to tensor memory
@@ -166,7 +167,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     load_mxnv_scale_async2(B_sc_tm_subtile_0, input_scales[stage].B[0]);
                     load_mxnv_scale_async2(B_sc_tm_subtile_1, input_scales[stage].B[1]);
                     kittens::detail::tcgen05::commit<2>(scales_arrived[stage], 0b1);
-                    stage = (stage + 1) % C::PIPELINE_STAGES;
+                    stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
             } else if (cta_id == 0 && warp_id == 0 && lane_id == 0) {
                 // Launch tensor core matrix multiply
@@ -184,7 +185,7 @@ __device__ inline void kernel(const globals<C> &g) {
                                   A_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 16),
                                   B_sc_tm.template subtile<full_tt_fp8e8m0<32>>(stage * 32),
                                   inputs_finished[stage]);
-                    stage = (stage + 1) % C::PIPELINE_STAGES;
+                    stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
                 kittens::detail::tcgen05::commit<2>(outputs_arrived);
             }
