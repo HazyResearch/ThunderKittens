@@ -143,7 +143,6 @@
       "Bash(crontab:*)",
       "Bash(at :*)",
       "Bash(batch:*)",
-      "Bash(kill:*)",
       "Bash(killall:*)",
       "Bash(pkill:*)",
       "Bash(xkill:*)",
