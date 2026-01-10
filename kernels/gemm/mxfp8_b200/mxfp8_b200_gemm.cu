@@ -21,15 +21,15 @@ struct config {
     static constexpr int PRODUCER_REGISTERS = 256;
     static constexpr int CONSUMER_REGISTERS = 256;
 
-    static constexpr int LOAD_PIPE_DEPTH = 5;
-    static constexpr int EPI_PIPE_DEPTH = 4;
+    static constexpr int LOAD_PIPE_DEPTH = 6; // 5
+    static constexpr int EPI_PIPE_DEPTH = 16; // 8
 
-    static constexpr int SUPERGROUP_BLOCKS = 12;
+    static constexpr int SUPERGROUP_BLOCKS = 12; // 16
     static constexpr int ROW_BLOCK = 256;
     static constexpr int COL_BLOCK = 256;
     static constexpr int REDUCTION_BLOCK = 128;
 
-    static constexpr int NUM_D_TILES = EPI_PIPE_DEPTH > 1 ? 2 : 1;
+    static constexpr int NUM_D_TILES = 4; // 2
 };
 
 template <typename C>
@@ -95,7 +95,7 @@ __device__ inline void kernel(const globals<C> &g) {
         #pragma unroll
         for (int i = 0; i < C::LOAD_PIPE_DEPTH; ++i) {
             init_semaphore(inputs_arrived[i], 0, 1);
-            init_semaphore(scales_arrived[i], 0, 2);
+            init_semaphore(scales_arrived[i], 0, 1);
             init_semaphore(inputs_finished[i], 0, 1);
         }
         init_semaphore(outputs_arrived, 0, 1);
@@ -147,7 +147,7 @@ __device__ inline void kernel(const globals<C> &g) {
                 }
             }
         } else if (cta_id == 0 && warp_id == 1 && lane_id == 0) {
-            // Load A scales from shared memory to tensor memory
+            // Load A and B scales from shared memory to tensor memory
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 for (int i = 0; i < num_iters_per_block; i++) {
                     tma::cluster::expect_bytes(inputs_arrived[stage], 2 * (sizeof(input_tiles_t) + sizeof(input_scales_t)));
@@ -155,16 +155,6 @@ __device__ inline void kernel(const globals<C> &g) {
                     update_phasebit<0>(phasebits, stage);
                     auto A_sc_tm_subtile = A_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 16);
                     load_mxnv_scale_async2(A_sc_tm_subtile, input_scales[stage].A);
-                    kittens::detail::tcgen05::commit<2>(scales_arrived[stage], 0b1);
-                    stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
-                }
-            }
-        } else if (cta_id == 0 && warp_id == 2 && lane_id == 0) {
-            // Load B scales from shared memory to tensor memory
-            for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
-                for (int i = 0; i < num_iters_per_block; i++) {
-                    tma::cluster::wait(inputs_arrived[stage], get_phasebit<0>(phasebits, stage));
-                    update_phasebit<0>(phasebits, stage);
                     auto B_sc_tm_subtile_0 = B_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 32);
                     auto B_sc_tm_subtile_1 = B_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 32 + 16);
                     load_mxnv_scale_async2(B_sc_tm_subtile_0, input_scales[stage].B[0]);
@@ -199,7 +189,6 @@ __device__ inline void kernel(const globals<C> &g) {
         warpgroup::increase_registers<C::CONSUMER_REGISTERS>();
 
         for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
-            // Compute block indices
             int supergroup_idx = block_idx / num_blocks_per_supergroup;
             int idx_within_supergroup = block_idx % num_blocks_per_supergroup;
             int rows_in_supergroup = min(C::SUPERGROUP_BLOCKS, num_blocks_per_col - supergroup_idx * C::SUPERGROUP_BLOCKS);
