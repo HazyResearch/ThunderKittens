@@ -22,9 +22,9 @@ struct config {
     static constexpr int CONSUMER_REGISTERS = 256;
 
     static constexpr int LOAD_PIPE_DEPTH = 4;
-    static constexpr int EPI_PIPE_DEPTH = 8;
+    static constexpr int EPI_PIPE_DEPTH = 16;
 
-    static constexpr int SUPERGROUP_BLOCKS = 1;
+    static constexpr int SUPERGROUP_BLOCKS = 12;
     static constexpr int ROW_BLOCK = 256;
     static constexpr int COL_BLOCK = 256;
     static constexpr int RED_BLOCK = 256;
