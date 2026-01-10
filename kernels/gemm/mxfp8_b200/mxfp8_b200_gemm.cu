@@ -126,17 +126,16 @@ __device__ inline void kernel(const globals<C> &g) {
         // Producer group
         warpgroup::increase_registers<C::PRODUCER_REGISTERS>();
 
-        for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
-            // Compute block indices
-            int supergroup_idx = block_idx / num_blocks_per_supergroup;
-            int idx_within_supergroup = block_idx % num_blocks_per_supergroup;
-            int rows_in_supergroup = min(C::SUPERGROUP_BLOCKS, num_blocks_per_col - supergroup_idx * C::SUPERGROUP_BLOCKS);
-            int row_within_supergroup = idx_within_supergroup % rows_in_supergroup;
-            int row_block_idx = supergroup_idx * C::SUPERGROUP_BLOCKS + row_within_supergroup;
-            int col_block_idx = idx_within_supergroup / rows_in_supergroup;
+        if (warp_id == 3 && lane_id == 0) {
+            // Load input matrices and scales to shared memory
+            for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
+                int supergroup_idx = block_idx / num_blocks_per_supergroup;
+                int idx_within_supergroup = block_idx % num_blocks_per_supergroup;
+                int rows_in_supergroup = min(C::SUPERGROUP_BLOCKS, num_blocks_per_col - supergroup_idx * C::SUPERGROUP_BLOCKS);
+                int row_within_supergroup = idx_within_supergroup % rows_in_supergroup;
+                int row_block_idx = supergroup_idx * C::SUPERGROUP_BLOCKS + row_within_supergroup;
+                int col_block_idx = idx_within_supergroup / rows_in_supergroup;
 
-            if (warp_id == 3 && lane_id == 0) {
-                // Load input matrices and scales to shared memory
                 for (int i = 0; i < num_iters_per_block; ++i) {
                     tma::cluster::wait(inputs_finished[stage], get_phasebit<1>(phasebits, stage));
                     update_phasebit<1>(phasebits, stage);
@@ -146,8 +145,10 @@ __device__ inline void kernel(const globals<C> &g) {
                     tma::cluster::load_async(input_scales[stage].B[cta_id], g.B_sc, {col_block_idx * 2 + cta_id, i, 0, 0}, inputs_arrived[stage], (uint16_t)(0b11), 0);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
-            } else if (cta_id == 0 && warp_id == 1 && lane_id == 0) {
-                // Load A scales from shared memory to tensor memory
+            }
+        } else if (cta_id == 0 && warp_id == 1 && lane_id == 0) {
+            // Load A scales from shared memory to tensor memory
+            for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 for (int i = 0; i < num_iters_per_block; i++) {
                     tma::cluster::expect_bytes(inputs_arrived[stage], 2 * (sizeof(input_tiles_t) + sizeof(input_scales_t)));
                     tma::cluster::wait(inputs_arrived[stage], get_phasebit<0>(phasebits, stage));
@@ -157,8 +158,10 @@ __device__ inline void kernel(const globals<C> &g) {
                     kittens::detail::tcgen05::commit<2>(scales_arrived[stage], 0b1);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
-            } else if (cta_id == 0 && warp_id == 2 && lane_id == 0) {
-                // Load B scales from shared memory to tensor memory
+            }
+        } else if (cta_id == 0 && warp_id == 2 && lane_id == 0) {
+            // Load B scales from shared memory to tensor memory
+            for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 for (int i = 0; i < num_iters_per_block; i++) {
                     tma::cluster::wait(inputs_arrived[stage], get_phasebit<0>(phasebits, stage));
                     update_phasebit<0>(phasebits, stage);
@@ -169,11 +172,12 @@ __device__ inline void kernel(const globals<C> &g) {
                     kittens::detail::tcgen05::commit<2>(scales_arrived[stage], 0b1);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
-            } else if (cta_id == 0 && warp_id == 0 && lane_id == 0) {
-                // Launch tensor core matrix multiply
+            }
+        } else if (cta_id == 0 && warp_id == 0 && lane_id == 0) {
+            // Launch tensor core matrix multiply
+            for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 tma::cluster::wait(outputs_finished, get_phasebit<1>(phasebits, 0));
                 update_phasebit<1>(phasebits, 0);
-                #pragma unroll 8
                 for (int i = 0; i < num_iters_per_block; i++) {
                     wait(scales_arrived[stage], get_phasebit<0>(phasebits, stage));
                     update_phasebit<0>(phasebits, stage);
