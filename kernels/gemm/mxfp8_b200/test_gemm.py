@@ -25,9 +25,9 @@ def check_diff(
 
 if __name__ == '__main__':
     # Matrix dimensions
-    M = int(sys.argv[1]) if len(sys.argv) > 1 else 16384
-    N = int(sys.argv[2]) if len(sys.argv) > 2 else 16384
-    K = int(sys.argv[3]) if len(sys.argv) > 3 else 16384
+    M = int(sys.argv[1]) if len(sys.argv) > 1 else 8192
+    N = int(sys.argv[2]) if len(sys.argv) > 2 else 8192
+    K = int(sys.argv[3]) if len(sys.argv) > 3 else 8192
 
     # Group size
     l2_size = 128 * 1024 * 1024
@@ -56,8 +56,8 @@ if __name__ == '__main__':
     check_diff("TK-MXFP8-GEMM", C, torch.matmul(A, B.T).to(torch.bfloat16))
 
     # Benchmark
-    NUM_WARMUPS = 500
-    NUM_ITERS = 100
+    NUM_WARMUPS = 5
+    NUM_ITERS = 10
 
     start_event = torch.cuda.Event(enable_timing=True)
     end_event = torch.cuda.Event(enable_timing=True)

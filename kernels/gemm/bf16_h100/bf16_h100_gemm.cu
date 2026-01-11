@@ -158,7 +158,7 @@ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     dim3 block(kittens::prototype::detail::NUM_THREADS_v<mmt>);
 
     // Number of iterations
-    int num_warmups = ncu ? 0 : 2;
+    int num_warmups = ncu ? 0 : 5;
     int num_iters = ncu ? 1 : 10;
 
     // Warmup

@@ -308,8 +308,8 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     CUDACHECK(cudaFuncSetAttribute(kernel<C>, cudaFuncAttributeMaxDynamicSharedMemorySize, g[0].dynamic_shared_memory()));
 
     // Number of iterations
-    int num_warmups = ncu ? 0 : 500;
-    int num_iters = ncu ? 1 : 100;
+    int num_warmups = ncu ? 0 : 5;
+    int num_iters = ncu ? 1 : 10;
 
     // Warmup
     for(int i = 0; i < num_warmups; i++) {

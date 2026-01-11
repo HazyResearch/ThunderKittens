@@ -139,8 +139,8 @@ if __name__ == '__main__':
     check_diff("TK-SC", A_sc, A_sc_ref)
 
     # Benchmark
-    NUM_WARMUPS = 500
-    NUM_ITERS = 100
+    NUM_WARMUPS = 5
+    NUM_ITERS = 10
 
     start_event = torch.cuda.Event(enable_timing=True)
     end_event = torch.cuda.Event(enable_timing=True)
