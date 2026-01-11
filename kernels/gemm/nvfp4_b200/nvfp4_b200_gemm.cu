@@ -23,22 +23,22 @@ struct config {
     static constexpr int LOAD_PIPE_DEPTH = 4;
     static constexpr int EPI_PIPE_DEPTH = 16;
 
-    static constexpr int SUPERGROUP_BLOCKS = 12;
-    static constexpr int ROW_BLOCK = 256;
-    static constexpr int COL_BLOCK = 256;
-    static constexpr int RED_BLOCK = 256;
-    static constexpr int MMA_PER_TILE = RED_BLOCK/64;
+    static constexpr int SUPERGROUP_SIZE = 12;
+    static constexpr int Mb = 256;
+    static constexpr int Nb = 256;
+    static constexpr int Kb = 256;
+    static constexpr int MMA_PER_TILE = Kb/64;
 
     static constexpr int NUM_D_TILES = EPI_PIPE_DEPTH > 1 ? 2 : 1;
 };
 
 template <typename C>
 struct globals {
-    using A_fp4x2_tile = st_fp4e2m1_2<C::ROW_BLOCK/2, C::RED_BLOCK/2>;
+    using A_fp4x2_tile = st_fp4e2m1_2<C::Mb/2, C::Kb/2>;
     using A_sc_tile    = st_hf<4, 256, false>;
-    using B_fp4x2_tile = st_fp4e2m1_2<C::COL_BLOCK/2, C::RED_BLOCK/2>;
+    using B_fp4x2_tile = st_fp4e2m1_2<C::Nb/2, C::Kb/2>;
     using B_sc_tile    = st_hf<4, 256, false>;
-    using D_tile       = st_bf<C::ROW_BLOCK/2, C::COL_BLOCK/C::EPI_PIPE_DEPTH>;
+    using D_tile       = st_bf<C::Mb/2, C::Nb/C::EPI_PIPE_DEPTH>;
 
     using A_fp4x2_gl     = gl<fp4e2m1_2,  1,  1, -1, -1, A_fp4x2_tile>;
     using A_sc_gl        = gl<half,       1, -1, -1, 256, A_sc_tile>;
@@ -85,7 +85,7 @@ __device__ inline void kernel(const globals<C> &g) {
 
     // Allocate tensor memory
     tensor_allocator<1, C::CLUSTER_SIZE> tm_allocator;
-    auto out_tm  = tm_allocator.template allocate<full_tt_fl<C::COL_BLOCK>>(0);
+    auto out_tm  = tm_allocator.template allocate<full_tt_fl<C::Nb>>(0);
     auto A_sc_tm = tm_allocator.template allocate<full_tt_fp8e4m3<16*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(256);
     auto B_sc_tm = tm_allocator.template allocate<full_tt_fp8e4m3<32*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(384);
 
@@ -115,11 +115,11 @@ __device__ inline void kernel(const globals<C> &g) {
     int cluster_id = clusterIdx().x;
 
     // Block dimensions
-    const int num_row_blocks = g.D.rows() / C::ROW_BLOCK;
-    const int num_col_blocks = g.D.cols() / C::COL_BLOCK;
+    const int num_row_blocks = g.D.rows() / C::Mb;
+    const int num_col_blocks = g.D.cols() / C::Nb;
     const int num_blocks = num_row_blocks * num_col_blocks;
-    const int num_red_blocks = 2 * g.A.cols() / C::RED_BLOCK;
-    const int num_blocks_per_supergroup = C::SUPERGROUP_BLOCKS * num_col_blocks;
+    const int num_red_blocks = 2 * g.A.cols() / C::Kb;
+    const int num_blocks_per_supergroup = C::SUPERGROUP_SIZE * num_col_blocks;
 
     // Declare stage and phasebits for semaphore waits
     uint32_t stage = 0;
@@ -135,9 +135,9 @@ __device__ inline void kernel(const globals<C> &g) {
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 int supergroup_idx = block_idx / num_blocks_per_supergroup;
                 int idx_within_supergroup = block_idx % num_blocks_per_supergroup;
-                int rows_in_supergroup = min(C::SUPERGROUP_BLOCKS, num_row_blocks - supergroup_idx * C::SUPERGROUP_BLOCKS);
+                int rows_in_supergroup = min(C::SUPERGROUP_SIZE, num_row_blocks - supergroup_idx * C::SUPERGROUP_SIZE);
                 int row_within_supergroup = idx_within_supergroup % rows_in_supergroup;
-                int row_block_idx = supergroup_idx * C::SUPERGROUP_BLOCKS + row_within_supergroup;
+                int row_block_idx = supergroup_idx * C::SUPERGROUP_SIZE + row_within_supergroup;
                 int col_block_idx = idx_within_supergroup / rows_in_supergroup;
 
                 for (int i = 0; i < num_red_blocks; ++i) {
@@ -218,9 +218,9 @@ __device__ inline void kernel(const globals<C> &g) {
         for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
             int supergroup_idx = block_idx / num_blocks_per_supergroup;
             int idx_within_supergroup = block_idx % num_blocks_per_supergroup;
-            int rows_in_supergroup = min(C::SUPERGROUP_BLOCKS, num_row_blocks - supergroup_idx * C::SUPERGROUP_BLOCKS);
+            int rows_in_supergroup = min(C::SUPERGROUP_SIZE, num_row_blocks - supergroup_idx * C::SUPERGROUP_SIZE);
             int row_within_supergroup = idx_within_supergroup % rows_in_supergroup;
-            int row_block_idx = supergroup_idx * C::SUPERGROUP_BLOCKS + row_within_supergroup;
+            int row_block_idx = supergroup_idx * C::SUPERGROUP_SIZE + row_within_supergroup;
             int col_block_idx = idx_within_supergroup / rows_in_supergroup;
 
             // Wait for the last matmul to complete
@@ -228,10 +228,10 @@ __device__ inline void kernel(const globals<C> &g) {
             update_phasebit<0>(phasebits, 0);
 
             // Load the output from tensor memory into registers
-            rt_bf<C::ROW_BLOCK / 8, C::COL_BLOCK/C::EPI_PIPE_DEPTH> D_reg[C::EPI_PIPE_DEPTH];
+            rt_bf<C::Mb / 8, C::Nb/C::EPI_PIPE_DEPTH> D_reg[C::EPI_PIPE_DEPTH];
             #pragma unroll
             for (int i = 0; i < C::EPI_PIPE_DEPTH; i++)
-                warpgroup::load_async(D_reg[i], out_tm.template subtile<full_tt_fl<C::COL_BLOCK/C::EPI_PIPE_DEPTH>>(0, C::COL_BLOCK/C::EPI_PIPE_DEPTH*i));
+                warpgroup::load_async(D_reg[i], out_tm.template subtile<full_tt_fl<C::Nb/C::EPI_PIPE_DEPTH>>(0, C::Nb/C::EPI_PIPE_DEPTH*i));
             tensor_load_wait();
             warpgroup::sync(1);
             warpgroup::tma::cluster::arrive(outputs_finished, 0, 1); // signal CTA 0
