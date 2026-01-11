@@ -21,13 +21,11 @@ ThunderKittens is built for NVIDIA GPUs. For AMD GPUs, check out [HipKittens](ht
 
 ## Recent Updates
 
-**Nov 17, 2025:** **ThunderKittens 2.0** is out!
+**Jan 10, 2026:** **ThunderKittens 2.0** is out!
 
-* This release brings full support for Blackwell GPUs and NVFP4 precision, and merges major contributions from across the industry.
-* We've fixed numerous bugs, improved overall performance, and finally added proper docstrings for most functions.
-* The repository structure has changed. We no longer support the repo as a Python package (i.e., a top-level `setup.py`), since ThunderKittens is fundamentally a CUDA framework. Kernels built with ThunderKittens are still located under the `/kernels` directory, and we still welcome new kernel contributions, but they must now be compiled individually. Tests and benchmarks reside alongside their corresponding kernel files. Some kernel examples may break due to this update; please let us know if you find any! 
-* Removed all unused files and directories.
-* We no longer test on Ampere GPUs (because we don't have any). ThunderKittens should still work on Ampere, but active development and testing are focused on Hopper and Blackwell.
+* This release brings full support for Blackwell GPUs along with MXFP8 and NVFP4 precision, and merges major contributions from across the industry.
+* The repository structure has changed. We no longer support the repo as a Python package (i.e., a top-level `setup.py`). Kernels under the `/kernels` directory must now be compiled individually. Makefiles, tests, and benchmarks reside alongside their corresponding kernel source files.
+* We no longer actively support Ampere GPUs. While ThunderKittens should still work on Ampere, we do not plan to bring further support to it.
 
 ## Overview
 
@@ -145,18 +143,18 @@ Altogether, this is less than 100 lines of code, and achieves about 855 TFLOPs o
 
 ## Installation
 
-**ThunderKittens is a header-only library**. The library itself does not require any installation; just clone the repo, and include `kittens.cuh`. Easy money.
+**ThunderKittens itself is a header-only library**. The library itself does not require any installation; just clone the repo, and include `kittens.cuh`. Easy money.
 
 #### Hardware requirements
 
 * ThunderKittens is mainly built and tested for Hopper and Blackwell GPUs.
-* We make our best effort to support Ampere GPUs too, but some features may not work correctly. Contributions are welcome!
+* We no longer actively support Ampere GPUs. However, contributions are welcomed!
 
 #### Build requirements
 
-But ThunderKittens does use a bunch of modern stuff, so it has fairly aggressive requirements.
+ThunderKittens does use a bunch of modern stuff, so it has fairly aggressive requirements.
 
-* **CUDA 12.6+**. Anything after CUDA 12.1 will _probably_ work, but you'll likely end up with serialized wgmma pipelines on H100s due to a bug in those earlier versions of CUDA. We do our dev work on CUDA 12.6-12.9, because we want our kittens to play in the nicest, most modern environment possible. Make sure you run the following to set up your CUDA environment properly:
+* **CUDA 12.8+**. Anything after CUDA 12.1 will _probably_ work, but you'll likely end up with serialized wgmma pipelines on H100s due to a bug in those earlier versions of CUDA. We do our dev work on CUDA 12.8-13.1, because we want our kittens to play in the nicest, most modern environment possible. Make sure you run the following to set up your CUDA environment properly:
 
     ```bash
     export CUDA_HOME=/usr/local/cuda-<YOUR-CUDA-VERSION> # ex. cuda-12.6
@@ -193,7 +191,7 @@ ThunderKittens is actually a pretty small library, in terms of what it gives you
 * Data types: (Register + shared) * (tiles + vectors), all parameterized by layout, type, and size.
 * Operations for manipulating these objects.
 
-Therefore, the best way to learn ThunderKittens is to start looking into kernels and run the them yourself! We have a step-by-step, educational kernel series on matrix multiplication under [kernels/gemm/educational](kernels/gemm/educational).
+Therefore, the best way to learn ThunderKittens is to start looking into kernels and run the them yourself! We have a step-by-step, educational kernel series on matrix multiplication under [kernels/gemm/educational_h100](kernels/gemm/educational_h100).
 
 Once you get used to its APIs, there are still a few sharp edges that you might encounter if you don’t know what’s going on under the hood. So, we do recommend giving this manual a good read before sitting down to write a serious kernel -- it’s not too long, we promise!
 
@@ -238,7 +236,7 @@ Most operations in ThunderKittens are pure functional. However, some operations 
 
 #### Onboarding document
 
-We have a slightly outdated and incomplete [onboarding document](https://docs.google.com/document/d/15-Zvf6e0NLX1si4ml4sUOWCDlXNMtOWKiuo6CKZMEYA/edit?usp=sharing). Please contribute to this if you've run into issues and feel the broader community can benefit from explanations. Please leave comments if any aspect of this is unclear. 
+We have a slightly outdated and incomplete [onboarding document](https://docs.google.com/document/d/15-Zvf6e0NLX1si4ml4sUOWCDlXNMtOWKiuo6CKZMEYA/edit?usp=sharing). Please contribute to this if you've run into issues and feel the broader community can benefit from explanations.
 
 ## Pre-implemented Kernels
 
@@ -378,7 +376,7 @@ make clean
 
 ## Learn more and get involved!
 
-Learn more about ThunderKittens and how GPUs work by checking out our blogs:
+Learn more about ThunderKittens and how GPUs work by checking out our blog posts:
 
 * [GPUs Go Brrr, May 2024](https://hazyresearch.stanford.edu/blog/2024-05-12-tk)
 * [Easier, Better, Faster, Cuter, Oct. 2024](https://hazyresearch.stanford.edu/blog/2024-10-29-tk2)
