@@ -524,9 +524,155 @@ __device__ inline void fp4x2_to_fp32_kernel(const globals &G) {
 
 #ifndef TORCH_COMPILE
 
-void benchmark() { }
+#include "../common.cuh"
 
-int main() { return 0; }
+template <typename C>
+__cluster_dims__(C::CLUSTER_SIZE) __launch_bounds__(C::NUM_THREADS)
+__global__ void kernel_entrypoint(const __grid_constant__ nvfp4_gemm::globals<C> g) {
+    nvfp4_gemm::kernel<C>(g);
+}
+
+template <typename C>
+__host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
+    using G = nvfp4_gemm::globals<C>;
+
+    std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
+
+    // Cooldown between configurations
+    sleep_ms(500);
+
+    // L2 cache eviction - multiple buffer groups
+    int l2_cache_size;
+    cudaDeviceGetAttribute(&l2_cache_size, cudaDevAttrL2CacheSize, 0);
+    const size_t arg_size = size_t(M) * K / 2 + size_t(N) * K / 2 + size_t(M) * N * 2;
+    const size_t ideal_arg_size = size_t(l2_cache_size) * 3;
+    const int arg_group_count = (arg_size > ideal_arg_size) ? 1 : int(ideal_arg_size / arg_size) + 1;
+
+    // Allocate device memory
+    std::vector<__nv_fp4x2_e2m1*> d_A(arg_group_count);
+    std::vector<__nv_fp4x2_e2m1*> d_B(arg_group_count);
+    std::vector<__nv_fp8_e4m3*> d_A_sc(arg_group_count);
+    std::vector<__nv_fp8_e4m3*> d_B_sc(arg_group_count);
+    std::vector<float*> d_A_sc_global(arg_group_count);
+    std::vector<float*> d_B_sc_global(arg_group_count);
+    std::vector<__nv_bfloat16*> d_D(arg_group_count);
+    __nv_bfloat16* d_D_ref;
+    for (int i = 0; i < arg_group_count; i++) {
+        cudaMalloc(&d_A[i], M*K*sizeof(__nv_fp4x2_e2m1)/2);
+        cudaMalloc(&d_B[i], N*K*sizeof(__nv_fp4x2_e2m1)/2);
+        cudaMalloc(&d_A_sc[i], M*K*sizeof(__nv_fp8_e4m3)/16);
+        cudaMalloc(&d_B_sc[i], N*K*sizeof(__nv_fp8_e4m3)/16);
+        cudaMalloc(&d_A_sc_global[i], sizeof(float));
+        cudaMalloc(&d_B_sc_global[i], sizeof(float));
+        cudaMalloc(&d_D[i], M * N * sizeof(__nv_bfloat16));
+    }
+    cudaMalloc(&d_D_ref, M * N * sizeof(__nv_bfloat16));
+
+    // Initialize matrices with random values on device
+    uint64_t seed = 2024;
+    for (int i = 0; i < arg_group_count; i++) {
+        fill<uint8_t, FillMode::RANDOM>(reinterpret_cast<uint8_t*>(d_A[i]), M*K/2, seed + i * 100, 0.0f, 255.0f);
+        fill<uint8_t, FillMode::RANDOM>(reinterpret_cast<uint8_t*>(d_B[i]), N*K/2, seed + i * 100 + 1, 0.0f, 255.0f);    
+        fill<__nv_fp8_e4m3, FillMode::RANDOM>(d_A_sc[i], M*K/16, seed + i*100 + 2, 0.1f, 10.0f);
+        fill<__nv_fp8_e4m3, FillMode::RANDOM>(d_B_sc[i], N*K/16, seed + i*100 + 3, 0.1f, 10.0f);
+        fill<float, FillMode::RANDOM>(d_A_sc_global[i], 1, seed + i * 100 + 4, 0.1f, 10.0f);
+        fill<float, FillMode::RANDOM>(d_B_sc_global[i], 1, seed + i * 100 + 5, 0.1f, 10.0f);
+        fill<__nv_bfloat16, FillMode::CONSTANT>(d_D[i], M*N, 0.0f);
+    }
+    fill<__nv_bfloat16, FillMode::CONSTANT>(d_D_ref, M*N, 0.0f);
+
+    // Compute reference GEMM on device
+    reference_nvfp4_gemm<__nv_bfloat16>(
+        d_D_ref, d_A[0], d_B[0], d_A_sc[0], d_B_sc[0], d_A_sc_global[0], d_B_sc_global[0], M, N, K);
+    cudaDeviceSynchronize();
+
+    // Prepare kernel inputs
+    // Note: The kernel expects scales as half, but we store fp8e4m3. Reinterpret the pointers.
+    std::vector<G> g;
+    for (int i = 0; i < arg_group_count; i++) {
+        typename G::A_fp4x2_gl Ag{d_A[i], nullptr, nullptr, M, K/2};
+        typename G::A_sc_gl Asg{reinterpret_cast<half*>(d_A_sc[i]), nullptr, M/128, K/64, nullptr};
+        typename G::A_sc_global_gl Asgg{d_A_sc_global[i], nullptr, nullptr, nullptr, nullptr};
+        typename G::B_fp4x2_gl Bg{d_B[i], nullptr, nullptr, N, K/2};
+        typename G::B_sc_gl Bsg{reinterpret_cast<half*>(d_B_sc[i]), nullptr, N/128, K/64, nullptr};
+        typename G::B_sc_global_gl Bsgg{d_B_sc_global[i], nullptr, nullptr, nullptr, nullptr};
+        typename G::D_gl Dg{d_D[i], nullptr, nullptr, M, N};
+        g.push_back(G{Ag, Asg, Asgg, Bg, Bsg, Bsgg, Dg});
+    }
+
+    // Set kernel attributes
+    CUDACHECK(cudaFuncSetAttribute(kernel_entrypoint<C>, cudaFuncAttributeMaxDynamicSharedMemorySize, C::DYNAMIC_SHARED_MEMORY));
+
+    // Number of iterations
+    int num_warmups = ncu ? 0 : 5;
+    int num_iters = ncu ? 1 : 10;
+
+    // Warmup
+    for (int i = 0; i < num_warmups; i++) {
+        int idx = i % arg_group_count;
+        kernel_entrypoint<C><<<C::NUM_BLOCKS, C::NUM_THREADS, C::DYNAMIC_SHARED_MEMORY>>>(g[idx]);
+    }
+
+    // Benchmark
+    cudaEvent_t start, stop;
+    CUDACHECK(cudaEventCreate(&start));
+    CUDACHECK(cudaEventCreate(&stop));
+    CUDACHECK(cudaEventRecord(start));
+    for (int i = 0; i < num_iters; i++) {
+        int idx = i % arg_group_count;
+        kernel_entrypoint<C><<<C::NUM_BLOCKS, C::NUM_THREADS, C::DYNAMIC_SHARED_MEMORY>>>(g[idx]);
+    }
+    CUDACHECK(cudaEventRecord(stop));
+    CUDACHECK(cudaEventSynchronize(stop));
+
+    // Calculate duration and TFLOPs
+    float milliseconds;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    double microseconds = milliseconds * 1000.0 / num_iters;
+    double flops = double(2.0) * M * N * K;
+    double tflops = (flops / microseconds) / 1e6;
+    std::cout << "Average kernel execution time: " << microseconds << " us\n";
+    std::cout << "Achieved performance: " << tflops << " TFLOPs\n";
+
+    // Check correctness
+    check_correctness(d_D[0], d_D_ref, M * N);
+
+    // Cleanup
+    for (int i = 0; i < arg_group_count; i++) {
+        cudaFree(d_A[i]);
+        cudaFree(d_A_sc[i]);
+        cudaFree(d_A_sc_global[i]);
+        cudaFree(d_B[i]);
+        cudaFree(d_B_sc[i]);
+        cudaFree(d_B_sc_global[i]);
+        cudaFree(d_D[i]);
+    }
+    cudaFree(d_D_ref);
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+
+    return tflops;
+}
+
+int main() {
+    using C = nvfp4_gemm::config;
+
+    int N;
+    bool ncu = false;
+
+    N = 1024;
+    run_benchmark<C>(N, N, N, ncu);
+    N = 2048;
+    run_benchmark<C>(N, N, N, ncu);
+    N = 4096;
+    run_benchmark<C>(N, N, N, ncu);
+    N = 8192;
+    run_benchmark<C>(N, N, N, ncu);
+    N = 16384;
+    run_benchmark<C>(N, N, N, ncu);
+
+    return 0;
+}
 
 #else
 

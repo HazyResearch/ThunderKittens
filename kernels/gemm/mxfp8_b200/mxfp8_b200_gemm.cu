@@ -383,14 +383,14 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     // L2 cache eviction - multiple buffer groups
     int l2_cache_size;
     cudaDeviceGetAttribute(&l2_cache_size, cudaDevAttrL2CacheSize, 0);
-    const size_t arg_size = size_t(M) * K + size_t(N) * K + size_t(M) * N;
+    const size_t arg_size = size_t(M) * K + size_t(N) * K + size_t(M) * N * 2;
     const size_t ideal_arg_size = size_t(l2_cache_size) * 3;
     const int arg_group_count = (arg_size > ideal_arg_size) ? 1 : int(ideal_arg_size / arg_size) + 1;
 
     // Allocate device memory
     std::vector<__nv_fp8_e4m3*> d_A(arg_group_count);
-    std::vector<__nv_fp8_e8m0*> d_A_sc(arg_group_count);
     std::vector<__nv_fp8_e4m3*> d_B(arg_group_count);
+    std::vector<__nv_fp8_e8m0*> d_A_sc(arg_group_count);
     std::vector<__nv_fp8_e8m0*> d_B_sc(arg_group_count);
     std::vector<__nv_bfloat16*> d_D(arg_group_count);
     __nv_bfloat16* d_D_ref;
