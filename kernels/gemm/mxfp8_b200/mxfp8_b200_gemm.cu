@@ -4,7 +4,14 @@ using namespace kittens;
 
 namespace mxfp8_gemm {
 
+template <int _LOAD_PIPE_DEPTH, int _EPI_PIPE_DEPTH, int _SUPERGROUP_SIZE, int _NUM_D_TILES>
 struct config {
+    static_assert(_LOAD_PIPE_DEPTH > 0, "LOAD_PIPE_DEPTH must be greater than 0");
+    static_assert(_EPI_PIPE_DEPTH > 0, "EPI_PIPE_DEPTH must be greater than 0");
+    static_assert(_SUPERGROUP_SIZE > 0, "SUPERGROUP_SIZE must be greater than 0");
+    static_assert(_NUM_D_TILES > 0, "NUM_D_TILES must be greater than 0");
+    static_assert(_EPI_PIPE_DEPTH <= 1 || _NUM_D_TILES >= 2, "NUM_D_TILES must be at least 2 if EPI_PIPE_DEPTH > 1");
+
     static constexpr int CLUSTER_SIZE = 2;
 
     static constexpr int NUM_BLOCKS = 148;
@@ -20,15 +27,15 @@ struct config {
     static constexpr int PRODUCER_REGISTERS = 256;
     static constexpr int CONSUMER_REGISTERS = 256;
 
-    static constexpr int LOAD_PIPE_DEPTH = 6; // 5
-    static constexpr int EPI_PIPE_DEPTH = 16; // 8
+    static constexpr int LOAD_PIPE_DEPTH = _LOAD_PIPE_DEPTH;
+    static constexpr int EPI_PIPE_DEPTH = _EPI_PIPE_DEPTH;
 
-    static constexpr int SUPERGROUP_SIZE = 12; // 16
+    static constexpr int SUPERGROUP_SIZE = _SUPERGROUP_SIZE;
     static constexpr int Mb = 256;
     static constexpr int Nb = 256;
     static constexpr int Kb = 128;
 
-    static constexpr int NUM_D_TILES = 4; // 2
+    static constexpr int NUM_D_TILES = _NUM_D_TILES;
 };
 
 template <typename C>
@@ -483,21 +490,20 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
 }
 
 int main() {
-    using C = mxfp8_gemm::config;
-
     int N;
     bool ncu = false;
 
+    // Template parameters: LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH, SUPERGROUP_SIZE, NUM_D_TILES
     N = 1024;
-    run_benchmark<C>(N, N, N, ncu);
+    run_benchmark<mxfp8_gemm::config<6, 16, 12, 4>>(N, N, N, ncu);
     N = 2048;
-    run_benchmark<C>(N, N, N, ncu);
+    run_benchmark<mxfp8_gemm::config<6, 16, 12, 4>>(N, N, N, ncu);
     N = 4096;
-    run_benchmark<C>(N, N, N, ncu);
+    run_benchmark<mxfp8_gemm::config<6, 16, 12, 4>>(N, N, N, ncu);
     N = 8192;
-    run_benchmark<C>(N, N, N, ncu);
+    run_benchmark<mxfp8_gemm::config<6, 16, 12, 4>>(N, N, N, ncu);
     N = 16384;
-    run_benchmark<C>(N, N, N, ncu);
+    run_benchmark<mxfp8_gemm::config<6, 16, 12, 4>>(N, N, N, ncu);
 
     return 0;
 }
@@ -513,7 +519,7 @@ void mxfp8_gemm_entrypoint(
     const at::Tensor &B_sc,
     at::Tensor &D
 ) {
-    using C = mxfp8_gemm::config;
+    using C = mxfp8_gemm::config<6, 16, 12, 4>;
     using G = mxfp8_gemm::globals<C>;
 
     G g {
