@@ -48,7 +48,7 @@ struct globals {
     A_gl A;       // M x K
     A_sc_gl A_sc; // (M // 128) x (K // 128) x 32 x 16
     B_gl B;       // N x K
-    B_sc_gl B_sc; // (M // 128) x (K // 128) x 32 x 16
+    B_sc_gl B_sc; // (N // 128) x (K // 128) x 32 x 16
     D_gl D;       // M x N
 };
 
@@ -363,9 +363,144 @@ __device__ inline void kernel(const globals &G) {
 
 #ifndef TORCH_COMPILE
 
-void benchmark() { }
+#include "../common.cuh"
 
-int main() { return 0; }
+template <typename C>
+__cluster_dims__(C::CLUSTER_SIZE) __launch_bounds__(C::NUM_THREADS)
+__global__ void kernel_entrypoint(const __grid_constant__ mxfp8_gemm::globals<C> g) {
+    mxfp8_gemm::kernel<C>(g);
+}
+
+template <typename C>
+__host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
+    using G = mxfp8_gemm::globals<C>;
+
+    std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
+
+    // Cooldown between configurations
+    sleep_ms(500);
+
+    // L2 cache eviction - multiple buffer groups
+    int l2_cache_size;
+    cudaDeviceGetAttribute(&l2_cache_size, cudaDevAttrL2CacheSize, 0);
+    const size_t arg_size = size_t(M) * K + size_t(N) * K + size_t(M) * N;
+    const size_t ideal_arg_size = size_t(l2_cache_size) * 3;
+    const int arg_group_count = (arg_size > ideal_arg_size) ? 1 : int(ideal_arg_size / arg_size) + 1;
+
+    // Allocate device memory
+    std::vector<__nv_fp8_e4m3*> d_A(arg_group_count);
+    std::vector<__nv_fp8_e8m0*> d_A_sc(arg_group_count);
+    std::vector<__nv_fp8_e4m3*> d_B(arg_group_count);
+    std::vector<__nv_fp8_e8m0*> d_B_sc(arg_group_count);
+    std::vector<__nv_bfloat16*> d_D(arg_group_count);
+    __nv_bfloat16* d_D_ref;
+    for (int i = 0; i < arg_group_count; i++) {
+        cudaMalloc(&d_A[i], M*K*sizeof(__nv_fp8_e4m3));
+        cudaMalloc(&d_B[i], N*K*sizeof(__nv_fp8_e4m3));
+        cudaMalloc(&d_A_sc[i], M*K*sizeof(__nv_fp8_e8m0)/32);
+        cudaMalloc(&d_B_sc[i], N*K*sizeof(__nv_fp8_e8m0)/32);
+        cudaMalloc(&d_D[i], M*N*sizeof(__nv_bfloat16));
+    }
+    cudaMalloc(&d_D_ref, M*N*sizeof(__nv_bfloat16));
+
+    // Initialize matrices with random values on device
+    uint64_t seed = 2024;
+    for (int i = 0; i < arg_group_count; i++) {
+        fill<__nv_fp8_e4m3, FillMode::RANDOM>(d_A[i], M*K, seed + i*100, -448.0f, 448.0f);
+        fill<__nv_fp8_e4m3, FillMode::RANDOM>(d_B[i], N*K, seed + i*100 + 1, -448.0f, 448.0f);
+        fill<__nv_fp8_e8m0, FillMode::RANDOM>(d_A_sc[i], M*K/32, seed + i*100 + 2, 0.1f, 10.0f);
+        fill<__nv_fp8_e8m0, FillMode::RANDOM>(d_B_sc[i], N*K/32, seed + i*100 + 3, 0.1f, 10.0f);
+        fill<__nv_bfloat16, FillMode::CONSTANT>(d_D[i], M*N, 0.0f);
+    }
+    fill<__nv_bfloat16, FillMode::CONSTANT>(d_D_ref, M*N, 0.0f);
+
+    // Compute reference GEMM on device
+    reference_blockscaled_gemm<__nv_fp8_e4m3, __nv_fp8_e8m0, __nv_bfloat16, 32>(
+        d_D_ref, d_A[0], d_B[0], d_A_sc[0], d_B_sc[0], M, N, K);
+    cudaDeviceSynchronize();
+
+    // Prepare kernel inputs
+    std::vector<G> g;
+    for (int i = 0; i < arg_group_count; i++) {
+        typename G::A_gl Ag{d_A[i], nullptr, nullptr, M, K};
+        typename G::A_sc_gl Asg{d_A_sc[i], M/128, K/128, nullptr, nullptr};
+        typename G::B_gl Bg{d_B[i], nullptr, nullptr, N, K};
+        typename G::B_sc_gl Bsg{d_B_sc[i], N/128, K/128, nullptr, nullptr};
+        typename G::D_gl Dg{d_D[i], nullptr, nullptr, M, N};
+        g.push_back(G{Ag, Asg, Bg, Bsg, Dg});
+    }
+
+    // Set kernel attributes
+    CUDACHECK(cudaFuncSetAttribute(kernel_entrypoint<C>, cudaFuncAttributeMaxDynamicSharedMemorySize, C::DYNAMIC_SHARED_MEMORY));
+
+    // Number of iterations
+    int num_warmups = ncu ? 0 : 5;
+    int num_iters = ncu ? 1 : 10;
+
+    // Warmup
+    for (int i = 0; i < num_warmups; i++) {
+        int idx = i % arg_group_count;
+        kernel_entrypoint<C><<<C::NUM_BLOCKS, C::NUM_THREADS, C::DYNAMIC_SHARED_MEMORY>>>(g[idx]);
+    }
+
+    // Benchmark
+    cudaEvent_t start, stop;
+    CUDACHECK(cudaEventCreate(&start));
+    CUDACHECK(cudaEventCreate(&stop));
+    CUDACHECK(cudaEventRecord(start));
+    for (int i = 0; i < num_iters; i++) {
+        int idx = i % arg_group_count;
+        kernel_entrypoint<C><<<C::NUM_BLOCKS, C::NUM_THREADS, C::DYNAMIC_SHARED_MEMORY>>>(g[idx]);
+    }
+    CUDACHECK(cudaEventRecord(stop));
+    CUDACHECK(cudaEventSynchronize(stop));
+
+    // Calculate duration and TFLOPs
+    float milliseconds;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    double microseconds = milliseconds * 1000.0 / num_iters;
+    double flops = double(2.0) * M * N * K;
+    double tflops = (flops / microseconds) / 1e6;
+    std::cout << "Average kernel execution time: " << microseconds << " us\n";
+    std::cout << "Achieved performance: " << tflops << " TFLOPs\n";
+
+    // Check correctness
+    check_correctness(d_D[0], d_D_ref, M * N);
+
+    // Cleanup
+    for (int i = 0; i < arg_group_count; i++) {
+        cudaFree(d_A[i]);
+        cudaFree(d_B[i]);
+        cudaFree(d_A_sc[i]);
+        cudaFree(d_B_sc[i]);
+        cudaFree(d_D[i]);
+    }
+    cudaFree(d_D_ref);
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+
+    return tflops;
+}
+
+int main() {
+    using C = mxfp8_gemm::config;
+
+    int N;
+    bool ncu = false;
+
+    N = 1024;
+    run_benchmark<C>(N, N, N, ncu);
+    N = 2048;
+    run_benchmark<C>(N, N, N, ncu);
+    N = 4096;
+    run_benchmark<C>(N, N, N, ncu);
+    N = 8192;
+    run_benchmark<C>(N, N, N, ncu);
+    N = 16384;
+    run_benchmark<C>(N, N, N, ncu);
+
+    return 0;
+}
 
 #else
 
