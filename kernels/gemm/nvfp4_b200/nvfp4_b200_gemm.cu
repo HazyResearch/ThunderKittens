@@ -671,7 +671,7 @@ int main() {
     N = 2048;
     run_benchmark<nvfp4_gemm::config<4, 16, 4, 2>>(N, N, N, ncu);
     N = 4096;
-    run_benchmark<nvfp4_gemm::config<4, 16, 4, 2>>(N, N, N, ncu);
+    run_benchmark<nvfp4_gemm::config<4, 8, 4, 2>>(N, N, N, ncu);
     N = 8192;
     run_benchmark<nvfp4_gemm::config<4, 16, 1, 2>>(N, N, N, ncu);
     N = 16384;
@@ -694,7 +694,7 @@ void nvfp4_gemm_entrypoint(
     const at::Tensor &B_sc_global,
     at::Tensor &D
 ) {
-    using C = nvfp4_gemm::config<4, 16, 12, 2>;
+    using C = nvfp4_gemm::config<4, 8, 12, 2>;
     using G = nvfp4_gemm::globals<C>;
 
     G g {
