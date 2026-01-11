@@ -667,13 +667,13 @@ int main() {
 
     // Template parameters: LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH, SUPERGROUP_SIZE, NUM_D_TILES
     N = 1024;
-    run_benchmark<nvfp4_gemm::config<4, 16, 12, 2>>(N, N, N, ncu);
+    run_benchmark<nvfp4_gemm::config<4, 8, 12, 2>>(N, N, N, ncu);
     N = 2048;
-    run_benchmark<nvfp4_gemm::config<4, 16, 12, 2>>(N, N, N, ncu);
+    run_benchmark<nvfp4_gemm::config<4, 16, 4, 2>>(N, N, N, ncu);
     N = 4096;
-    run_benchmark<nvfp4_gemm::config<4, 16, 12, 2>>(N, N, N, ncu);
+    run_benchmark<nvfp4_gemm::config<4, 16, 4, 2>>(N, N, N, ncu);
     N = 8192;
-    run_benchmark<nvfp4_gemm::config<4, 16, 12, 2>>(N, N, N, ncu);
+    run_benchmark<nvfp4_gemm::config<4, 16, 1, 2>>(N, N, N, ncu);
     N = 16384;
     run_benchmark<nvfp4_gemm::config<4, 16, 12, 2>>(N, N, N, ncu);
 
