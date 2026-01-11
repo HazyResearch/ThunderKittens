@@ -499,11 +499,11 @@ int main() {
     N = 2048;
     run_benchmark<mxfp8_gemm::config<6, 16, 12, 4>>(N, N, N, ncu);
     N = 4096;
-    run_benchmark<mxfp8_gemm::config<6, 16, 12, 4>>(N, N, N, ncu);
+    run_benchmark<mxfp8_gemm::config<6, 16, 8, 2>>(N, N, N, ncu);
     N = 8192;
-    run_benchmark<mxfp8_gemm::config<6, 16, 12, 4>>(N, N, N, ncu);
+    run_benchmark<mxfp8_gemm::config<6, 16, 16, 4>>(N, N, N, ncu);
     N = 16384;
-    run_benchmark<mxfp8_gemm::config<6, 16, 12, 4>>(N, N, N, ncu);
+    run_benchmark<mxfp8_gemm::config<5, 8, 8, 4>>(N, N, N, ncu);
 
     return 0;
 }
