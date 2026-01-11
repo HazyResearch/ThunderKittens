@@ -1,5 +1,4 @@
 #include "kittens.cuh"
-#include "pyutils/torchutils.cuh"
 
 using namespace kittens;
 
@@ -222,26 +221,6 @@ __device__ inline void kernel(const globals<C> &g) {
     }
 }
 
-void entrypoint(
-    const at::Tensor &A,
-    const at::Tensor &A_sc,
-    const at::Tensor &B,
-    const at::Tensor &B_sc,
-    at::Tensor &D
-) {
-    using C = config;
-    using G = globals<C>;
-
-    G g {
-        .A = kittens::py::tensor_to_gl<typename G::A_gl>(A),
-        .A_sc = kittens::py::tensor_to_gl<typename G::A_sc_gl>(A_sc),
-        .B = kittens::py::tensor_to_gl<typename G::B_gl>(B),
-        .B_sc = kittens::py::tensor_to_gl<typename G::B_sc_gl>(B_sc),
-        .D = kittens::py::tensor_to_gl<typename G::D_gl>(D)
-    };
-    kittens::py::launch_kernel<config, G, kernel<config>>(g);
-}
-
 } // namespace mxfp8_gemm
 
 namespace mxfp8_quantize {
@@ -271,8 +250,8 @@ struct globals {
     __host__ inline dim3 grid() const {
         return dim3(A_bf16.cols() / TILE_SIZE, A_bf16.rows() / TILE_SIZE);
     }
-    __host__ inline int dynamic_shared_memory() const { 
-        return TILE_SIZE * TILE_SIZE * sizeof(bf16) + 1024; 
+    __host__ inline int dynamic_shared_memory() const {
+        return TILE_SIZE * TILE_SIZE * sizeof(bf16) + 1024;
     }
 };
 
@@ -380,22 +359,57 @@ __device__ inline void kernel(const globals &G) {
     }
 }
 
-__host__ void entrypoint(
+} // namespace mxfp8_quantize
+
+#ifndef TORCH_COMPILE
+
+void benchmark() { }
+
+int main() { return 0; }
+
+#else
+
+#include "pyutils/torchutils.cuh"
+
+void mxfp8_gemm_entrypoint(
+    const at::Tensor &A,
+    const at::Tensor &A_sc,
+    const at::Tensor &B,
+    const at::Tensor &B_sc,
+    at::Tensor &D
+) {
+    using C = mxfp8_gemm::config;
+    using G = mxfp8_gemm::globals<C>;
+
+    G g {
+        .A = kittens::py::tensor_to_gl<typename G::A_gl>(A),
+        .A_sc = kittens::py::tensor_to_gl<typename G::A_sc_gl>(A_sc),
+        .B = kittens::py::tensor_to_gl<typename G::B_gl>(B),
+        .B_sc = kittens::py::tensor_to_gl<typename G::B_sc_gl>(B_sc),
+        .D = kittens::py::tensor_to_gl<typename G::D_gl>(D)
+    };
+    kittens::py::launch_kernel<C, G, mxfp8_gemm::kernel<C>>(g);
+}
+
+void mxfp8_quantize_entrypoint(
     const at::Tensor &A_bf16,
     at::Tensor &A_fp8,
     at::Tensor &A_sc
 ) {
-    globals G {
-        .A_bf16 = kittens::py::tensor_to_gl<globals::A_bf16_gl>(A_bf16),
-        .A_fp8 = kittens::py::tensor_to_gl<globals::A_fp8_gl>(A_fp8),
-        .A_sc = kittens::py::tensor_to_gl<globals::A_sc_gl>(A_sc)
-    };
-    kittens::py::launch_kernel<config, globals, kernel>(G);
-}
+    using C = mxfp8_quantize::config;
+    using G = mxfp8_quantize::globals;
 
-} // namespace mxfp8_quantize
+    G g {
+        .A_bf16 = kittens::py::tensor_to_gl<G::A_bf16_gl>(A_bf16),
+        .A_fp8 = kittens::py::tensor_to_gl<G::A_fp8_gl>(A_fp8),
+        .A_sc = kittens::py::tensor_to_gl<G::A_sc_gl>(A_sc)
+    };
+    kittens::py::launch_kernel<C, G, mxfp8_quantize::kernel>(g);
+}
 
 PYBIND11_MODULE(_C, m) {
-    m.def("mxfp8_gemm", &mxfp8_gemm::entrypoint);
-    m.def("mxfp8_quantize", &mxfp8_quantize::entrypoint);
+    m.def("mxfp8_gemm", &mxfp8_gemm_entrypoint);
+    m.def("mxfp8_quantize", &mxfp8_quantize_entrypoint);
 }
+
+#endif

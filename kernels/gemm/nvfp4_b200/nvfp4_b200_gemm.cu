@@ -1,5 +1,4 @@
 #include "kittens.cuh"
-#include "pyutils/torchutils.cuh"
 
 using namespace kittens;
 
@@ -263,30 +262,6 @@ __device__ inline void kernel(const globals<C> &g) {
     }
 }
 
-void entrypoint(
-    const at::Tensor &A,
-    const at::Tensor &A_sc,
-    const at::Tensor &A_sc_global,
-    const at::Tensor &B,
-    const at::Tensor &B_sc,
-    const at::Tensor &B_sc_global,
-    at::Tensor &D
-) {
-    using C = config;
-    using G = globals<C>;
-
-    G g {
-        .A = kittens::py::tensor_to_gl<typename G::A_fp4x2_gl>(A),
-        .A_sc = kittens::py::tensor_to_gl<typename G::A_sc_gl, false>(A_sc, 1, A_sc.size(0), A_sc.size(1), 256),
-        .A_sc_global = kittens::py::tensor_to_gl<typename G::A_sc_global_gl>(A_sc_global),
-        .B = kittens::py::tensor_to_gl<typename G::B_fp4x2_gl>(B),
-        .B_sc = kittens::py::tensor_to_gl<typename G::B_sc_gl, false>(B_sc, 1, B_sc.size(0), B_sc.size(1), 256),
-        .B_sc_global = kittens::py::tensor_to_gl<typename G::B_sc_global_gl>(B_sc_global),
-        .D = kittens::py::tensor_to_gl<typename G::D_gl>(D)
-    };
-    kittens::py::launch_kernel<config, G, kernel<config>>(g);
-}
-
 } // namespace nvfp4_gemm
 
 namespace nvfp4_quantize {
@@ -507,28 +482,7 @@ __device__ inline void quantize_kernel(const globals &G) {
     }
 }
 
-__host__ void entrypoint(
-    const at::Tensor &A_bf16,
-    at::Tensor &A_fp4x2,
-    at::Tensor &A_sc,
-    at::Tensor &A_sc_global
-) {
-    globals G {
-        .A_bf16 = kittens::py::tensor_to_gl<globals::A_bf16_gl>(A_bf16),
-        .A_fp4x2 = kittens::py::tensor_to_gl<globals::A_fp4x2_gl>(A_fp4x2),
-        .A_sc = kittens::py::tensor_to_gl<globals::A_sc_gl, false>(A_sc, 1, A_sc.size(0), A_sc.size(1), 256),
-        .A_sc_global = kittens::py::tensor_to_gl<globals::A_sc_global_gl>(A_sc_global)
-    };
-
-    zero_kernel<<<1, 1>>>(G);
-    absmax_kernel<<<absmax_config::NUM_BLOCKS, absmax_config::NUM_THREADS>>>(G);
-    divide_kernel<<<1, 1>>>(G);
-    kittens::py::launch_kernel<quantize_config, globals, quantize_kernel>(G);
-}
-
 } // namespace nvfp4_quantize
-
-#include "ATen/Functions.h"
 
 namespace nvfp4_utils {
 
@@ -566,37 +520,102 @@ __device__ inline void fp4x2_to_fp32_kernel(const globals &G) {
     }
 }
 
-__host__ at::Tensor fp32_to_fp4x2(at::Tensor A_fp32) {
+} // namespace nvfp4_utils
+
+#ifndef TORCH_COMPILE
+
+void benchmark() { }
+
+int main() { return 0; }
+
+#else
+
+#include "pyutils/torchutils.cuh"
+#include "ATen/Functions.h"
+
+void nvfp4_gemm_entrypoint(
+    const at::Tensor &A,
+    const at::Tensor &A_sc,
+    const at::Tensor &A_sc_global,
+    const at::Tensor &B,
+    const at::Tensor &B_sc,
+    const at::Tensor &B_sc_global,
+    at::Tensor &D
+) {
+    using C = nvfp4_gemm::config;
+    using G = nvfp4_gemm::globals<C>;
+
+    G g {
+        .A = kittens::py::tensor_to_gl<typename G::A_fp4x2_gl>(A),
+        .A_sc = kittens::py::tensor_to_gl<typename G::A_sc_gl, false>(A_sc, 1, A_sc.size(0), A_sc.size(1), 256),
+        .A_sc_global = kittens::py::tensor_to_gl<typename G::A_sc_global_gl>(A_sc_global),
+        .B = kittens::py::tensor_to_gl<typename G::B_fp4x2_gl>(B),
+        .B_sc = kittens::py::tensor_to_gl<typename G::B_sc_gl, false>(B_sc, 1, B_sc.size(0), B_sc.size(1), 256),
+        .B_sc_global = kittens::py::tensor_to_gl<typename G::B_sc_global_gl>(B_sc_global),
+        .D = kittens::py::tensor_to_gl<typename G::D_gl>(D)
+    };
+    kittens::py::launch_kernel<C, G, nvfp4_gemm::kernel<C>>(g);
+}
+
+void nvfp4_quantize_entrypoint(
+    const at::Tensor &A_bf16,
+    at::Tensor &A_fp4x2,
+    at::Tensor &A_sc,
+    at::Tensor &A_sc_global
+) {
+    using C = nvfp4_quantize::quantize_config;
+    using G = nvfp4_quantize::globals;
+
+    G g {
+        .A_bf16 = kittens::py::tensor_to_gl<G::A_bf16_gl>(A_bf16),
+        .A_fp4x2 = kittens::py::tensor_to_gl<G::A_fp4x2_gl>(A_fp4x2),
+        .A_sc = kittens::py::tensor_to_gl<G::A_sc_gl, false>(A_sc, 1, A_sc.size(0), A_sc.size(1), 256),
+        .A_sc_global = kittens::py::tensor_to_gl<G::A_sc_global_gl>(A_sc_global)
+    };
+
+    nvfp4_quantize::zero_kernel<<<1, 1>>>(g);
+    nvfp4_quantize::absmax_kernel<<<nvfp4_quantize::absmax_config::NUM_BLOCKS, nvfp4_quantize::absmax_config::NUM_THREADS>>>(g);
+    nvfp4_quantize::divide_kernel<<<1, 1>>>(g);
+    kittens::py::launch_kernel<C, G, nvfp4_quantize::quantize_kernel>(g);
+}
+
+at::Tensor fp32_to_fp4x2_entrypoint(at::Tensor A_fp32) {
+    using C = nvfp4_utils::config;
+    using G = nvfp4_utils::globals;
+
     auto options = A_fp32.options().dtype(at::kFloat4_e2m1fn_x2).requires_grad(false);
     at::Tensor A_fp4x2 = at::empty({A_fp32.size(0), A_fp32.size(1) / 2}, options);
 
-    globals G {
-        .A_fp32 = kittens::py::tensor_to_gl<globals::A_fp32_gl>(A_fp32),
-        .A_fp4x2 = kittens::py::tensor_to_gl<globals::A_fp4x2_gl>(A_fp4x2),
+    G g {
+        .A_fp32 = kittens::py::tensor_to_gl<G::A_fp32_gl>(A_fp32),
+        .A_fp4x2 = kittens::py::tensor_to_gl<G::A_fp4x2_gl>(A_fp4x2),
     };
-    kittens::py::launch_kernel<config, globals, fp32_to_fp4x2_kernel>(G);
+    kittens::py::launch_kernel<C, G, nvfp4_utils::fp32_to_fp4x2_kernel>(g);
 
     return A_fp4x2;
 }
 
-__host__ at::Tensor fp4x2_to_fp32(at::Tensor A_fp4x2) {
+at::Tensor fp4x2_to_fp32_entrypoint(at::Tensor A_fp4x2) {
+    using C = nvfp4_utils::config;
+    using G = nvfp4_utils::globals;
+
     auto options = A_fp4x2.options().dtype(at::kFloat).requires_grad(false);
     at::Tensor A_fp32 = at::empty({A_fp4x2.size(0), A_fp4x2.size(1) * 2}, options);
 
-    globals G {
-        .A_fp32 = kittens::py::tensor_to_gl<globals::A_fp32_gl>(A_fp32),
-        .A_fp4x2 = kittens::py::tensor_to_gl<globals::A_fp4x2_gl>(A_fp4x2),
+    G g {
+        .A_fp32 = kittens::py::tensor_to_gl<G::A_fp32_gl>(A_fp32),
+        .A_fp4x2 = kittens::py::tensor_to_gl<G::A_fp4x2_gl>(A_fp4x2),
     };
-    kittens::py::launch_kernel<config, globals, fp4x2_to_fp32_kernel>(G);   
+    kittens::py::launch_kernel<C, G, nvfp4_utils::fp4x2_to_fp32_kernel>(g);
 
     return A_fp32;
 }
 
+PYBIND11_MODULE(_C, m) {
+    m.def("nvfp4_gemm", &nvfp4_gemm_entrypoint);
+    m.def("nvfp4_quantize", &nvfp4_quantize_entrypoint);
+    m.def("fp32_to_fp4x2", &fp32_to_fp4x2_entrypoint);
+    m.def("fp4x2_to_fp32", &fp4x2_to_fp32_entrypoint);
 }
 
-PYBIND11_MODULE(_C, m) {
-    m.def("nvfp4_gemm", &nvfp4_gemm::entrypoint);
-    m.def("nvfp4_quantize", &nvfp4_quantize::entrypoint);
-    m.def("fp32_to_fp4x2", &nvfp4_utils::fp32_to_fp4x2);
-    m.def("fp4x2_to_fp32", &nvfp4_utils::fp4x2_to_fp32);
-}
+#endif
