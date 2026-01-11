@@ -216,7 +216,7 @@ __device__ inline void kernel(const globals<C> &g) {
                 warpgroup::sync(1);
                 warpgroup::store(output_tiles.D[i%C::NUM_D_TILES], D_reg[i]);
                 warpgroup::sync(1);
-                warpgroup::tma::store_async(g.D, output_tiles.D[i%C::NUM_D_TILES], {row_block_idx * 2 + cta_id, col_block_idx * C::EPI_PIPE_DEPTH + i});
+                warpgroup::tma::store_async<dim::ROW, cache_policy::EVICT_FIRST>(g.D, output_tiles.D[i%C::NUM_D_TILES], {row_block_idx * 2 + cta_id, col_block_idx * C::EPI_PIPE_DEPTH + i});
             }
         }
     }
