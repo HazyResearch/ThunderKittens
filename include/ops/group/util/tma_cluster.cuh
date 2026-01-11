@@ -65,6 +65,11 @@ __device__ static inline void expect_bytes(semaphore& bar, uint32_t bytes) {
         ::kittens::tma::cluster::expect_bytes(bar, bytes);
     }
 }
+__device__ static inline void expect_bytes(semaphore& bar, uint32_t bytes, int dst_cta) {
+    if(laneid() == 0) {
+        ::kittens::tma::cluster::expect_bytes(bar, bytes, dst_cta);
+    }
+}
 /**
 * @brief Sets the number of bytes expected at the semaphore.
 *
