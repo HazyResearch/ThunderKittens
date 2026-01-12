@@ -2,7 +2,6 @@ import torch
 import torch.nn.functional as F
 from tqdm import trange
 import sys
-from baselines.lightning_attn2 import lightning_attn2
 
 D_QK = 128
 D_VO = 128
@@ -77,19 +76,19 @@ def main():
         q, k, v, s = generate_inputs(B, H, N)
 
         pytorch_out = linear_attn(q, k, v, s)
-        triton_out = lightning_attn2(q, k, v, s)
+        # triton_out = lightning_attn(q, k, v, s)
         
-        avg_mag_pytorch = torch.mean(torch.abs(pytorch_out)).item()
-        avg_mag_triton = torch.mean(torch.abs(triton_out)).item()
-        max_diff = torch.max(torch.abs(pytorch_out - triton_out)).item()
-        avg_diff = torch.mean(torch.abs(pytorch_out - triton_out)).item()
+        # avg_mag_pytorch = torch.mean(torch.abs(pytorch_out)).item()
+        # avg_mag_triton = torch.mean(torch.abs(triton_out)).item()
+        # max_diff = torch.max(torch.abs(pytorch_out - triton_out)).item()
+        # avg_diff = torch.mean(torch.abs(pytorch_out - triton_out)).item()
         
-        print(f"PyTorch output magnitude: {avg_mag_pytorch}")
-        print(f"Triton  output magnitude: {avg_mag_triton}")
-        print(f"Max     difference between PyTorch and Triton: {max_diff}")
-        print(f"Average difference between PyTorch and Triton: {avg_diff}")
+        # print(f"PyTorch output magnitude: {avg_mag_pytorch}")
+        # print(f"Triton  output magnitude: {avg_mag_triton}")
+        # print(f"Max     difference between PyTorch and Triton: {max_diff}")
+        # print(f"Average difference between PyTorch and Triton: {avg_diff}")
         
-        save_test_case(q, k, v, s, triton_out, N)
+        save_test_case(q, k, v, s, pytorch_out, N)
         print(f"Generated random test case for N={N}")
 
 if __name__ == "__main__":

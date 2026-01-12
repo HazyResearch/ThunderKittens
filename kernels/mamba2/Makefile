@@ -1,17 +1,16 @@
-# Compiler
-NVCC?=nvcc
+GPU := H100
 
-# Conditional setup based on the target GPU# Conditional setup based on the target GPU
-NVCCFLAGS=-DNDEBUG -Xcompiler=-fPIE --expt-extended-lambda --expt-relaxed-constexpr -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing --use_fast_math -I../../../include -forward-unknown-to-host-compiler -O3 -Xnvlink=--verbose -Xptxas=--verbose -Xptxas=--warn-on-spills -std=c++20 -MD -MT -MF -x cu -lrt -lpthread -ldl -DKITTENS_HOPPER -arch=sm_90a -lcuda -lcudadevrt -lcudart_static -lcublas -I${THUNDERKITTENS_ROOT}/include -I${THUNDERKITTENS_ROOT}/prototype # H100
-TARGET=mamba # 4090
-SRC=pc.cu # 4090
+# PyTorch extension mode
+SRC := mamba2.cu
+OUT := _C$(shell python3 -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))")
+CMD := python benchmark.py # or test_correctness.py
+NVCCFLAGS := -DTORCH_COMPILE
+CONFIG := pytorch
 
-# Default target
-all: $(TARGET)
+# Standalone mode
+# SRC := mamba2.cu
+# OUT := mamba2.out
+# CMD := python gentests.py; ./mamba2.out randn_1024N_64D_64S.txt
+# CONFIG := standalone
 
-$(TARGET): $(SRC)
-	$(NVCC) $(SRC) $(NVCCFLAGS) -o $(TARGET)
-
-# Clean target
-clean:
-	rm -f $(TARGET)
+include ../common.mk

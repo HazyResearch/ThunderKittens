@@ -178,7 +178,7 @@ int main(int argc, char **argv) {
     cudaDeviceSynchronize();
     CudaCheckError();
     
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY; // have the flag tell us
+    unsigned long mem_size = kittens::MAX_SHARED_MEMORY - 1024; // have the flag tell us
     std::cout << "Setting max block shared memory to " << mem_size << std::endl;
 
     std::cout << "Allocating and creating tensor maps of " << ATTN_B*ATTN_H*ATTN_N << " tiles" << std::endl;

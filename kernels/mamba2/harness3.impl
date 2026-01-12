@@ -300,7 +300,7 @@ public:
 
         mamba2_fwd_template::layout::globals globals = {Qg, Kg, Vg, Og, Ag};
         
-        unsigned long mem_size = (kittens::MAX_SHARED_MEMORY/2)-2048; // have the flag tell us
+        unsigned long mem_size = kittens::prototype::detail::MAX_SHARED_MEMORY_v<mamba2_fwd_template>;
         
         cudaFuncSetAttribute(
             prototype::lcsf::kernel<mamba2_fwd_template>,

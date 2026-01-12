@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "kittens.cuh"
+#include "pyutils/club.cuh"
 
 using namespace kittens;
 

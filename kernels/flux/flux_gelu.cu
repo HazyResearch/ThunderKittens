@@ -74,7 +74,7 @@ struct flux_matmul_gelu_template {
             warpgroup::producer_registers(); // decrease registers for the producer warpgroup
         }
         __device__ static void load(producer_load_args<layout> args) { // semaphore for the producer to load into
-            if(warpgroup::warpid() == 0) {
+            if(warpgroup::laneid() == 0) {
                 tma::expect_bytes(args.inputs_arrived, sizeof(layout::input_block));
                 for(int i = 0; i < NUM_CONSUMER_WARPGROUPS; i++) {
                     if constexpr (transpose_lhs)
@@ -122,7 +122,7 @@ struct flux_matmul_gelu_template {
             }
             warpgroup::store(args.finish.acc[warpgroup::groupid()], args.state.acc);
             warpgroup::sync(warpgroup::groupid());
-            if(warpgroup::warpid() == 0)
+            if(warpgroup::laneid() == 0)
                 tma::store_async(args.globals.acc, args.finish.acc[warpgroup::groupid()],
                 {(int)blockIdx.x*NUM_CONSUMER_WARPGROUPS + warpgroup::groupid(), (int)blockIdx.y});
             if(laneid() == 0) arrive(args.finish_finished);
@@ -234,7 +234,7 @@ void runbenchmark(size_t M, size_t N, size_t K) {
 
     std::cout << "Copied matrices to device" << std::endl;
 
-    unsigned long mem_size = MAX_SHARED_MEMORY; // need to launch two blocks if possible.
+    unsigned long mem_size = MAX_SHARED_MEMORY - 1024; // need to launch two blocks if possible.
     
     cudaFuncSetAttribute(prototype::lcf::kernel<fmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
     // Launch kernel
@@ -338,7 +338,8 @@ int main() {
 
 
 #ifdef TORCH_COMPILE_GELU
-#include "pyutils/torch_helpers.cuh"
+#include "pyutils/torchutils.cuh"
+#include <ATen/Functions.h>
 #include <iostream>
 
 template<int M_tile, int K_tile, int N_tile, int transpose_lhs, int transpose_rhs>
@@ -366,20 +367,20 @@ void dispatch_fused_flux_linear_gelu(
     bias_global Biasg{d_bias, nullptr, nullptr, nullptr, N};
     globals G{Ag, Bg, Biasg, Cg};
 
-    unsigned long mem_size = MAX_SHARED_MEMORY; // need to launch two blocks if possible.
+    unsigned long mem_size = MAX_SHARED_MEMORY - 1024; // need to launch two blocks if possible.
     
     cudaFuncSetAttribute(prototype::lcf::kernel<fmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
     // Launch kernel
-    dim3 grid(M / (acc_tile::rows*prototype::num_consumer_warpgroups<fmt>), N / acc_tile::cols); // rows, cols
-    dim3 block(prototype::num_threads<fmt>);
+    dim3 grid(M / (acc_tile::rows*prototype::detail::NUM_CONSUMER_WARPGROUPS_v<fmt>), N / acc_tile::cols); // rows, cols
+    dim3 block(prototype::detail::NUM_THREADS_v<fmt>);
 
     prototype::lcf::kernel<fmt><<<grid, block, mem_size>>>(G);
 }
 
-torch::Tensor fused_flux_linear_gelu(
-    const torch::Tensor x,
-    const torch::Tensor weight,
-    const torch::Tensor bias
+at::Tensor fused_flux_linear_gelu(
+    const at::Tensor x,
+    const at::Tensor weight,
+    const at::Tensor bias
 ) {
     CHECK_INPUT(x);
     CHECK_INPUT(weight);
@@ -400,7 +401,7 @@ torch::Tensor fused_flux_linear_gelu(
     // // weight contiguous means weight is in N x K format, so transpose_rhs = true!
     // const bool transpose_rhs = weight.is_contiguous();
 
-    torch::Tensor out = torch::empty({M, N}, x.options());
+    at::Tensor out = at::empty({M, N}, x.options());
 
     // convert to bf16
     c10::BFloat16 *x_bf16 = x.data_ptr<c10::BFloat16>();
@@ -436,6 +437,10 @@ torch::Tensor fused_flux_linear_gelu(
     CHECK_CUDA_ERROR(cudaGetLastError());
 
     return out;
+}
+
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("tk_flux_linear_gelu", fused_flux_linear_gelu, "Flux linear gelu. Takes tensors (x, weight, bias).  x is (B, H1), weight is (H2, H1), bias is (H2). x, weight, bias are bf16. Returns (B, H2) in bf16.");
 }
 
 #endif

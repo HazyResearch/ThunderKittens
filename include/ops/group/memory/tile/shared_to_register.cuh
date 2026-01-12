@@ -13,11 +13,10 @@
  */
 template<ducks::rt::all RT, ducks::st::all ST>
 __device__ inline static void load(RT &dst, const ST &src) {
-    constexpr int height = ST::height;
     constexpr int warp_height = RT::height;
-    static_assert(height%GROUP_WARPS == 0, "Group load / store requires tile height to be a multiple of GROUP_WARPS.");
-    static_assert(height%warp_height == 0, "Group load / store requires tile height to be a multiple of the RT height.");
-    static_assert(ST::width==RT::width, "Group load / store requires tile widths to match.");
+    static_assert(ST::rows/RT::rows == GROUP_WARPS, "Group load / store requires tile height to be a multiple of the RT height.");
+    static_assert(ST::rows%RT::rows == 0, "Group load / store requires tile height to be a multiple of the RT height.");
+    static_assert(ST::cols==RT::cols, "Group load / store requires tile widths to match.");
     int local_warpid;
     if constexpr(GROUP_WARPS % 4 == 0) local_warpid = (warpid()/4+(warpid()%4)*(GROUP_WARPS/4));
     else local_warpid = warpid();
@@ -138,11 +137,10 @@ __device__ inline static void load(RT &dst, const ST &src) {
  */
 template<ducks::st::all ST, ducks::rt::all RT>
 __device__ inline static void store(ST &dst, const RT &src) {
-    constexpr int height = ST::height;
     constexpr int warp_height = RT::height;
-    static_assert(height%GROUP_WARPS == 0, "Group load / store requires tile height to be a multiple of GROUP_WARPS.");
-    static_assert(height%warp_height == 0, "Group load / store requires tile height to be a multiple of the RT height.");
-    static_assert(ST::width==RT::width, "Group load / store requires tile widths to match.");
+    static_assert(ST::rows/RT::rows == GROUP_WARPS, "Group load / store requires tile height to be a multiple of the RT height.");
+    static_assert(ST::rows%RT::rows == 0, "Group load / store requires tile height to be a multiple of the RT height.");
+    static_assert(ST::cols==RT::cols, "Group load / store requires tile widths to match.");
     int local_warpid;
     if constexpr(GROUP_WARPS % 4 == 0) local_warpid = (warpid()/4+(warpid()%4)*(GROUP_WARPS/4));
     else local_warpid = warpid();
@@ -166,7 +164,7 @@ __device__ inline static void store(ST &dst, const RT &src) {
                 tmp[1] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[1]);
                 tmp[2] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[2]);
                 tmp[3] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[3]);
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
                 int row = (local_warpid*warp_height + i)*src.tile_size_row + (warp_laneid % 16);
                 int col = j*src.tile_size_col + (warp_laneid / 16) * 8;
                 if constexpr (std::is_same_v<typename RT::layout, ducks::rt_layout::row>) {

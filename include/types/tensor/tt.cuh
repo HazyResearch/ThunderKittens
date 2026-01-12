@@ -1,6 +1,6 @@
 /**
  * @file
- * @brief The ThunderKittens tensor memory struct.
+ * @brief The ThunderKittens tensor memory tile struct.
  */
 
 #pragma once
@@ -11,6 +11,10 @@
 
 // these are helper structs for type inference
 namespace kittens {
+
+constexpr int MAX_TENSOR_ROWS = 128;
+constexpr int MAX_TENSOR_COLS = 512;
+
 namespace ducks {
 /**
  * @namespace tt
@@ -32,8 +36,8 @@ struct identifier {};
 template<typename T> concept all = requires {
     typename T::identifier; // Checks if T::identifier exists
 } && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::tt::identifier
-template<typename T> concept half = all<T> && T::rows ==  64;
-template<typename T> concept full = all<T> && T::rows == 128;
+template<typename T> concept half = all<T> && T::rows == MAX_TENSOR_ROWS / 2;
+template<typename T> concept full = all<T> && T::rows == MAX_TENSOR_ROWS;
 } // namespace tt
 } // namespace ducks
 
@@ -53,9 +57,12 @@ struct tt {
 
     static constexpr int rows    = _rows;
     static constexpr int cols    = _cols;
-    static constexpr int height  = rows / kittens::TILE_ROW_DIM<T>;
-    static constexpr int width   = cols / kittens::TILE_COL_DIM<T>;
-    
+
+    static_assert(rows / (4 / sizeof(T)) <= MAX_TENSOR_ROWS, "Row dimension must be less than or equal to MAX_TENSOR_ROWS");
+    static_assert(cols / (4 / sizeof(T)) <= MAX_TENSOR_COLS, "Column dimension must be less than or equal to MAX_TENSOR_COLS");
+    static_assert(rows % kittens::BASE_TILE_DIM == 0, "Row dimension must be divisible by the 16");
+    static_assert(cols % kittens::BASE_TILE_DIM == 0, "Column dimension must be divisible by the 16");
+
     uint32_t addr;
 
     __device__ inline tt() : addr(0) {}
@@ -69,6 +76,9 @@ struct tt {
         }
 #endif
         return TT(addr + (row_offset<<16) + col_offset/(4/(uint32_t)sizeof(T)));
+    }
+    template<ducks::tt::all TT>  __device__ inline TT subtile(int col_offset) const {
+        return TT(addr + col_offset/(4/(uint32_t)sizeof(T)));
     }
     template<int transpose> __device__ inline uint32_t chunk_addr(int chunk) const {
         if constexpr (transpose) {
@@ -90,8 +100,31 @@ struct tt {
                 static_assert(sizeof(T) == 999, "Currently unsupported type for input to an mma.");
             }
         }
-    } 
-
+    }
 };
+
+/* ----------  WRAPPERS FOR PRETTINESS  ---------- */
+
+template<int _height, int _width> using tt_bf = tt<bf16, _height, _width>;
+template<int _height, int _width> using tt_hf = tt<half, _height, _width>;
+template<int _height, int _width> using tt_fl = tt<float, _height, _width>;
+template<int _height, int _width> using tt_fp8e4m3 = tt<fp8e4m3, _height, _width>;
+template<int _height, int _width> using tt_fp8e5m2 = tt<fp8e5m2, _height, _width>;
+template<int _height, int _width> using tt_fp8e8m0 = tt<fp8e8m0, _height, _width>;
+template<int _height, int _width> using tt_fp4e2m1_2 = tt<fp4e2m1_2, _height, _width>;
+template<int _width> using half_tt_bf = tt<bf16, MAX_TENSOR_ROWS / 2, _width>;
+template<int _width> using half_tt_hf = tt<half, MAX_TENSOR_ROWS / 2, _width>;
+template<int _width> using half_tt_fl = tt<float, MAX_TENSOR_ROWS / 2, _width>;
+template<int _width> using half_tt_fp8e4m3 = tt<fp8e4m3, MAX_TENSOR_ROWS / 2, _width>;
+template<int _width> using half_tt_fp8e5m2 = tt<fp8e5m2, MAX_TENSOR_ROWS / 2, _width>;
+template<int _width> using half_tt_fp8e8m0 = tt<fp8e8m0, MAX_TENSOR_ROWS / 2, _width>;
+template<int _width> using half_tt_fp4e2m1_2 = tt<fp4e2m1_2, MAX_TENSOR_ROWS / 2, _width>;
+template<int _width> using full_tt_bf = tt<bf16, MAX_TENSOR_ROWS, _width>;
+template<int _width> using full_tt_hf = tt<half, MAX_TENSOR_ROWS, _width>;
+template<int _width> using full_tt_fl = tt<float, MAX_TENSOR_ROWS, _width>;
+template<int _width> using full_tt_fp8e4m3 = tt<fp8e4m3, MAX_TENSOR_ROWS, _width>;
+template<int _width> using full_tt_fp8e5m2 = tt<fp8e5m2, MAX_TENSOR_ROWS, _width>;
+template<int _width> using full_tt_fp8e8m0 = tt<fp8e8m0, MAX_TENSOR_ROWS, _width>;
+template<int _width> using full_tt_fp4e2m1_2 = tt<fp4e2m1_2, MAX_TENSOR_ROWS, _width>;
 
 } // namespace kittens

@@ -1,0 +1,580 @@
+#include <iostream>
+#include <string>
+#include <fstream>
+
+constexpr int ATTN_B     = 4;
+constexpr int QO_HEADS   = 16;
+constexpr int KV_HEADS   = 16;
+
+constexpr int QK_HEAD_RATIO = (QO_HEADS)/(KV_HEADS);
+static_assert(QO_HEADS >= KV_HEADS && QO_HEADS % KV_HEADS == 0);
+
+constexpr int ATTN_N     = 3072; 
+constexpr int ATTN_D     = 128; 
+constexpr int BLOCK_SIZE = (32*NUM_WORKERS); 
+constexpr int ITER       = 10; 
+
+constexpr bool causal    = false; 
+
+#define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
+inline void __cudaCheckError( const char *file, const int line ) {
+    cudaError err = cudaGetLastError();
+    if ( cudaSuccess != err )
+    {
+        fprintf( stderr, "cudaCheckError() failed at %s:%i : %s\n",
+                 file, line, cudaGetErrorString( err ) );
+        exit( -1 );
+    }
+    // More careful checking. However, this will affect performance.
+    // Comment away if needed.
+    err = cudaDeviceSynchronize();
+    if( cudaSuccess != err )
+    {
+        fprintf( stderr, "cudaCheckError() with sync failed at %s:%i : %s\n",
+                 file, line, cudaGetErrorString( err ) );
+        exit( -1 );
+    }
+}
+
+// Function to calculate the number of floating-point operations
+long long flops(int batch, int seqlen, int headdim, int nheads, bool causal, const std::string& mode) {
+    assert(mode == "fwd" || mode == "bwd" || mode == "fwd_bwd");
+    long long f = 4 * batch * static_cast<long long>(seqlen) * seqlen * nheads * headdim;
+    f /= (causal ? 2 : 1);
+
+    if (mode == "fwd") {
+        return f;
+    } else if (mode == "bwd") {
+        return static_cast<long long>(2.5 * f);
+    } else { // fwd_bwd
+        return static_cast<long long>(3.5 * f);
+    }
+}
+
+// Function to calculate the efficiency in teraflops
+double efficiency(long long flop, double time) {
+    // Convert flop to teraflops and time to milliseconds
+    double tflops = flop / 1e12;
+    double time_ms = time / 1e6;
+    return tflops / time_ms;
+}
+
+int main(int argc, char **argv) {
+    std::cout << "Entered main!" << std::endl;
+
+    // create dummy variables that are the right size
+    constexpr int TOTAL_ELEMENTS_QO     = ATTN_B*QO_HEADS*ATTN_N*ATTN_D;
+    constexpr int TOTAL_ELEMENTS_KV     = ATTN_B*KV_HEADS*ATTN_N*ATTN_D;
+    constexpr int TOTAL_UNIQUE_ELEMENTS = ATTN_N*ATTN_D; 
+
+    float *q      = new float[TOTAL_ELEMENTS_QO];
+    float *k      = new float[TOTAL_ELEMENTS_KV];
+    float *v      = new float[TOTAL_ELEMENTS_KV];
+    float *o_ref  = new float[TOTAL_ELEMENTS_QO];
+    float *l_ref  = new float[TOTAL_ELEMENTS_QO/ATTN_D];
+
+    float *og     = new float[TOTAL_ELEMENTS_QO];
+    float *d_ref  = new float[TOTAL_ELEMENTS_QO/ATTN_D];
+
+    float *qg_ref = new float[TOTAL_ELEMENTS_QO];
+    float *kg_ref = new float[TOTAL_ELEMENTS_KV];
+    float *vg_ref = new float[TOTAL_ELEMENTS_KV];
+
+    bf16  *q_bf = new bf16[TOTAL_ELEMENTS_QO];
+    bf16  *k_bf = new bf16[TOTAL_ELEMENTS_KV];
+    bf16  *v_bf = new bf16[TOTAL_ELEMENTS_KV];
+    bf16  *o_bf = new bf16[TOTAL_ELEMENTS_QO];
+    float *l_fl = new float[TOTAL_ELEMENTS_QO/ATTN_D];
+
+    bf16 *og_bf  = new bf16[TOTAL_ELEMENTS_QO];
+    float *d_fl  = new float[TOTAL_ELEMENTS_QO/ATTN_D]; 
+
+    float *qg_fl = new float[TOTAL_ELEMENTS_QO];
+    float *kg_fl = new float[TOTAL_ELEMENTS_KV];
+    float *vg_fl = new float[TOTAL_ELEMENTS_KV];
+
+    // fwd outputs
+    float *o = new float[TOTAL_ELEMENTS_QO];
+    float *l = new float[TOTAL_ELEMENTS_QO/ATTN_D];
+
+    // bwd intermediate
+    float *d = new float[TOTAL_ELEMENTS_QO/ATTN_D];
+
+    // bwd outputs
+    float *qg = new float[TOTAL_ELEMENTS_QO];
+    float *kg = new float[TOTAL_ELEMENTS_KV];
+    float *vg = new float[TOTAL_ELEMENTS_KV];
+
+    std::ifstream infile(argv[1]);
+
+    std::cout << "Starting to enter!" << std::endl;
+
+    for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) infile >> q[i];
+    std::cout << "Finished loading Q" << std::endl;
+    for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) infile >> k[i];
+    std::cout << "Finished loading K" << std::endl;
+    for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) infile >> v[i];
+    std::cout << "Finished loading V" << std::endl;
+    for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) infile >> o_ref[i];
+    std::cout << "Finished loading O_REF" << std::endl;
+    for(int i = 0; i < TOTAL_ELEMENTS_QO/ATTN_D; i++) infile >> l_ref[i];
+    std::cout << "Finished loading L_REF" << std::endl;
+    for(int i = 0; i < TOTAL_ELEMENTS_QO/ATTN_D; i++) infile >> d_ref[i];
+    std::cout << "Finished loading D_REF" << std::endl;
+    for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) infile >> og[i];
+    std::cout << "Finished loading OG" << std::endl;
+    for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) infile >> qg_ref[i];
+    std::cout << "Finished loading QG_REF" << std::endl;
+    for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) infile >> kg_ref[i];
+    std::cout << "Finished loading KG_REF" << std::endl;
+    for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) infile >> vg_ref[i];
+    std::cout << "Finished loading VG_REF" << std::endl;
+
+    std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
+
+    std::cout << "First 10 Q (loaded): ";
+    for(int i = 0; i < 10; i++) std::cout << q[i] << " ";
+    std::cout << std::endl;
+
+    // Convert to bf16
+    for (int i = 0; i < TOTAL_ELEMENTS_QO; i++) {
+        q_bf[i] = __float2bfloat16(q[i]);
+        og_bf[i] = __float2bfloat16(og[i]);
+        qg_fl[i] = 0.0f;
+    }
+    for (int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
+        k_bf[i] = __float2bfloat16(k[i]);
+        v_bf[i] = __float2bfloat16(v[i]);
+        kg_fl[i] = 0.0f;
+        vg_fl[i] = 0.0f;
+    }
+
+    bf16 *d_q, *d_k, *d_v, *d_o, *d_og; 
+    float *d_l, *d_d;
+    float *d_qg, *d_kg, *d_vg;
+
+    cudaMalloc(&d_q, (TOTAL_ELEMENTS_QO) * sizeof(bf16));
+    cudaMalloc(&d_k, (TOTAL_ELEMENTS_KV) * sizeof(bf16));
+    cudaMalloc(&d_v, (TOTAL_ELEMENTS_KV) * sizeof(bf16));
+    cudaMalloc(&d_o, (TOTAL_ELEMENTS_QO) * sizeof(bf16));
+    
+    cudaMalloc(&d_l, (TOTAL_ELEMENTS_QO/ATTN_D) * sizeof(float));
+    cudaMalloc(&d_d, (TOTAL_ELEMENTS_QO/ATTN_D) * sizeof(float)); 
+
+    cudaMalloc(&d_og, (TOTAL_ELEMENTS_QO) * sizeof(bf16));
+    cudaMalloc(&d_qg, (TOTAL_ELEMENTS_QO) * sizeof(float));
+    cudaMalloc(&d_kg, (TOTAL_ELEMENTS_KV) * sizeof(float));
+    cudaMalloc(&d_vg, (TOTAL_ELEMENTS_KV) * sizeof(float));
+
+    cudaMemcpy(d_q, q_bf, TOTAL_ELEMENTS_QO * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_k, k_bf, TOTAL_ELEMENTS_KV * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_v, v_bf, TOTAL_ELEMENTS_KV * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemset(d_o, 0, TOTAL_ELEMENTS_QO * sizeof(bf16)); // Initialize output to zero
+
+    cudaMemcpy(d_og, og_bf, TOTAL_ELEMENTS_QO * sizeof(bf16), cudaMemcpyHostToDevice);
+
+    cudaMemcpy(d_qg, qg_fl, TOTAL_ELEMENTS_QO * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_kg, kg_fl, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_vg, vg_fl, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyHostToDevice);
+
+    using q_tile    =         st_bf<fwd_attend_ker_tile_dims<ATTN_D>::qo_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
+    using k_tile    =         st_bf<fwd_attend_ker_tile_dims<ATTN_D>::kv_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
+    using v_tile    =         st_bf<fwd_attend_ker_tile_dims<ATTN_D>::kv_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
+    using l_col_vec = col_vec<st_fl<fwd_attend_ker_tile_dims<ATTN_D>::qo_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width>>;
+    using o_tile    =         st_bf<fwd_attend_ker_tile_dims<ATTN_D>::qo_height, fwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
+
+    using q_global = gl<bf16,  -1, -1, -1, -1, q_tile>;
+    using k_global = gl<bf16,  -1, -1, -1, -1, k_tile>;
+    using v_global = gl<bf16,  -1, -1, -1, -1, v_tile>;
+    using l_global = gl<float, -1, -1, -1, -1, l_col_vec>;
+    using o_global = gl<bf16,  -1, -1, -1, -1, o_tile>;
+
+    using globals      = fwd_globals<ATTN_D>;
+
+    q_global qg_arg{d_q, ATTN_B, QO_HEADS, ATTN_N, ATTN_D};
+    k_global kg_arg{d_k, ATTN_B, KV_HEADS, ATTN_N, ATTN_D};
+    v_global vg_arg{d_v, ATTN_B, KV_HEADS, ATTN_N, ATTN_D};
+    l_global lg_arg{d_l, ATTN_B, QO_HEADS, 1,      ATTN_N};
+    o_global og_arg{d_o, ATTN_B, QO_HEADS, ATTN_N, ATTN_D};
+
+    globals g{qg_arg, kg_arg, vg_arg, lg_arg, og_arg, ATTN_N, QK_HEAD_RATIO};
+
+    std::cout << "Allocated and set memory on GPU!" << std::endl;
+    
+    unsigned long mem_size = kittens::MAX_SHARED_MEMORY - 1024; // need to launch two blocks if possible.
+
+    cudaFuncSetAttribute(
+        fwd_attend_ker<ATTN_D, causal>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        mem_size
+    );
+    std::cout << "Set max dynamic memory!" << std::endl;
+
+    dim3 grid(ATTN_N/(CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>*4), QO_HEADS, ATTN_B);
+    static_assert(ATTN_N % (CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>*4) == 0);
+    std::cout << "Grid: " << grid.x << " x " << grid.y << " x " << grid.z << ", Block: " << BLOCK_SIZE << std::endl;
+    cudaDeviceSynchronize();
+    std::cout << "Starting warmup" << std::endl;
+    for(int i = 0; i < ITER; i++) {
+        fwd_attend_ker<ATTN_D, causal><<<grid, BLOCK_SIZE, mem_size>>>(g);
+    }
+    cudaDeviceSynchronize();
+    CudaCheckError();
+    std::cout << "Starting kernel" << std::endl;
+    const auto start = std::chrono::high_resolution_clock::now();
+    for(int i = 0; i < ITER; i++) {
+        fwd_attend_ker<ATTN_D, causal><<<grid, BLOCK_SIZE, mem_size>>>(g);
+    }
+    cudaDeviceSynchronize();
+    const auto finish = std::chrono::high_resolution_clock::now();
+    CudaCheckError();
+    std::cout << "Finished kernel\n";
+
+    float max_error = 0.0f;
+    
+    // check correctness
+    cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS_QO * sizeof(bf16), cudaMemcpyDeviceToHost);
+    for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) {
+        o[i] = __bfloat162float(o_bf[i]);
+    }
+    cudaMemcpy(l_fl, d_l, TOTAL_ELEMENTS_QO/ATTN_D * sizeof(float), cudaMemcpyDeviceToHost);
+    for (int i = 0; i < TOTAL_ELEMENTS_QO/ATTN_D; i++) {
+        l[i] = l_fl[i];
+    }
+
+    std::cout << "First 10 elements of O:     ";
+    for(int i = 0; i < 10; i++) std::cout << o[i] << " ";
+    std::cout << std::endl;
+    std::cout << "First 10 elements of O_REF: ";
+    for(int i = 0; i < 10; i++) std::cout << o_ref[i] << " ";
+    std::cout << std::endl;
+
+    bool good = true;
+    std::ofstream o_ref_file("printouts/o_ref.txt");
+    std::ofstream o_file("printouts/o.txt");
+    std::ofstream diff_file("printouts/o_diff.txt");
+
+    float total_diff = 0;
+    for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) {
+        float diff = o[i] - o_ref[i];
+        if (i < TOTAL_UNIQUE_ELEMENTS) {
+            o_ref_file << o_ref[i] << ' ';
+            o_file << o[i] << ' ';
+            diff_file << diff << ' ';
+        }
+        if(abs(diff) > 0.01 || isnan(diff)) {
+            good = false;
+        }
+        total_diff += abs(diff);
+
+        if (abs(diff) > max_error) {
+            max_error = abs(diff);
+        }
+    }
+
+    // print average difference
+    std::cout << "Average o difference: " << total_diff / TOTAL_ELEMENTS_QO << std::endl;
+    std::cout << "Max     o difference: " << max_error << std::endl;
+    if (abs(total_diff / TOTAL_ELEMENTS_QO) < 1e-3) {
+        good = true;
+    }
+
+    std::cout << "Average fwd execution time: " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER << " us" << std::endl;
+    if(good) std::cout << "FWD Correct :)\n";
+    else std::cout << "FWD Incorrect :(\n";
+
+    // calculate efficiency
+    long long f = flops(ATTN_B, ATTN_N, ATTN_D, QO_HEADS, causal, "fwd");
+    double e = efficiency(f, std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / ITER);
+    std::cout << "Efficiency: " << e << " TFLOPS\n\n\n" << std::endl;
+
+    // backward pass
+    using og_tile = st_bf<4*16, ATTN_D>;
+    using o_tile  = st_bf<4*16, ATTN_D>;
+    using d_tile  = col_vec<st_fl<4*16, ATTN_D>>;
+
+    using og_global = gl<bf16,  -1, -1, -1, -1, og_tile>;
+    using o_global  = gl<bf16,  -1, -1, -1, -1, o_tile>;
+    using d_global  = gl<float, -1, -1, -1, -1, d_tile>;
+
+    using bwd_prep_globals = bwd_prep_globals<ATTN_D>;
+
+    og_global prep_og_arg{d_og, ATTN_B, QO_HEADS, ATTN_N, ATTN_D};
+    o_global  prep_o_arg {d_o,  ATTN_B, QO_HEADS, ATTN_N, ATTN_D};
+    d_global  prep_d_arg {d_d,  ATTN_B, QO_HEADS, 1,      ATTN_N};
+
+    bwd_prep_globals bwd_g{prep_og_arg, prep_o_arg, prep_d_arg};
+
+    // backward pass
+    cudaFuncSetAttribute(
+        bwd_attend_prep_ker<ATTN_D>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        mem_size
+    );
+    std::cout << "Set max dynamic memory!" << std::endl;
+
+    dim3 grid_bwd(ATTN_N/(4*kittens::TILE_ROW_DIM<bf16>*4), QO_HEADS, ATTN_B);
+    static_assert(ATTN_N % (4*kittens::TILE_ROW_DIM<bf16>*4) == 0);
+    cudaDeviceSynchronize();
+    std::cout << "Starting bwd prep warmup" << std::endl;
+    for(int i = 0; i < ITER; i++) {
+        bwd_attend_prep_ker<ATTN_D><<<grid_bwd, (32*4), mem_size>>>(bwd_g);
+    }
+    cudaDeviceSynchronize();
+    std::cout << "Starting bwd prep kernel" << std::endl;
+    const auto start_bwd = std::chrono::high_resolution_clock::now();
+    for(int i = 0; i < ITER; i++) {
+        bwd_attend_prep_ker<ATTN_D><<<grid_bwd, (32*4), mem_size>>>(bwd_g);
+    }
+    cudaDeviceSynchronize();
+    const auto finish_bwd = std::chrono::high_resolution_clock::now();
+    CudaCheckError();
+    std::cout << "Finished bwd prep kernel\n";
+
+    cudaMemcpy(d_fl, d_d, TOTAL_ELEMENTS_QO/ATTN_D * sizeof(float), cudaMemcpyDeviceToHost);
+
+    for(int i = 0; i < TOTAL_ELEMENTS_QO/ATTN_D; i++) {
+        d[i]  = d_fl[i];
+    }
+
+    const auto bwd_prep = std::chrono::duration_cast<std::chrono::microseconds>(finish_bwd - start_bwd).count() / ITER;
+
+    // backward pass
+    using bwd_q_tile    =         st_bf<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
+    using bwd_k_tile    =         st_bf<bwd_attend_ker_tile_dims<ATTN_D>::tile_h,    bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
+    using bwd_v_tile    =         st_bf<bwd_attend_ker_tile_dims<ATTN_D>::tile_h,    bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
+    using bwd_og_tile   =         st_bf<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
+    using bwd_qg_tile   =         st_fl<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
+    using bwd_kg_tile   =         st_fl<bwd_attend_ker_tile_dims<ATTN_D>::tile_h,    bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
+    using bwd_vg_tile   =         st_fl<bwd_attend_ker_tile_dims<ATTN_D>::tile_h,    bwd_attend_ker_tile_dims<ATTN_D>::tile_width>;
+    using bwd_l_tile    = row_vec<st_fl<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_h>>;
+    using bwd_d_tile    = row_vec<st_fl<bwd_attend_ker_tile_dims<ATTN_D>::tile_h_qo, bwd_attend_ker_tile_dims<ATTN_D>::tile_h>>;
+
+    using bwd_q_global  = gl<bf16,  -1, -1, -1, -1, bwd_q_tile>;
+    using bwd_k_global  = gl<bf16,  -1, -1, -1, -1, bwd_k_tile>;
+    using bwd_v_global  = gl<bf16,  -1, -1, -1, -1, bwd_v_tile>;
+
+    using bwd_og_global = gl<bf16,  -1, -1, -1, -1, bwd_og_tile>;
+
+    using bwd_qg_global = gl<float, -1, -1, -1, -1, bwd_qg_tile>;
+    using bwd_kg_global = gl<float, -1, -1, -1, -1, bwd_kg_tile>;
+    using bwd_vg_global = gl<float, -1, -1, -1, -1, bwd_vg_tile>;
+
+    using bwd_l_global  = gl<float, -1, -1, -1, -1, bwd_l_tile>;
+    using bwd_d_global  = gl<float, -1, -1, -1, -1, bwd_d_tile>;
+
+    using bwd_global_args = bwd_globals<ATTN_D>;
+
+    bwd_q_global  bwd_q_arg {d_q,  ATTN_B, QO_HEADS, ATTN_N, ATTN_D};
+    bwd_k_global  bwd_k_arg {d_k,  ATTN_B, KV_HEADS, ATTN_N, ATTN_D};
+    bwd_v_global  bwd_v_arg {d_v,  ATTN_B, KV_HEADS, ATTN_N, ATTN_D};
+
+    bwd_og_global bwd_og_arg{d_og, ATTN_B, QO_HEADS, ATTN_N, ATTN_D};
+
+    bwd_qg_global bwd_qg_arg{d_qg, ATTN_B, QO_HEADS, ATTN_N, ATTN_D};
+    bwd_kg_global bwd_kg_arg{d_kg, ATTN_B, KV_HEADS, ATTN_N, ATTN_D};
+    bwd_vg_global bwd_vg_arg{d_vg, ATTN_B, KV_HEADS, ATTN_N, ATTN_D};
+    
+    bwd_l_global  bwd_l_arg {d_l,  ATTN_B, QO_HEADS, 1,      ATTN_N};
+    bwd_d_global  bwd_d_arg {d_d,  ATTN_B, QO_HEADS, 1,      ATTN_N};
+
+    bwd_global_args bwd_global{bwd_q_arg, 
+                      bwd_k_arg, 
+                      bwd_v_arg, 
+                      bwd_og_arg, 
+                      bwd_qg_arg, 
+                      bwd_kg_arg, 
+                      bwd_vg_arg, 
+                      bwd_l_arg, 
+                      bwd_d_arg, 
+                      ATTN_N, 
+                      QK_HEAD_RATIO};
+
+    const int carveout_memsize = 194000; 
+
+    cudaFuncSetAttribute(
+        bwd_attend_ker<ATTN_D, causal>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        carveout_memsize
+    );
+    cudaFuncSetAttribute(
+        bwd_attend_ker<ATTN_D, causal>,
+        cudaFuncAttributePreferredSharedMemoryCarveout,
+        85
+    ); 
+
+    dim3 grid_bwd_2(ATTN_N/(4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>), QO_HEADS, ATTN_B);
+    static_assert(ATTN_N % (4*BWD_CONSUMER_WARPGROUPS*kittens::TILE_ROW_DIM<bf16>) == 0);
+
+    cudaDeviceSynchronize();
+    std::cout << "Starting bwd warmup" << std::endl;
+    for (int i = 0; i < ITER; i++) {
+        cudaMemcpy(d_qg, qg_fl, TOTAL_ELEMENTS_QO * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_kg, kg_fl, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_vg, vg_fl, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyHostToDevice);
+        bwd_attend_ker<ATTN_D, causal><<<grid_bwd_2, (32*BWD_NUM_WORKERS), carveout_memsize>>>(bwd_global); 
+    }
+    cudaDeviceSynchronize();
+    std::cout << "Starting bwd kernel" << std::endl;
+    auto total_time = 0; 
+
+    for(int i = 0; i < ITER; i++) {
+        cudaMemcpy(d_qg, qg_fl, TOTAL_ELEMENTS_QO * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_kg, kg_fl, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_vg, vg_fl, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyHostToDevice);
+        cudaDeviceSynchronize();
+        const auto start_bwd2 = std::chrono::high_resolution_clock::now();
+
+        bwd_attend_ker<ATTN_D, causal><<<grid_bwd_2, (32*BWD_NUM_WORKERS), carveout_memsize>>>(bwd_global); 
+        cudaDeviceSynchronize();
+
+        const auto finish_bwd2 = std::chrono::high_resolution_clock::now();
+        total_time += std::chrono::duration_cast<std::chrono::microseconds>(finish_bwd2 - start_bwd2).count();
+    }
+    CudaCheckError();
+    std::cout << "Finished bwd kernel\n";
+
+    // check correctness
+    cudaMemcpy(qg_fl, d_qg, TOTAL_ELEMENTS_QO * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(kg_fl, d_kg, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(vg_fl, d_vg, TOTAL_ELEMENTS_KV * sizeof(float), cudaMemcpyDeviceToHost);
+
+    for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) {
+        qg[i] = (qg_fl[i]);
+    }
+    for (int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
+        kg[i] = (kg_fl[i]);
+        vg[i] = (vg_fl[i]);
+    }
+
+    // Debug: print first 10 elements of gradients
+    std::cout << "First 10 QG:     ";
+    for(int i = 0; i < 10; i++) std::cout << qg[i] << " ";
+    std::cout << std::endl;
+    std::cout << "First 10 QG_REF: ";
+    for(int i = 0; i < 10; i++) std::cout << qg_ref[i] << " ";
+    std::cout << std::endl;
+    std::cout << "First 10 KG:     ";
+    for(int i = 0; i < 10; i++) std::cout << kg[i] << " ";
+    std::cout << std::endl;
+    std::cout << "First 10 KG_REF: ";
+    for(int i = 0; i < 10; i++) std::cout << kg_ref[i] << " ";
+    std::cout << std::endl;
+    std::cout << "First 10 VG:     ";
+    for(int i = 0; i < 10; i++) std::cout << vg[i] << " ";
+    std::cout << std::endl;
+    std::cout << "First 10 VG_REF: ";
+    for(int i = 0; i < 10; i++) std::cout << vg_ref[i] << " ";
+    std::cout << std::endl;
+
+    float total_diff_qg = 0.0f;
+    float total_diff_kg = 0.0f;
+    float total_diff_vg = 0.0f;
+
+    float max_diff_qg = 0.0f;
+    float max_diff_kg = 0.0f;
+    float max_diff_vg = 0.0f;
+
+    good = true;
+    std::ofstream qg_ref_file("printouts/qg_ref.txt");
+    std::ofstream qg_file("printouts/qg.txt");
+    std::ofstream diff_qg_file("printouts/diff_qg.txt");
+    for(int i = 0; i < TOTAL_ELEMENTS_QO; i++) {
+        float diff = qg[i] - qg_ref[i];
+        if (i < TOTAL_UNIQUE_ELEMENTS) {
+            qg_ref_file << qg_ref[i] << ' ';
+            qg_file << qg[i] << ' ';
+            diff_qg_file << diff << ' ';
+        }
+        if(abs(diff) > 0.015 || isnan(diff)) {
+            good = false;
+        }
+        total_diff_qg += abs(diff);
+
+        if (abs(diff) > max_diff_qg) {
+            max_diff_qg = abs(diff);
+        }
+    }
+    // print average qg diff
+    std::cout << "Average qg diff: " << total_diff_qg / TOTAL_ELEMENTS_QO << std::endl;
+    std::cout << "Max     qg diff: " << max_diff_qg << std::endl;
+
+    std::ofstream kg_ref_file("printouts/kg_ref.txt");
+    std::ofstream kg_file("printouts/kg.txt");
+    std::ofstream diff_kg_file("printouts/diff_kg.txt");
+    for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
+        float diff = kg[i] - kg_ref[i];
+        if (i < TOTAL_UNIQUE_ELEMENTS) {
+            kg_ref_file << kg_ref[i] << ' ';
+            kg_file << kg[i] << ' ';
+            diff_kg_file << diff << ' ';
+        }
+        if(abs(diff) > 0.015 || isnan(diff)) {
+            good = false;
+        }
+        total_diff_kg += abs(diff);
+
+        if (abs(diff) > max_diff_kg) {
+            max_diff_kg = abs(diff);
+        }
+    }
+    // print average kg diff
+    std::cout << "Average kg diff: " << total_diff_kg / TOTAL_ELEMENTS_KV << std::endl;
+    std::cout << "Max     kg diff: " << max_diff_kg << std::endl;
+
+    std::ofstream vg_ref_file("printouts/vg_ref.txt");
+    std::ofstream vg_file("printouts/vg.txt");
+    std::ofstream diff_vg_file("printouts/diff_vg.txt");
+    for(int i = 0; i < TOTAL_ELEMENTS_KV; i++) {
+        float diff = vg[i] - vg_ref[i];
+        if (i < TOTAL_UNIQUE_ELEMENTS) {
+            vg_ref_file << vg_ref[i] << ' ';
+            vg_file << vg[i] << ' ';
+            diff_vg_file << diff << ' ';
+        }
+        if(abs(diff) > 0.015 || isnan(diff)) {
+            good = false;
+        }
+        total_diff_vg += abs(diff);
+
+        if (abs(diff) > max_diff_vg) {
+            max_diff_vg = abs(diff);
+        }
+    }
+    // print average vg diff
+    std::cout << "Average vg diff: " << total_diff_vg / TOTAL_ELEMENTS_KV << std::endl;
+    std::cout << "Max     vg diff: " << max_diff_vg << std::endl;
+
+    std::cout << "Average bwd execution time: " << ((total_time) / ITER) + (bwd_prep) << " us" << std::endl;
+    if(good) std::cout << "BWD Correct :)\n";
+    else std::cout << "BWD Incorrect :(\n";
+
+    // calculate efficiency
+    f = flops(ATTN_B, ATTN_N, ATTN_D, QO_HEADS, causal, "bwd");
+
+    e = efficiency(f, ((total_time) / ITER) + (bwd_prep * 1.7)); 
+    // multiply by 1.7 to account for copy kernel
+
+    std::cout << "Efficiency: " << e << " TFLOPS\n\n\n" << std::endl;
+
+    cudaFree(d_q);
+    cudaFree(d_k);
+    cudaFree(d_v);
+    cudaFree(d_o);
+
+    cudaFree(d_l);
+    cudaFree(d_d);
+
+    cudaFree(d_og);
+    cudaFree(d_qg);
+    cudaFree(d_kg);
+    cudaFree(d_vg);
+
+    delete[] q, k, v, o, o_ref;
+    delete[] q_bf, k_bf, v_bf, o_bf;
+
+    delete[] qg, kg, vg, og;
+    delete[] qg_fl, kg_fl, vg_fl, og_bf;
+
+    return 0;
+}

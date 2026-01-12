@@ -55,64 +55,80 @@ struct st_subtile;
  * @tparam _rows The height of the tile.
  * @tparam _cols The width of the tile.
  */
-template<typename _T, int _rows, int _cols>
+template<typename _T, int _rows, int _cols, bool _swizzle=true, int _swizzle_bytes=0>
 struct KITTENS_DEFAULT_ALIGN st {
+#ifdef KITTENS_BLACKWELL
+    static_assert(!std::is_same_v<_T, fp4e2m1>, "For FP4 types, you must use a packed type (i.e., fp4e2m1_2 or fp4e2m1_4).");
+#endif
     using identifier = ducks::st::identifier; ///< Type identifier for shared memory tile.
     using T = base_types::packing<_T>::unpacked_type;
     using T2 = base_types::packing<_T>::packed_type;
     using dtype = T; ///< Data type of the elements in the tile.
+    
+    static constexpr bool swizzle = _swizzle;
 
     // define underlying data as same as that projected, to make clear that this is *not* a subtile.
     static constexpr int underlying_rows          = _rows;
     static constexpr int underlying_cols          = _cols;
-    static constexpr int underlying_height        = _rows / kittens::TILE_ROW_DIM<T>;
-    static constexpr int underlying_width         = _cols / kittens::TILE_COL_DIM<T>;
     static constexpr int underlying_num_elements  = underlying_rows * underlying_cols;
 
     static constexpr int rows                = _rows; ///< Total number of rows in the tile.
-    static_assert(rows % kittens::TILE_ROW_DIM<T> == 0, "Rows must be divisible by the tile dimension");
     static constexpr int cols                = _cols; ///< Total number of cols in the tile.
-    static_assert(cols % kittens::TILE_COL_DIM<T> == 0, "Cols must be divisible by the tile dimension");
-    static constexpr int height              = _rows / kittens::TILE_ROW_DIM<T>; ///< Height of the tile in terms of 16-element subtiles.
-    static constexpr int width               = _cols / kittens::TILE_COL_DIM<T>; ///< Width of the tile in terms of 16-element subtiles.
     static constexpr int num_elements        = rows * cols; ///< Total number of elements in the tile.
 
-    static_assert(base_types::packing<dtype>::num() == 1 || std::is_same_v<dtype, fp4_2>); // must be a 1-packed type (e.g. float, bf16, etc)
+    static_assert(!swizzle || (rows % kittens::TILE_ROW_DIM<T> == 0), "Rows must be divisible by the tile dimension");
+    static_assert((swizzle && (cols % kittens::TILE_COL_DIM<T> == 0)) || (!swizzle && (cols % kittens::BASE_TILE_DIM == 0)), "Cols must be divisible by the tile dimension");
 
-    static constexpr int swizzle_bytes = (
+#ifdef KITTENS_BLACKWELL
+    // Must be a 1-packed type (e.g. float, bf16, etc) unless fp4
+    static_assert(base_types::packing<dtype>::num() == 1 || std::is_same_v<dtype, fp4e2m1_2>); 
+#else
+    static_assert(base_types::packing<dtype>::num() == 1); 
+#endif
+
+    // If a user specifies a swizzle bytes value, the column byte size must be a multiple of the swizzle bytes.
+    static_assert(_swizzle_bytes == 0 || _swizzle_bytes == 32 || _swizzle_bytes == 64 || _swizzle_bytes == 128);
+    static constexpr int swizzle_bytes = _swizzle_bytes > 0 ? _swizzle_bytes : (
         sizeof(dtype) == 1 ? (  // Add FP8 case
-            underlying_width%4 == 0 ? 128 :
-            underlying_width%2 == 0 ?  64 : 32
+            (cols/kittens::TILE_COL_DIM<T>)%4 == 0 ? 128 :
+            (cols/kittens::TILE_COL_DIM<T>)%2 == 0 ?  64 : 32
         ) :
         sizeof(dtype) == 2 ? (
-            underlying_width%4 == 0 ? 128 :
-            underlying_width%2 == 0 ?  64 : 32
+            (cols/kittens::TILE_COL_DIM<T>)%4 == 0 ? 128 :
+            (cols/kittens::TILE_COL_DIM<T>)%2 == 0 ?  64 : 32
         ) :
         sizeof(dtype) == 4 ? (
-            underlying_width%2 == 0 ? 128 : 64
+            (cols/kittens::TILE_COL_DIM<T>)%2 == 0 ? 128 : 64
         ) : -1
     );
 
-    // wgmma layout with swizzling
     dtype data[rows*cols]; ///< Raw data storage for the tile.
 
     __device__ static inline T* idx(T *ptr, int2 coord) { // naive row-major coord default
         int r = coord.x, c = coord.y; // alias
-        static constexpr int swizzle_repeat = swizzle_bytes * 8;
-        static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
-        const int outer_idx = c/subtile_cols;
-        const uint64_t addr = (uint64_t)(&ptr[outer_idx*rows*subtile_cols + r*subtile_cols + c%subtile_cols]);
-        const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
-        return (T*)(addr ^ swizzle);
+        if constexpr (swizzle) {
+            static constexpr int swizzle_repeat = swizzle_bytes * 8;
+            static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
+            const int outer_idx = c/subtile_cols;
+            const uint64_t addr = (uint64_t)(&ptr[outer_idx*rows*subtile_cols + r*subtile_cols + c%subtile_cols]);
+            const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
+            return (T*)(addr ^ swizzle);
+        } else {
+            return &ptr[r*cols + c];
+        }
     }
     __device__ static inline uint32_t idx(uint32_t ptr, int2 coord) {
         int r = coord.x, c = coord.y; // alias
-        static constexpr int swizzle_repeat = swizzle_bytes * 8;
-        static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
-        const int outer_idx = c/subtile_cols;
-        const uint32_t addr = ptr + sizeof(T)*(outer_idx*rows*subtile_cols + r*subtile_cols + c%subtile_cols);
-        const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
-        return (addr ^ swizzle);
+        if constexpr (swizzle) {
+            static constexpr int swizzle_repeat = swizzle_bytes * 8;
+            static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
+            const int outer_idx = c/subtile_cols;
+            const uint32_t addr = ptr + sizeof(T)*(outer_idx*rows*subtile_cols + r*subtile_cols + c%subtile_cols);
+            const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
+            return (addr ^ swizzle);
+        } else {
+            return ptr + sizeof(T)*(r*cols + c);
+        }
     }
     /**
      * @brief Access a shared tile element using a row and column, as if the tile were row-major.
@@ -134,7 +150,21 @@ struct KITTENS_DEFAULT_ALIGN st {
     }
 
     template<int subtile_rows, int subtile_cols>
-    __device__ inline st_subtile<st<_T, _rows, _cols>, subtile_rows, subtile_cols> subtile(int2 rowcol);
+    __device__ inline st_subtile<st<_T, _rows, _cols, _swizzle, _swizzle_bytes>, subtile_rows, subtile_cols> subtile(int2 rowcol);
+
+    /**
+     * @brief Return a true "subtile" of this tile, not a temporary view with st_subtile. 
+     *        The constraint is that only column dimension can be divided, and it must be a multiple of swizzle bytes.
+     */
+    template<int subtile_cols>
+    __device__ inline st<_T, _rows, subtile_cols, _swizzle, swizzle_bytes /*must not use _swizzle_bytes*/> &subtile(int idx) {
+        static_assert(swizzle_bytes > 0, "Parent shared tile must have an explicit swizzle_bytes.");
+        constexpr int swizzle_elements = swizzle_bytes / sizeof(T);
+        static_assert(subtile_cols >= 0 && subtile_cols % swizzle_elements == 0);
+        return *reinterpret_cast<st<_T, _rows, subtile_cols, _swizzle, swizzle_bytes> *>(
+            &data[rows*swizzle_elements*(subtile_cols/swizzle_elements)*idx]
+        );
+    }
 
     // vector types
     using col_vec = sv<dtype, rows>; ///< Column vector type for this tile
@@ -165,20 +195,18 @@ struct st_subtile {
     using T2 = ST::T2;
     using dtype = T; ///< Data type of the elements in the tile.
 
+    static constexpr bool swizzle = ST::swizzle;
+
     static constexpr int underlying_rows          = ST::underlying_rows;
     static_assert(underlying_rows % kittens::TILE_ROW_DIM<T> == 0, "Underlying rows must be divisible by the tile dimension");
     static constexpr int underlying_cols          = ST::underlying_cols;
     static_assert(underlying_cols % kittens::TILE_COL_DIM<T> == 0, "Underlying cols must be divisible by the tile dimension");
-    static constexpr int underlying_height        = ST::underlying_height;
-    static constexpr int underlying_width         = ST::underlying_width;
     static constexpr int underlying_num_elements  = ST::underlying_num_elements;
 
     static constexpr int rows                = _subtile_rows;
     static_assert(rows % kittens::TILE_ROW_DIM<T> == 0, "Rows must be divisible by the tile dimension");
     static constexpr int cols                = _subtile_cols;
     static_assert(cols % kittens::TILE_COL_DIM<T> == 0, "Cols must be divisible by the tile dimension");
-    static constexpr int height              = rows / kittens::TILE_ROW_DIM<T>;
-    static constexpr int width               = cols / kittens::TILE_COL_DIM<T>;
     static constexpr int num_elements        = rows * cols;
 
     static constexpr int swizzle_bytes = ST::swizzle_bytes;
@@ -192,23 +220,31 @@ struct st_subtile {
         col_offset = rowcol.y * cols;
     }
 
-    __device__ inline T* idx(T *ptr, const int2 coord) { // naive row-major coord default
+    __device__ inline T* idx(T *ptr, const int2 coord) const { // naive row-major coord default
         int r = coord.x+row_offset, c = coord.y+col_offset; // alias
-        static constexpr int swizzle_repeat = swizzle_bytes * 8;
-        static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
-        const int outer_idx = c/subtile_cols;
-        const uint64_t addr = (uint64_t)(&ptr[outer_idx*underlying_rows*subtile_cols + r*subtile_cols + c%subtile_cols]);
-        const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
-        return (T*)(addr ^ swizzle);
+        if constexpr (swizzle) {
+            static constexpr int swizzle_repeat = swizzle_bytes * 8;
+            static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
+            const int outer_idx = c/subtile_cols;
+            const uint64_t addr = (uint64_t)(&ptr[outer_idx*underlying_rows*subtile_cols + r*subtile_cols + c%subtile_cols]);
+            const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
+            return (T*)(addr ^ swizzle);
+        } else {
+            return &ptr[r*cols + c];
+        }
     }
     __device__ inline uint32_t idx(uint32_t ptr, const int2 coord) const { // naive row-major coord default
         int r = coord.x+row_offset, c = coord.y+col_offset; // alias
-        static constexpr int swizzle_repeat = swizzle_bytes * 8;
-        static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
-        const int outer_idx = c/subtile_cols;
-        const uint32_t addr = ptr + sizeof(T)*(outer_idx*underlying_rows*subtile_cols + r*subtile_cols + c%subtile_cols);
-        const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
-        return (addr ^ swizzle);
+        if constexpr(swizzle) {
+            static constexpr int swizzle_repeat = swizzle_bytes * 8;
+            static constexpr int subtile_cols   = swizzle_bytes / sizeof(T);
+            const int outer_idx = c/subtile_cols;
+            const uint32_t addr = ptr + sizeof(T)*(outer_idx*underlying_rows*subtile_cols + r*subtile_cols + c%subtile_cols);
+            const int swizzle = ((addr % swizzle_repeat) >> 7) << 4;
+            return (addr ^ swizzle);
+        } else {
+            return ptr + sizeof(T)*(r*cols + c);
+        }
     }
     /**
      * @brief Access a shared tile element using a row and column, as if the tile were row-major.
@@ -238,10 +274,10 @@ struct st_subtile {
     }
 };
 
-template <typename _T, int _rows, int _cols> // Class template parameters
+template <typename _T, int _rows, int _cols, bool _swizzle, int _swizzle_bytes> // Class template parameters
 template <int subtile_rows, int subtile_cols> // Function template parameters
-__device__ inline st_subtile<st<_T, _rows, _cols>, subtile_rows, subtile_cols> // Return type
-st<_T, _rows, _cols>::subtile(int2 rowcol) // Qualified function name and parameters
+__device__ inline st_subtile<st<_T, _rows, _cols, _swizzle, _swizzle_bytes>, subtile_rows, subtile_cols> // Return type
+st<_T, _rows, _cols, _swizzle, _swizzle_bytes>::subtile(int2 rowcol) // Qualified function name and parameters
 {
     // Type aliases for convenience within the function body
     using ST_t = st<_T, _rows, _cols>; // Alias for the parent tile type
@@ -254,25 +290,16 @@ st<_T, _rows, _cols>::subtile(int2 rowcol) // Qualified function name and parame
     static_assert(subtile_cols % kittens::TILE_COL_DIM<dtype> == 0,
         "Subtile cols must be divisible by the base tile col dimension.");
 
-    // Calculate height/width in terms of base tiles for further checks
-    constexpr int subtile_height = subtile_rows / kittens::TILE_ROW_DIM<dtype>;
-    constexpr int subtile_width = subtile_cols / kittens::TILE_COL_DIM<dtype>;
-    static_assert(subtile_height > 0 && subtile_width > 0, "Subtile height/width in base tiles must be positive.");
-
-    // Check divisibility of parent height/width by subtile height/width
-    static_assert(ST_t::height % subtile_height == 0,
-        "Parent tile height (in base tiles) must be divisible by subtile height (in base tiles).");
-    static_assert(ST_t::width % subtile_width == 0,
-        "Parent tile width (in base tiles) must be divisible by subtile width (in base tiles).");
+    // Check divisibility of parent rows/cols by subtile rows/cols
+    static_assert(ST_t::rows % subtile_rows == 0,
+        "Parent tile rows must be divisible by subtile rows.");
+    static_assert(ST_t::cols % subtile_cols == 0,
+        "Parent tile cols must be divisible by subtile cols.");
 
     // Ensure the parent st object is not itself a subtile view by comparing its
     // dimensions to its underlying dimensions.
-    static_assert(ST_t::height == ST_t::underlying_height && ST_t::width == ST_t::underlying_width,
-        "Cannot create a subtile from an object that appears to be a subtile view (height/width mismatch underlying).");
-    // Also check rows/cols directly for robustness, though height/width check might suffice.
     static_assert(ST_t::rows == ST_t::underlying_rows && ST_t::cols == ST_t::underlying_cols,
         "Cannot create a subtile from an object that appears to be a subtile view (rows/cols mismatch underlying).");
-
 
     // Construct and return the st_subtile object using its constructor:
     // st_subtile(ST &src, int2 rowcol)
@@ -282,19 +309,106 @@ st<_T, _rows, _cols>::subtile(int2 rowcol) // Qualified function name and parame
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
-template<int _height, int _width> using st_bf = st<bf16,  _height, _width>;
-template<int _height, int _width> using st_hf = st<half,  _height, _width>;
-template<int _height, int _width> using st_fl = st<float, _height, _width>;
-#ifdef KITTENS_HOPPER
-template<int _height, int _width> using st_fp8e4m3 = st<fp8e4m3, _height, _width>;
-template<int _height, int _width> using st_fp8e5m2 = st<fp8e5m2, _height, _width>;
-#ifdef KITTENS_BLACKWELL
-template<int _height, int _width> using st_fp8e8m0 = st<fp8e8m0, _height, _width>;
-template<int _height, int _width> using st_fp4_2 = st<fp4_2, _height, _width>;
+template<int _height, int _width, bool _swizzle=true, int _swizzle_bytes=0> 
+using st_bf = st<bf16,  _height, _width, _swizzle, _swizzle_bytes>;
+template<int _height, int _width, bool _swizzle=true, int _swizzle_bytes=0> 
+using st_hf = st<half,  _height, _width, _swizzle, _swizzle_bytes>;
+template<int _height, int _width, bool _swizzle=true, int _swizzle_bytes=0> 
+using st_fl = st<float, _height, _width, _swizzle, _swizzle_bytes>;
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
+template<int _height, int _width, bool _swizzle=true, int _swizzle_bytes=0> 
+using st_fp8e4m3 = st<fp8e4m3, _height, _width, _swizzle, _swizzle_bytes>;
+template<int _height, int _width, bool _swizzle=true, int _swizzle_bytes=0> 
+using st_fp8e5m2 = st<fp8e5m2, _height, _width, _swizzle, _swizzle_bytes>;
 #endif
+#if defined(KITTENS_BLACKWELL)
+template<int _height, int _width, bool _swizzle=true, int _swizzle_bytes=0> 
+using st_fp8e8m0 = st<fp8e8m0, _height, _width, _swizzle, _swizzle_bytes>;
+template<int _height, int _width, bool _swizzle=true, int _swizzle_bytes=0> 
+using st_fp4e2m1_2 = st<fp4e2m1_2, _height, _width, _swizzle, _swizzle_bytes>;
 #endif
 
 /* ----------  PRINTOUTS  ---------- */
+
+/**
+ * @brief Get a readable type name for shared tiles
+ */
+template<typename T, int rows, int cols>
+__device__ constexpr const char* get_tile_type_name() {
+    if constexpr (std::is_same_v<T, float>) {
+        return "st_fl";
+    } else if constexpr (std::is_same_v<T, half>) {
+        return "st_hf";
+    } else if constexpr (std::is_same_v<T, bf16>) {
+        return "st_bf";
+#if defined(KITTENS_BLACKWELL)
+    } else if constexpr (std::is_same_v<T, fp4e2m1_2>) {
+        return "st_fp4_e2m1_2";
+    } else if constexpr (std::is_same_v<T, fp8e8m0>) {
+        return "st_fp8_e8m0";
+#endif
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
+    } else if constexpr (std::is_same_v<T, fp8e4m3>) {
+        return "st_fp8_e4m3";
+    } else if constexpr (std::is_same_v<T, fp8e5m2>) {
+        return "st_fp8_e5m2";
+#endif  
+    } else {
+        return "st_unknown";
+    }
+}
+
+#if defined(KITTENS_BLACKWELL)
+/**
+ * @brief Print the contents of a shared tile as a formatted table.
+ * 
+ * This function should be called by a single thread in the warp.
+ * It will print the entire tile atomically to avoid interleaved output.
+ * 
+ * @param tile The shared tile to print
+ */
+template<ducks::st::all ST>
+__device__ inline void print_fp4(const ST& tile) {
+    if (std::is_same_v<typename ST::dtype, fp4e2m1>) {
+
+        constexpr int cols = ST::cols * 2;
+        printf("Block %d: Shared Tile %dx%d (Type: %s<%d,%d>):\n", blockIdx.x, ST::rows, cols, get_tile_type_name<typename ST::dtype, ST::rows, cols>(), ST::rows, cols);
+
+        // Print column headers
+        printf("     "); // Padding for row indices
+        for (int c = 0; c < cols; c++) {
+            printf("%8d ", c);
+        }
+        printf("\n");
+        
+        // Print separator line
+        printf("     ");
+        for (int c = 0; c < cols; c++) {
+            printf("--------+");
+        }
+        printf("\n");
+        
+        // Print data rows
+        for (int r = 0; r < ST::rows; r++) {
+            printf("%3d |", r); // Row index
+            for (int c = 0; c < cols; c += 2) {
+                uint8_t *vals = reinterpret_cast<uint8_t*>(const_cast<fp4e2m1*>(&tile[{r,c/2}]));
+
+                // Convert to fp4e2m1 and then to float
+                float f1 = static_cast<float>(fp4e2m1(vals[0] & 0xF));
+                float f2 = static_cast<float>(fp4e2m1((vals[0] >> 4) & 0xF));
+
+                printf("%8.3f %8.3f ", f1, f2);
+
+            }
+            printf("\n");
+        }
+        printf("\n");
+    } else {
+        printf("Type must be FP4 in this function\n");
+    }
+}
+#endif
 
 /**
  * @brief Print the contents of a shared tile as a formatted table.
@@ -306,7 +420,7 @@ template<int _height, int _width> using st_fp4_2 = st<fp4_2, _height, _width>;
  */
 template<ducks::st::all ST>
 __device__ inline void print(const ST& tile) {
-    printf("Shared Tile %dx%d:\n", ST::rows, ST::cols);
+    printf("Block %d: Shared Tile %dx%d (Type: %s<%d,%d>):\n", blockIdx.x, ST::rows, ST::cols, get_tile_type_name<typename ST::dtype, ST::rows, ST::cols>(), ST::rows, ST::cols);
     
     // Print column headers
     printf("     "); // Padding for row indices
@@ -326,18 +440,22 @@ __device__ inline void print(const ST& tile) {
     for (int r = 0; r < ST::rows; r++) {
         printf("%3d |", r); // Row index
         for (int c = 0; c < ST::cols; c++) {
-            if constexpr (std::is_same_v<typename ST::dtype, fp8e4m3>) {
-                printf("%8.3f ", static_cast<float>(tile[{r,c}]));
-#ifdef KITTENS_BLACKWELL
-            } else if constexpr (std::is_same_v<typename ST::dtype, fp8e8m0>) {
-                printf("%8.3f ", static_cast<float>(tile[{r,c}]));
-#endif
-            } else if constexpr (std::is_same_v<typename ST::dtype, float>) {
+            if constexpr (std::is_same_v<typename ST::dtype, float>) {
                 printf("%8.3f ", tile[{r,c}]);
             } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
                 printf("%8.3f ", __bfloat162float(tile[{r,c}]));
             } else if constexpr (std::is_integral_v<typename ST::dtype>) {
                 printf("%8d ", (int)tile[{r,c}]);
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
+            } else if constexpr (std::is_same_v<typename ST::dtype, fp8e4m3>) {
+                printf("%8.3f ", static_cast<float>(tile[{r,c}]));
+            } else if constexpr (std::is_same_v<typename ST::dtype, fp8e5m2>) {
+                printf("%8.3f ", static_cast<float>(tile[{r,c}]));
+#endif
+#if defined(KITTENS_BLACKWELL)
+            } else if constexpr (std::is_same_v<typename ST::dtype, fp8e8m0>) {
+                printf("%8.3f ", static_cast<float>(tile[{r,c}]));
+#endif
             } else {
                 printf("%8.3f ", (float)tile[{r,c}]);
             }
@@ -347,4 +465,187 @@ __device__ inline void print(const ST& tile) {
     printf("\n");
 }
 
+/**
+ * @brief Print the contents of a shared subtile as a formatted table.
+ * 
+ * This function prints subtiles with additional information about their position
+ * within the parent tile.
+ * 
+ * @param subtile The shared subtile to print
+ */
+template<typename ST, int subtile_rows, int subtile_cols>
+__device__ inline void print(const st_subtile<ST, subtile_rows, subtile_cols>& subtile) {
+    printf("Block %d: Shared Subtile %dx%d (offset: [%d,%d], Type: %s<%d,%d> from %s<%d,%d>):\n", 
+            blockIdx.x, subtile.rows, subtile.cols, 
+            subtile.row_offset, subtile.col_offset,
+            get_tile_type_name<typename ST::dtype, subtile.rows, subtile.cols>(), subtile.rows, subtile.cols,
+            get_tile_type_name<typename ST::dtype, ST::rows, ST::cols>(), ST::rows, ST::cols);
+    
+    // Print column headers
+    printf("     "); // Padding for row indices
+    for (int c = 0; c < subtile.cols; c++) {
+        printf("%8d ", c);
+    }
+    printf("\n");
+    
+    // Print separator line
+    printf("     ");
+    for (int c = 0; c < subtile.cols; c++) {
+        printf("--------+");
+    }
+    printf("\n");
+    
+    // Print data rows
+    for (int r = 0; r < subtile.rows; r++) {
+        printf("%3d |", r); // Row index
+        for (int c = 0; c < subtile.cols; c++) {
+            if constexpr (std::is_same_v<typename ST::dtype, float>) {
+                printf("%8.3f ", subtile[{r,c}]);
+            } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
+                printf("%8.3f ", __bfloat162float(subtile[{r,c}]));
+            } else if constexpr (std::is_integral_v<typename ST::dtype>) {
+                printf("%8d ", (int)subtile[{r,c}]);
+            } else {
+                printf("%8.3f ", (float)subtile[{r,c}]);
+            }
+        }
+        printf("\n");
+    }
+    printf("\n");
 }
+
+/**
+ * @brief Fill a shared tile with ones.
+ * 
+ * This function should be called by a single thread in the warp.
+ * It will fill the entire tile with 1s (value, not bits) in the tile.
+ * 
+ * @param tile The shared tile to fill with 1s
+ */
+template<ducks::st::all ST>
+__device__ inline void fill_value(ST& tile, float value) {
+    printf("Filling Tile %dx%d with %f:\n", ST::rows, ST::cols, value);
+
+    // Fill tile with value
+    for (int r = 0; r < ST::rows; r++) {
+        for (int c = 0; c < ST::cols; c++) {
+            if constexpr (std::is_same_v<typename ST::dtype, float>) {
+                tile[{r,c}] = value;
+            } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
+                tile[{r,c}] = __float2bfloat16(value);
+#if defined(KITTENS_BLACKWELL)  
+            } else if constexpr (std::is_same_v<typename ST::dtype, fp4e2m1>) {
+                tile.data[r*ST::cols + c] = fp4e2m1(value);
+            } else if constexpr (std::is_same_v<typename ST::dtype, fp8e8m0>) {
+                tile.data[r*ST::cols + c] = fp8e8m0(value);
+#endif
+            } else {    
+                tile[{r,c}] = value;
+            }
+        }
+    }
+}
+
+/**
+ * @brief Fill a shared tile with something!
+ * 
+ * This function should be called by a single thread in the warp.
+ * It will fill the entire tile with 1s (value, not bits) in the tile.
+ * 
+ * @param tile The shared tile to fill with 1s
+ */
+template<ducks::st::all ST>
+__device__ inline void fill_identity(ST& tile) {
+    printf("Filling Tile %dx%d with identity:\n", ST::rows, ST::cols);
+    
+    // Print data rows
+    for (int r = 0; r < ST::rows; r++) {
+        for (int c = 0; c < ST::cols; c++) {
+            if constexpr (std::is_same_v<typename ST::dtype, float>) {
+                // printf("%8.3f ", tile[{r,c}]);
+                tile[{r,c}] = 1.0f;
+            } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
+                // printf("%8.3f ", __bfloat162float(tile[{r,c}]));
+                tile[{r,c}] = __float2bfloat16(1.0f);
+#if defined(KITTENS_BLACKWELL)  
+            } else if constexpr (std::is_same_v<typename ST::dtype, fp4e2m1>) {
+                if(r == c){
+                    // tile[{r,c}] = std::bit_cast<fp4e2m1>(uint8_t(0xFF));
+                    tile.data[r*ST::cols + c] = std::bit_cast<fp4e2m1>(uint8_t(0xFF));
+                } else {
+                    tile.data[r*ST::cols + c] = std::bit_cast<fp4e2m1>(uint8_t(0x00));
+                }
+#endif
+            } else {    
+                // printf("%8.3f ", (float)tile[{r,c}]);
+            }
+        }
+    }
+}
+
+/**
+ * @brief Print the contents of a shared tile as a formatted table in bits.
+ * 
+ * This function should be called by a single thread in the warp.
+ * It will print the entire tile atomically to avoid interleaved output.
+ * Each element will be printed as a bitfield
+ * 
+ * @param tile The shared tile to print
+ */
+template<ducks::st::all ST>
+__device__ inline void print_bits(const ST& tile, bool unswizzle = false) {
+    printf("Block %d: Shared Tile %dx%d (Type: %s<%d,%d>):\n", blockIdx.x, ST::rows, ST::cols, get_tile_type_name<typename ST::dtype, ST::rows, ST::cols>(), ST::rows, ST::cols);
+    
+    // Print column headers
+    printf(" "); // Padding for row indices
+    for (int c = 0; c < ST::cols; c++) {
+        printf("%11d ", c);
+    }
+    printf("\n");
+    
+    // Print separator line
+    printf("     ");
+    for (int c = 0; c < ST::cols; c++) {
+        printf("-----------+");
+    }
+    printf("\n");
+    
+    // Print data rows
+    for (int r = 0; r < ST::rows; r++) {
+        printf("%3d |", r); // Row index
+        for (int c = 0; c < ST::cols; c++) {
+            if constexpr (std::is_same_v<typename ST::dtype, float>) {
+                printf("%8.3f ", tile[{r,c}]);
+            } else if constexpr (std::is_same_v<typename ST::dtype, __nv_bfloat16>) {
+                printf("%8.3f ", __bfloat162float(tile[{r,c}]));
+            // } else if constexpr (std::is_integral_v<typename ST::dtype>) {
+            //     printf("%8d ", (int)tile[{r,c}]);
+#if defined(KITTENS_BLACKWELL)
+            } else if constexpr (std::is_same_v<typename ST::dtype, fp4e2m1> || std::is_same_v<typename ST::dtype, fp8e8m0>) {
+                // print as bitfield
+
+                uint8_t bits;
+                if(unswizzle){
+                    bits = *reinterpret_cast<const uint8_t*>(&tile.data[r*ST::cols + c]); // Assuming 4-bit value
+                } else {
+                    bits = *reinterpret_cast<const uint8_t*>(&tile[{r,c}]); // Assuming 4-bit value
+                }
+                // Print all 32 bits with formatting for readability
+                printf("0b");
+                // Print in groups of 4 for readability
+                for (int bit = 7; bit >= 0; bit--) {
+                    printf("%d", (bits >> bit) & 0x1);
+                    if (bit % 4 == 0 && bit > 0) printf("_");
+                }
+                printf(" ");
+#endif
+            } else {
+                printf("%8.3f ", (float)tile[{r,c}]);
+            }
+        }
+        printf("\n");
+    }
+    printf("\n");
+}
+
+} // namespace kittens

@@ -164,6 +164,7 @@ int main(int argc, char **argv) {
     cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS_O * sizeof(bf16), cudaMemcpyDeviceToHost);
     for(int i = 0; i < TOTAL_ELEMENTS_O; i++) { o[i] = __bfloat162float(o_bf[i]); }
     bool good = true;
+    float max_diff = 0.0;
     std::ofstream o_ref_file("printouts/o_ref.txt");
     std::ofstream o_file("printouts/o.txt");
     std::ofstream diff_file("printouts/diff.txt");
@@ -179,9 +180,11 @@ int main(int argc, char **argv) {
         if(abs(diff) > 0.1 || isnan(diff)) {
             good = false;
         }
+        max_diff = max(abs(diff), max_diff);
     }
     if(good) std::cout << "Correct out :)\n";
     else std::cout << "Incorrect out :(\n";
+    std::cout << "Max diff: " << max_diff << "\n";
     std::cout << "Average execution time for " << ITER << " ITERS (Q and K): " << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() << " us" << std::endl;
 
     // calculate efficiency

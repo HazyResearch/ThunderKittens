@@ -8,8 +8,8 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <torch/csrc/utils/pybind.h>
 
-#include "../types/device/vmm.cuh"
-#include "../types/device/ipc.cuh"
+#include "../types/system/vmm.cuh"
+#include "../types/system/ipc.cuh"
 #include "broker.cuh"
 
 namespace kittens {

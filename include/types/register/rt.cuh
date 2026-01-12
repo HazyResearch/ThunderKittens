@@ -145,11 +145,129 @@ struct rt {
 template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fl = rt<float, _r, _c, layout>;
 template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_bf = rt<bf16,  _r, _c, layout>;
 template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_hf = rt<half,  _r, _c, layout>;
-#ifdef KITTENS_HOPPER
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fp8e4m3 = rt<fp8e4m3,  _r, _c, layout>;
 template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fp8e5m2 = rt<fp8e5m2,  _r, _c, layout>;
-#ifdef KITTENS_BLACKWELL
+#endif
+#if defined(KITTENS_BLACKWELL)
 template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fp8e8m0 = rt<fp8e8m0,  _r, _c, layout>;
+template<int _r, int _c, ducks::rt_layout::all layout=ducks::rt_layout::row> using rt_fp4e2m1_2 = rt<fp4e2m1_2,  _r, _c, layout>;
 #endif
+
+/* ----------  PRINTOUTS  ---------- */
+
+/**
+ * @brief Get a readable type name for register tiles
+ */
+template<typename T, int rows, int cols>
+__device__ constexpr const char* get_rt_type_name() {
+    if constexpr (std::is_same_v<T, float>) {
+        return "rt_fl";
+    } else if constexpr (std::is_same_v<T, half>) {
+        return "rt_hf";
+    } else if constexpr (std::is_same_v<T, bf16>) {
+        return "rt_bf";
+#if defined(KITTENS_BLACKWELL)
+    } else if constexpr (std::is_same_v<T, fp4e2m1_2>) {
+        return "rt_fp4_e2m1_2";
+    } else if constexpr (std::is_same_v<T, fp8e8m0>) {
+        return "rt_fp8_e8m0";
 #endif
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
+    } else if constexpr (std::is_same_v<T, fp8e4m3>) {
+        return "rt_fp8_e4m3";
+    } else if constexpr (std::is_same_v<T, fp8e5m2>) {
+        return "rt_fp8_e5m2";
+#endif
+    } else {
+        return "rt_unknown";
+    }
+}
+
+/**
+ * @brief Print the contents of a register tile as a formatted table.
+ * 
+ * This function should be called by all threads in the warp, but only
+ * the first thread (laneid() == 0) will coordinate the printing.
+ * It shows what each thread holds in its portion of the distributed tile.
+ * 
+ * @param tile The register tile to print
+ */
+template<ducks::rt::all RT>
+__device__ inline void print(const RT& tile) {
+    if (laneid() == 0) { // Only first thread in warp prints
+        printf("Block %d, Warp %d: Register Tile %dx%d (Type: %s<%d,%d>) - Distributed View:\n", 
+               blockIdx.x, threadIdx.x / WARP_THREADS, RT::rows, RT::cols, 
+               get_rt_type_name<typename RT::T, RT::rows, RT::cols>(), RT::rows, RT::cols);
+        printf("Each thread holds %d elements (%d packed)\n", 
+               RT::elements_per_thread, RT::packed_per_thread);
+        printf("\n");
+    }
+    __syncwarp();
+    
+    // Each thread prints its own data
+    for (int tid = 0; tid < WARP_THREADS; tid++) {
+        if (laneid() == tid) {
+            printf("Thread %2d: ", tid);
+            
+            // Print the packed data this thread holds
+            for (int i = 0; i < RT::height; i++) {
+                for (int j = 0; j < RT::width; j++) {
+                    printf("Subtile[%d][%d]: ", i, j);
+                    for (int k = 0; k < RT::packed_per_tile && k < 4; k++) { // Limit to first 4 elements to avoid too much output
+                        auto packed_val = tile.tiles[i][j].data[k];
+                        
+                        if constexpr (std::is_same_v<typename RT::dtype, typename RT::T>) {
+                            // Unpacked type, print directly
+                            if constexpr (std::is_same_v<typename RT::T, float>) {
+                                printf("%.3f ", packed_val);
+                            } else if constexpr (std::is_same_v<typename RT::T, half>) {
+                                printf("%.3f ", __half2float(packed_val));
+                            } else if constexpr (std::is_same_v<typename RT::T, bf16>) {
+                                printf("%.3f ", __bfloat162float(packed_val));
+#if defined(KITTENS_BLACKWELL)
+                            } else if constexpr (std::is_same_v<typename RT::T, fp4e2m1>) {
+                                printf("%.3f ", (float)packed_val);
+#endif
+                            } else {
+                                printf("%.3f ", (float)packed_val);
+                            }
+                        } else {
+                            // Packed type - check what type we're dealing with
+                            if constexpr (std::is_same_v<typename RT::T, float>) {
+                                printf("[%.3f, %.3f] ", packed_val.x, packed_val.y);
+                            } else if constexpr (std::is_same_v<typename RT::T, bf16>) {
+                                // Handle packed bf16_2 type
+                                printf("[%.3f, %.3f] ", __bfloat162float(packed_val.x), __bfloat162float(packed_val.y));
+#if defined(KITTENS_BLACKWELL)
+                            } else if constexpr (std::is_same_v<typename RT::T, fp8e8m0>) {
+                                // Extract the 4 individual fp8e8m0 values from the packed fp8e8m0_4
+                                __nv_fp8_e8m0 *vals = reinterpret_cast<__nv_fp8_e8m0*>(const_cast<fp8e8m0_4*>(&packed_val));
+                                printf("[%.3f,%.3f,%.3f,%.3f] ", 
+                                       (float)vals[0], (float)vals[1], (float)vals[2], (float)vals[3]);
+                            } else if constexpr (std::is_same_v<typename RT::T, fp4e2m1>) {
+                                // Handle packed fp4e2m1_4 types (4 fp4 values packed together)
+                                uint8_t *vals = reinterpret_cast<uint8_t*>(const_cast<fp4e2m1_4*>(&packed_val));
+                                printf("[%.3f,%.3f,%.3f,%.3f] ", (float)fp4e2m1(vals[0] & 0xF), (float)fp4e2m1((vals[0] >> 4) & 0xF), (float)fp4e2m1(vals[1] & 0xF), (float)fp4e2m1((vals[1] >> 4) & 0xF));
+#endif
+                            } else {
+                                // Other packed types - print the raw packed value
+                                printf("0x%x ", *(uint32_t*)&packed_val);
+                            }
+                        }
+                    }
+                    if (RT::packed_per_tile > 4) printf("... ");
+                }
+            }
+            printf("\n");
+        }
+        __syncwarp(); // Ensure threads print in order
+    }
+    
+    if (laneid() == 0) {
+        printf("\n");
+    }
+    __syncwarp();
+}
+
 } // namespace kittens

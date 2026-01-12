@@ -395,7 +395,7 @@ struct barrier_config {
 
 __device__ inline void barrier_kernel(const globals &G) {
     // Ensure all devices exit together
-    device<globals::NUM_DEVICES>::barrier(G.barrier, {1, 0, 0}, G.dev_idx);
+    barrier_all(G.barrier, {1, 0, 0}, G.dev_idx);
 }
 
 void entrypoint(

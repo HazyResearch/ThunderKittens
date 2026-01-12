@@ -63,12 +63,12 @@ struct config {
 
 struct globals {
     static constexpr int NUM_DEVICES = 8;
-    device<NUM_DEVICES>::barrier_t barrier;
+    barrier_t<NUM_DEVICES> barrier;
     const int dev_idx;
 };
 
 __device__ inline void kernel(const globals &G) {
-    device<globals::NUM_DEVICES>::barrier(G.barrier, {0}, G.dev_idx);
+    barrier_all(G.barrier, {0}, G.dev_idx);
 }
 
 } // namespace all_gather_barrier
@@ -87,7 +87,7 @@ void entrypoint(
     };
 
     all_gather_barrier::globals barrier_G {
-        .barrier = kittens::py::parallel_tensor_to_pgl<device<all_gather_barrier::globals::NUM_DEVICES>::barrier_t>(barrier),
+        .barrier = kittens::py::parallel_tensor_to_pgl<barrier_t<all_gather_barrier::globals::NUM_DEVICES>>(barrier),
         .dev_idx = barrier.local_rank_
     };
 

@@ -6,6 +6,10 @@
 #include "kittens.cuh"
 #include "parallel_tensor.cuh"
 
+#define CHECK_CUDA(x) TORCH_CHECK(x.device().is_cuda(), #x " must be a CUDA tensor")
+#define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
+#define CHECK_INPUT(x) CHECK_CUDA(x); CHECK_CONTIGUOUS(x)
+
 namespace kittens {
 namespace py {
 
@@ -35,13 +39,15 @@ void global_kernel_clustered(const __grid_constant__ Globals G) {
     Kernel(G);
 }
 
-template <typename Layout>
+template <typename Layout, bool TypeCheck = true>
 static inline void tensor_check(const at::Tensor &t) {
     TORCH_CHECK(t.is_cuda(), "Tensor must be on CUDA device")
     TORCH_CHECK(t.is_contiguous(), "Tensor must be contiguous")
     TORCH_CHECK(t.dim() <= 4, "Expected Tensor.dim() <= 4");
 
-    if constexpr (std::is_same_v<typename Layout::dtype, char>) {
+    if constexpr (!TypeCheck) {
+        return;
+    } else if constexpr (std::is_same_v<typename Layout::dtype, char>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Char, "Tensor has invalid dtype (expected int8)");
     } else if constexpr (std::is_same_v<typename Layout::dtype, short>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Short, "Tensor has invalid dtype (expected int16)");
@@ -49,14 +55,16 @@ static inline void tensor_check(const at::Tensor &t) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Int, "Tensor has invalid dtype (expected int32)");
     } else if constexpr (std::is_same_v<typename Layout::dtype, long>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Long, "Tensor has invalid dtype (expected int64)");
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     } else if constexpr (std::is_same_v<typename Layout::dtype, ::kittens::fp8e4m3>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Float8_e4m3fn, "Tensor has invalid dtype (expected fp8e4m3)");
     } else if constexpr (std::is_same_v<typename Layout::dtype, ::kittens::fp8e5m2>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Float8_e5m2, "Tensor has invalid dtype (expected fp8e5m2)");
+#endif
 #ifdef KITTENS_BLACKWELL
     } else if constexpr (std::is_same_v<typename Layout::dtype, ::kittens::fp8e8m0>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Float8_e8m0fnu || t.dtype() == at::ScalarType::Byte, "Tensor has invalid dtype (expected fp8e8m0)");
-    } else if constexpr (std::is_same_v<typename Layout::dtype, ::kittens::fp4_2>) {
+    } else if constexpr (std::is_same_v<typename Layout::dtype, ::kittens::fp4e2m1_2>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Float4_e2m1fn_x2, "Tensor has invalid dtype (expected fp4_2)");
 #endif
     } else if constexpr (std::is_same_v<typename Layout::dtype, ::kittens::bf16>) {
@@ -72,9 +80,9 @@ static inline void tensor_check(const at::Tensor &t) {
     }
 }
 
-template <kittens::ducks::pgl::all PGL>
+template <kittens::ducks::pgl::all PGL, bool TypeCheck = true>
 static inline void parallel_tensor_check(const TKParallelTensor& t) {
-    tensor_check<PGL>(t.data_);
+    tensor_check<PGL, TypeCheck>(t.data_);
     TORCH_CHECK(t.data_.sizes().vec() == t.shape_, "Shape mismatch between TKParallelTensor and the underlying tensor");
     TORCH_CHECK(t.data_.dtype() == t.dtype_, "Dtype mismatch between TKParallelTensor and the underlying tensor");
     TORCH_CHECK(t.raw_ptrs_.size() == PGL::num_devices, "Number of devices mismatch between PGL and TKParallelTensor");
@@ -84,9 +92,9 @@ static inline void parallel_tensor_check(const TKParallelTensor& t) {
     TORCH_CHECK(t.raw_ptrs_[t.local_rank_] == reinterpret_cast<void *>(t.data_.data_ptr()), "Current tensor data pointer not found in TKParallelTensor's raw_ptrs_");
 }
 
-template <kittens::ducks::gl::all GL>
+template <kittens::ducks::gl::all GL, bool TypeCheck = true>
 static inline GL tensor_to_gl(const at::Tensor &t) {
-    tensor_check<GL>(t);
+    tensor_check<GL, TypeCheck>(t);
 
     std::array<int, 4> shape = {1, 1, 1, 1};
     for (int i = 0; i < static_cast<int>(t.dim()); ++i)
@@ -97,9 +105,16 @@ static inline GL tensor_to_gl(const at::Tensor &t) {
     return ::kittens::make_gl<GL>(data_ptr, shape[0], shape[1], shape[2], shape[3]);
 }
 
-template <kittens::ducks::pgl::all PGL>
+template <kittens::ducks::gl::all GL, bool TypeCheck = true>
+static inline GL tensor_to_gl(const at::Tensor &t, int B, int D, int R, int C) {
+    tensor_check<GL, TypeCheck>(t);
+
+    return ::kittens::make_gl<GL>(reinterpret_cast<uint64_t>(t.data_ptr()), B, D, R, C);
+}
+
+template <kittens::ducks::pgl::all PGL, bool TypeCheck = true>
 static inline PGL parallel_tensor_to_pgl(TKParallelTensor &t) {
-    parallel_tensor_check<PGL>(t);
+    parallel_tensor_check<PGL, TypeCheck>(t);
 
     std::array<int, 4> shape = {1, 1, 1, 1};
     for (int i = 0; i < static_cast<int>(t.data_.dim()); ++i) {
@@ -112,6 +127,18 @@ static inline PGL parallel_tensor_to_pgl(TKParallelTensor &t) {
     else
         return ::kittens::make_pgl<PGL>(
             reinterpret_cast<uint64_t *>(t.raw_ptrs_.data()), shape[0], shape[1], shape[2], shape[3]);
+}
+
+template <kittens::ducks::pgl::all PGL, bool TypeCheck = true>
+static inline PGL parallel_tensor_to_pgl(TKParallelTensor &t, int B, int D, int R, int C) {
+    parallel_tensor_check<PGL, TypeCheck>(t);
+
+    if constexpr (PGL::multicast)
+        return ::kittens::make_pgl<PGL>(
+            reinterpret_cast<uint64_t>(t.multicast_ptr_), reinterpret_cast<uint64_t *>(t.raw_ptrs_.data()), B, D, R, C);
+    else
+        return ::kittens::make_pgl<PGL>(
+            reinterpret_cast<uint64_t *>(t.raw_ptrs_.data()), B, D, R, C);
 }
 
 template <kittens::ducks::gl::all GL>
@@ -173,6 +200,13 @@ static inline void launch_kernel(const Globals &G) {
         CUDACHECK(cudaFuncSetAttribute(global_kernel_unclustered<Config, Globals, Kernel>, cudaFuncAttributeMaxDynamicSharedMemorySize, dynamic_shared_memory));
         global_kernel_unclustered<Config, Globals, Kernel><<<grid, block, dynamic_shared_memory, stream>>>(G);
     } else {
+#if defined(KITTENS_HOPPER)
+        static_assert(Config::CLUSTER_SIZE <= 8, "Cluster size must be less than or equal to 8 for Hopper");
+#elif defined(KITTENS_BLACKWELL)
+        static_assert(Config::CLUSTER_SIZE <= 16, "Cluster size must be less than or equal to 16 for Blackwell");
+        if constexpr (Config::CLUSTER_SIZE > 8)
+            CUDACHECK(cudaFuncSetAttribute(global_kernel_clustered<Config, Globals, Kernel>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
+#endif
         CUDACHECK(cudaFuncSetAttribute(global_kernel_clustered<Config, Globals, Kernel>, cudaFuncAttributeMaxDynamicSharedMemorySize, dynamic_shared_memory));
         global_kernel_clustered<Config, Globals, Kernel><<<grid, block, dynamic_shared_memory, stream>>>(G);
     }

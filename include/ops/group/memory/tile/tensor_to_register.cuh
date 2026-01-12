@@ -14,8 +14,8 @@
 template<ducks::rt::row_layout RT, ducks::tt::all TM>
 __device__ inline static void load_async(RT &dst, const TM &src) {
     if constexpr (GROUP_WARPS == 1) {
-        static_assert(RT::height == TM::height, "register tile and tensor tile must match height");
-        static_assert(RT::width == TM::width, "register tile and tensor tile must match width");
+        static_assert(RT::rows == TM::rows, "register tile and tensor tile must match rows");
+        static_assert(RT::cols == TM::cols, "register tile and tensor tile must match cols");
 
         using T2 = RT::dtype;
         using U  = typename TM::dtype;
@@ -27,7 +27,7 @@ __device__ inline static void load_async(RT &dst, const TM &src) {
                 #pragma unroll
                 for(int j = 0; j < dst.width; j++) {
                     asm volatile(
-                        "tcgen05.ld.sync.aligned.16x128b.x2.pack::16b.b32 {%0, %1, %2, %3}, [%4];\n"
+                        "tcgen05.ld.sync.aligned.16x128b.x2.b32 {%0, %1, %2, %3}, [%4];\n"   // pack::16b doesn't make sense for fp8
                         : "=r"(*(uint32_t*) &dst.tiles[i][j].data[0]),
                             "=r"(*(uint32_t*) &dst.tiles[i][j].data[1]),
                             "=r"(*(uint32_t*) &dst.tiles[i][j].data[2]),
@@ -160,8 +160,8 @@ __device__ inline static void load_async(RT &dst, const TM &src) {
 template<ducks::rt::all RT, ducks::tt::all TM>
 __device__ inline static void store_async(TM &dst, const RT &src) {
     if constexpr (GROUP_WARPS == 1) {
-        static_assert(RT::height == TM::height, "register tile and tensor tile must match height");
-        static_assert(RT::width == TM::width, "register tile and tensor tile must match width");
+        static_assert(RT::rows == TM::rows, "register tile and tensor tile must match rows");
+        static_assert(RT::cols == TM::cols, "register tile and tensor tile must match cols");
 
         using T2 = RT::dtype;
         using T = base_types::packing<T2>::unpacked_type;

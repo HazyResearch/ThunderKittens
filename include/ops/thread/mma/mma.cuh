@@ -5,4 +5,6 @@
 
 #pragma once
 
-#include "tensor/tensor.cuh"
+#if defined(KITTENS_BLACKWELL)
+#include "tcgen05.cuh"
+#endif
