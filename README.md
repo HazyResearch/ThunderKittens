@@ -397,7 +397,7 @@ Explore the Kittens Cinematic Universe:
 Please check out our papers for even more details!
 
 * [Single GPU](https://arxiv.org/abs/2410.20399)
-* [Multiple GPUs](TODO)
+* [Multiple GPUs](https://arxiv.org/abs/2511.13940)
 
 Finally, join us on Discord to get involved: [ThunderKittens channel @ GPU Mode Discord](https://discord.com/channels/1189498204333543425/1300872762163728550)!!!! Here is the invite link to GPU mode: https://discord.gg/gpumode
 
