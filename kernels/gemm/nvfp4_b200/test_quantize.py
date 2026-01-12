@@ -18,13 +18,15 @@ def torch_nvfp4_quantize(
     V = V.to(torch.float32)
 
     # Following the NVIDIA recipe: https://arxiv.org/pdf/2509.25149 (Appendix)
-    s_global_enc = 6. * 448. / torch.amax(torch.abs(V), dim=None)
+    s_global_enc = 6. * 448. / torch.amax(torch.abs(V), dim=None).clamp(min=1e-12)
     s_global_dec = 1. / s_global_enc
-    s_local_enc = 6. / (s_global_enc * torch.amax(torch.abs(V).view(V.shape[0], V.shape[1] // 16, 16), dim=-1))
-    s_local_dec = (1. / s_local_enc).to(torch.float8_e4m3fn) # must use round-to-even mode
+    s_local_dec = torch.amax(torch.abs(V).view(V.shape[0], V.shape[1] // 16, 16), dim=-1) / 6.
+    s_local_dec_e4m3 = (s_local_dec * s_global_enc).to(torch.float8_e4m3fn) # round-to-even
+    s_local_dec = s_local_dec_e4m3.to(torch.float32) # choked
+    s_enc = 1. / (s_local_dec * s_global_dec).clamp(min=1e-12)
 
-    V_fp4x2 = fp32_to_fp4x2(V * s_global_enc * s_local_enc.repeat_interleave(16, dim=-1)) # round-to-even or stochastic (refer to the recipe)
-    V_sc_unswizzled = s_local_dec # alias for prettiness
+    V_fp4x2 = fp32_to_fp4x2(V * s_enc.repeat_interleave(16, dim=-1)) # round-to-even or stochastic (refer to the recipe)
+    V_sc_unswizzled = s_local_dec_e4m3 # alias for prettiness
     V_sc_global = s_global_dec.unsqueeze(0)
 
     return (
