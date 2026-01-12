@@ -381,7 +381,7 @@ __global__ void absmax_kernel(const globals g) {
 }
 
 __global__ void divide_kernel(const globals g) {
-    g.A_sc_global.raw_ptr[0] = g.A_sc_global.raw_ptr[0] / (6.0f * 448.0f);
+    g.A_sc_global.raw_ptr[0] /= 6.0f * 448.0f;
 }
 
 __device__ inline void quantize_kernel(const globals &G) {
@@ -408,7 +408,7 @@ __device__ inline void quantize_kernel(const globals &G) {
 
     // Fetch pre-calculated global scales
     float s_global_dec = G.A_sc_global[{0}];
-    float s_global_enc = 1.0f / s_global_dec;
+    float s_global_enc = 1.0f / fmaxf(s_global_dec, 0.000000000001f);
 
     // We have 64 threads per block. Each thread handles 2 rows of 64 elements / 16 elements per block = 8 K blocks
     constexpr int ROWS_PER_THREAD = 2;
@@ -453,9 +453,10 @@ __device__ inline void quantize_kernel(const globals &G) {
                 amax = __hmax2(amax, __habs2(A_bf16_reg[r][i][j]));
 
             // Compute the local scale
-            float s_local_enc = 6.0f / (s_global_enc * __bfloat162float(__hmax(amax.x, amax.y)));
-            float s_local_dec = 1.0f / s_local_enc;
+            float s_local_dec = __bfloat162float(__hmax(amax.x, amax.y)) / 6.0f * s_global_enc;
             A_sc_reg[r][k_block_idx] = __nv_fp8_e4m3(s_local_dec); // round-to-even
+            s_local_dec = static_cast<float>(A_sc_reg[r][k_block_idx]);// choked
+            float s_enc = 1.0 / fmaxf(s_local_dec*s_global_dec, 0.000000000001f);
 
             // Quantize input matrix to FP4 and store to shared memory
             const int offset_base = tile_row*globals::TILE_N/2 + k_block_idx*globals::K_BLOCK_SIZE/2;
@@ -463,8 +464,8 @@ __device__ inline void quantize_kernel(const globals &G) {
             for (int j = 0; j < N_PER_K_BLOCK; j++) {
                 const int offset = offset_base + ((tid+j)&7);
                 const float2 scaled = {
-                    __bfloat162float(A_bf16_reg[r][i][j].x)*s_global_enc*s_local_enc,
-                    __bfloat162float(A_bf16_reg[r][i][j].y)*s_global_enc*s_local_enc
+                    __bfloat162float(A_bf16_reg[r][i][j].x)*s_enc,
+                    __bfloat162float(A_bf16_reg[r][i][j].y)*s_enc
                 };
                 asm volatile("{st.shared.b8 [%0], %1;}"
                     :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&A_fp4x2_smem)) + offset)
