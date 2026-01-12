@@ -383,6 +383,8 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     using G = mxfp8_gemm::globals<C>;
 
     std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
+    std::cout << "Template: Mb=" << C::Mb << " Nb=" << C::Nb << " Kb=" << C::Kb << " SUPERGROUP_SIZE=" << C::SUPERGROUP_SIZE
+              << " LOAD_PIPE_DEPTH=" << C::LOAD_PIPE_DEPTH << " EPI_PIPE_DEPTH=" << C::EPI_PIPE_DEPTH << " NUM_D_TILES=" << C::NUM_D_TILES << "\n";
 
     // Cooldown between configurations
     sleep_ms(500);
