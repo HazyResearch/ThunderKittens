@@ -21,7 +21,7 @@ ThunderKittens is built for NVIDIA GPUs. For AMD GPUs, check out [HipKittens](ht
 
 ## Recent Updates
 
-**Jan 10, 2026:** **ThunderKittens 2.0** is out!
+**Jan 11, 2026:** **ThunderKittens 2.0** is out!
 
 * This release brings full support for Blackwell GPUs along with MXFP8 and NVFP4 precision, and merges major contributions from across the industry.
 * The repository structure has changed. We no longer support the repo as a Python package (i.e., a top-level `setup.py`). Kernels under the `/kernels` directory must now be compiled individually. Makefiles, tests, and benchmarks reside alongside their corresponding kernel source files.
