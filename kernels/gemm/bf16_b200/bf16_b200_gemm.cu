@@ -5,7 +5,7 @@ using namespace kittens;
 
 template <int _Mb, int _Nb, int _Kb, int _SUPERGROUP_SIZE, bool _OVERLAP_MMA_EPI, int _LOAD_PIPE_DEPTH, int _EPI_PIPE_DEPTH>
 struct config {
-    static_assert(_Mb == 128 || _Mb == 256, "Mb must be 128 or 256");
+    static_assert(_Mb == 256, "Mb must be 128 or 256");
     static_assert(_Nb >= 16 && _Nb <= 256 && _Nb % 16 == 0, "Nb must be 16, 32, ..., 256");
     static_assert(_Kb >= 16 && _Kb % 16 == 0, "Kb must be a multiple of 16");
     static_assert(_SUPERGROUP_SIZE >= 1 && _SUPERGROUP_SIZE <= 16, "SUPERGROUP_SIZE must be 1-16");
@@ -360,7 +360,7 @@ __host__ int main() {
 
     // Template parameters: _Mb, _Nb, _Kb, _SUPERGROUP_SIZE, _OVERLAP_MMA_EPI, _LOAD_PIPE_DEPTH, _EPI_PIPE_DEPTH
     N = 1024;
-    run_benchmark<config<128, 128, 128, 4, true, 6, 2>>(N, N, N, ncu);
+    run_benchmark<config<256, 64, 128, 4, true, 5, 2>>(N, N, N, ncu);
     N = 2048;
     run_benchmark<config<256, 256, 64, 4, true, 5, 8>>(N, N, N, ncu);
     N = 4096;
