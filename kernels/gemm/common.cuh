@@ -8,7 +8,6 @@
 #include <chrono>
 #include <cuda_runtime.h>
 #include <cuda_fp8.h>
-#include <cuda_fp4.h>
 
 #include "kittens.cuh"
 
@@ -166,6 +165,10 @@ static inline void reference_blockscaled_gemm(
 // A: RowMajor (M x K) packed as Mx(K/2), B: ColMajor (N x K) packed as Nx(K/2), D: RowMajor (M x N)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
+#ifdef KITTENS_BLACKWELL
+
+#include <cuda_fp4.h>
+
 template <typename OutputT>
 __global__ void reference_nvfp4_gemm_kernel(
     OutputT* D,
@@ -226,6 +229,8 @@ static inline void reference_nvfp4_gemm(
   reference_nvfp4_gemm_kernel<OutputT>
       <<<grid, block>>>(D, A, B, A_scale, B_scale, A_scale_global, B_scale_global, M, N, K);
 }
+
+#endif
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Correctness Check
