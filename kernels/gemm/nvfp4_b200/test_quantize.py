@@ -12,7 +12,7 @@ def torch_nvfp4_quantize(
     # Function is naive for clarity, should not be like this in production
     assert len(V.shape) == 2
     assert V.shape[0] % 128 == 0
-    assert V.shape[1] % 64 == 0
+    assert V.shape[1] % 128 == 0
 
     # For Torch reference, we convert from float32
     V = V.to(torch.float32)

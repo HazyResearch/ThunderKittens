@@ -291,7 +291,7 @@ struct quantize_config {
 
 struct globals {
     static constexpr int TILE_M = 128;   // This should not change
-    static constexpr int TILE_N = 64;   // This should not change
+    static constexpr int TILE_N = 128;   // This should not change
     static constexpr int K_BLOCK_SIZE = 16; // This should not change
 
     using A_bf16_tile  = st_bf<TILE_M, TILE_N, false>;
@@ -390,7 +390,7 @@ __device__ inline void quantize_kernel(const globals &G) {
     tma_swizzle_allocator sm_allocator((int*)&__shm[0]);
     globals::A_bf16_tile &A_bf16_smem = sm_allocator.allocate<globals::A_bf16_tile>();
     globals::A_fp4x2_tile &A_fp4x2_smem = *reinterpret_cast<globals::A_fp4x2_tile *>(&A_bf16_smem);
-    globals::A_sc_vec &A_sc_smem = *reinterpret_cast<globals::A_sc_vec *>(
+    globals::A_sc_vec (&A_sc_smem)[2] = *reinterpret_cast<globals::A_sc_vec(*)[2]>(
         reinterpret_cast<uint64_t>(&A_fp4x2_smem) + sizeof(A_fp4x2_smem));
 
     // Calculate indices
@@ -410,9 +410,9 @@ __device__ inline void quantize_kernel(const globals &G) {
     float s_global_dec = G.A_sc_global[{0}];
     float s_global_enc = 1.0f / fmaxf(s_global_dec, 0.000000000001f);
 
-    // We have 64 threads per block. Each thread handles 2 rows of 64 elements / 16 elements per block = 8 K blocks
+    // We have 64 threads per block. Each thread handles 2 rows of 128 elements / 16 elements per block = 8 K blocks
     constexpr int ROWS_PER_THREAD = 2;
-    constexpr int NUM_K_BLOCKS = globals::TILE_N / globals::K_BLOCK_SIZE; // 4 (per row)
+    constexpr int NUM_K_BLOCKS = globals::TILE_N / globals::K_BLOCK_SIZE; // 8 (per row)
     constexpr int N_PER_K_BLOCK = globals::K_BLOCK_SIZE / 2;              // 8 (bf16x2 per K block)
     bf16_2 A_bf16_reg[ROWS_PER_THREAD][NUM_K_BLOCKS][N_PER_K_BLOCK];
     fp8e4m3 A_sc_reg[ROWS_PER_THREAD][NUM_K_BLOCKS];
@@ -475,18 +475,20 @@ __device__ inline void quantize_kernel(const globals &G) {
 
         // Store the scales to shared memory following NVIDIA's scale swizzle layout
         const int scale_offset = (tile_row%32) * 16 + (tile_row/32) * 4;
-
-        // Store 4 scales (one per K block)
         asm volatile("{st.shared.b32 [%0], %1;}"
-            :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&A_sc_smem)) + scale_offset)
+            :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&A_sc_smem[0])) + scale_offset)
                "r"(*reinterpret_cast<uint32_t *>(&A_sc_reg[r][0])));
+        asm volatile("{st.shared.b32 [%0], %1;}"
+            :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&A_sc_smem[1])) + scale_offset)
+               "r"(*reinterpret_cast<uint32_t *>(&A_sc_reg[r][4])));
     }
 
     // Store to global memory
     __syncthreads();
     if (tid == 0) {
         tma::store_async(G.A_fp4x2, A_fp4x2_smem, {row, col});
-        tma::store_async(G.A_sc,    A_sc_smem,    {row, col, 0});
+        tma::store_async(G.A_sc, A_sc_smem[0], {row, col*2+0, 0});
+        tma::store_async(G.A_sc, A_sc_smem[1], {row, col*2+1, 0});
     }
 }
 
