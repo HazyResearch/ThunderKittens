@@ -49,8 +49,8 @@ if __name__ == '__main__':
         B_fp4x2 = torch.empty(N, K // 2, dtype=torch.float4_e2m1fn_x2, device="cuda")
         B_sc = torch.empty(N // 128, K // 64, 512, dtype=torch.float8_e4m3fn, device="cuda")
         B_sc_global = torch.empty(1, dtype=torch.float32, device="cuda")
-        nvfp4_quantize(A, A_fp4x2, A_sc, A_sc_global)
-        nvfp4_quantize(B, B_fp4x2, B_sc, B_sc_global)
+        nvfp4_quantize(A, A_fp4x2, A_sc, A_sc_global, False)
+        nvfp4_quantize(B, B_fp4x2, B_sc, B_sc_global, False)
 
         groups.append((A_fp4x2, A_sc, A_sc_global, B_fp4x2, B_sc, B_sc_global, C))
 

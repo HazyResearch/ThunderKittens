@@ -7,20 +7,27 @@ from _C import nvfp4_quantize, fp32_to_fp4x2, fp4x2_to_fp32  # type: ignore
 
 
 def torch_nvfp4_quantize(
-    V: torch.Tensor # (M, N)
+    V: torch.Tensor, # (M, N)
+    scale_2d: bool = False
 ) -> tuple[torch.Tensor, torch.Tensor]:
     # Function is naive for clarity, should not be like this in production
+    # Following the NVIDIA recipe: https://arxiv.org/pdf/2509.25149 (Appendix)
     assert len(V.shape) == 2
     assert V.shape[0] % 128 == 0
     assert V.shape[1] % 128 == 0
 
-    # For Torch reference, we convert from float32
+    M, N = V.shape
     V = V.to(torch.float32)
 
-    # Following the NVIDIA recipe: https://arxiv.org/pdf/2509.25149 (Appendix)
     s_global_enc = 6. * 448. / torch.amax(torch.abs(V), dim=None).clamp(min=1e-12)
     s_global_dec = 1. / s_global_enc
-    s_local_dec = torch.amax(torch.abs(V).view(V.shape[0], V.shape[1] // 16, 16), dim=-1) / 6.
+
+    # Compute local amax: 1D uses 1x16 blocks, 2D uses 16x16 blocks (then replicates)
+    if scale_2d:
+        s_local_dec = torch.amax(torch.abs(V).view(M // 16, 16, N // 16, 16), dim=(1, 3)) / 6.
+        s_local_dec = s_local_dec.repeat_interleave(16, dim=0)
+    else:
+        s_local_dec = torch.amax(torch.abs(V).view(M, N // 16, 16), dim=-1) / 6.
     s_local_dec_e4m3 = (s_local_dec * s_global_enc).to(torch.float8_e4m3fn) # round-to-even
     s_local_dec = s_local_dec_e4m3.to(torch.float32) # choked
     s_enc = 1. / (s_local_dec * s_global_dec).clamp(min=1e-12)
@@ -112,18 +119,19 @@ if __name__ == '__main__':
     # Matrix dimensions
     M = int(sys.argv[1]) if len(sys.argv) > 1 else 204800
     N = int(sys.argv[2]) if len(sys.argv) > 2 else 2048
+    SCALE_2D = bool(int(sys.argv[3])) if len(sys.argv) > 3 else False
 
     # Group size
     l2_size = 128 * 1024 * 1024
     size_per_group = M * N * 2
     num_groups = (l2_size // size_per_group + 1) * 100
-    print(f"{M=}, {N=}, {num_groups=}")
+    print(f"{M=}, {N=}, {SCALE_2D=}, {num_groups=}")
 
     # Generate reference outputs and input matrix
     groups = []
     for i in range(num_groups):
         A_bf16 = torch.randn(M, N, dtype=torch.bfloat16, device="cuda")
-        A_fp4x2_ref, A_sc_unswizzled_ref, A_sc_global_ref = torch_nvfp4_quantize(A_bf16)
+        A_fp4x2_ref, A_sc_unswizzled_ref, A_sc_global_ref = torch_nvfp4_quantize(A_bf16, SCALE_2D)
         A_sc_ref = scale_swizzle(A_sc_unswizzled_ref)
         A_fp4x2 = torch.empty_like(A_fp4x2_ref)
         A_sc = torch.empty_like(A_sc_ref)
@@ -135,7 +143,7 @@ if __name__ == '__main__':
     check_diff("Quantization error", A_bf16_dequantized, A_bf16)
 
     # Run our version and check correctness
-    nvfp4_quantize(A_bf16, A_fp4x2, A_sc, A_sc_global)
+    nvfp4_quantize(A_bf16, A_fp4x2, A_sc, A_sc_global, SCALE_2D)
     torch.cuda.synchronize()
     check_diff("TK-FP4", A_fp4x2, A_fp4x2_ref)
     check_diff("TK-SC", A_sc, A_sc_ref)
@@ -149,12 +157,12 @@ if __name__ == '__main__':
     end_event = torch.cuda.Event(enable_timing=True)
 
     for i in range(NUM_WARMUPS):
-        nvfp4_quantize(*groups[i % num_groups])
+        nvfp4_quantize(*groups[i % num_groups], SCALE_2D)
     torch.cuda.synchronize()
 
     start_event.record()
     for i in range(NUM_ITERS):
-        nvfp4_quantize(*groups[i % num_groups])
+        nvfp4_quantize(*groups[i % num_groups], SCALE_2D)
     end_event.record()
     torch.cuda.synchronize()
 

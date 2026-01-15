@@ -384,6 +384,7 @@ __global__ void divide_kernel(const globals g) {
     g.A_sc_global.raw_ptr[0] /= 6.0f * 448.0f;
 }
 
+template<bool SCALE_2D = false>
 __device__ inline void quantize_kernel(const globals &G) {
     // Allocate shared memory
     extern __shared__ int __shm[];
@@ -447,23 +448,39 @@ __device__ inline void quantize_kernel(const globals &G) {
         const int tile_row = tid + r*64;
         #pragma unroll
         for (int col_half = 0; col_half < 2; col_half++) {
+            // Calculate absolute maximum for each K block
+            float amax[NUM_K_BLOCKS_HALF];
             #pragma unroll
             for (int i = 0; i < NUM_K_BLOCKS_HALF; i++) {
                 const int k_block_idx = (i + tid/8) % NUM_K_BLOCKS_HALF;
-
-                // Calculate absolute maximum for this K block
-                bf16_2 amax = __habs2(A_bf16_reg[r][col_half][i][0]);
+                bf16_2 _amax = __habs2(A_bf16_reg[r][col_half][i][0]);
                 #pragma unroll
                 for (int j = 1; j < N_PER_K_BLOCK; j++)
-                    amax = __hmax2(amax, __habs2(A_bf16_reg[r][col_half][i][j]));
+                    _amax = __hmax2(_amax, __habs2(A_bf16_reg[r][col_half][i][j]));
+                amax[k_block_idx] = __bfloat162float(__hmax(_amax.x, _amax.y));
+            }
 
-                // Compute the local scale
-                float s_local_dec = __bfloat162float(__hmax(amax.x, amax.y)) / 6.0f * s_global_enc;
-                A_sc_reg[r][col_half][k_block_idx] = __nv_fp8_e4m3(s_local_dec); // round-to-even
-                s_local_dec = static_cast<float>(A_sc_reg[r][col_half][k_block_idx]); // choked
-                float s_enc = 1.0 / fmaxf(s_local_dec*s_global_dec, 0.000000000001f);
+            // For 2D scaling, reduce amax across 16 rows
+            if constexpr (SCALE_2D) {
+                #pragma unroll
+                for (int mask = 8; mask >= 1; mask >>= 1) {
+                    #pragma unroll
+                    for (int i = 0; i < NUM_K_BLOCKS_HALF; i++)
+                        amax[i] = fmaxf(amax[i], __shfl_xor_sync(0xffffffff, amax[i], mask));
+                }
+            }
 
-                // Quantize input matrix to FP4 and store to shared memory
+            // Compute the local scales
+            #pragma unroll
+            for (int i = 0; i < NUM_K_BLOCKS_HALF; i++)
+                A_sc_reg[r][col_half][i] = __nv_fp8_e4m3(amax[i] / 6.0f * s_global_enc); // round-to-even
+
+            // Quantize input matrix to FP4 and store to shared memory
+            #pragma unroll
+            for (int i = 0; i < NUM_K_BLOCKS_HALF; i++) {
+                const int k_block_idx = (i + tid/8) % NUM_K_BLOCKS_HALF;
+                const float s_local_dec = static_cast<float>(A_sc_reg[r][col_half][k_block_idx]); // choked
+                const float s_enc = 1.0f / fmaxf(s_local_dec*s_global_dec, 0.000000000001f);
                 const int offset_base = tile_row*globals::TILE_N/2 + (k_block_idx + col_half*NUM_K_BLOCKS_HALF)*globals::K_BLOCK_SIZE/2;
                 #pragma unroll
                 for (int j = 0; j < N_PER_K_BLOCK; j++) {
@@ -724,7 +741,8 @@ void nvfp4_quantize_entrypoint(
     const at::Tensor &A_bf16,
     at::Tensor &A_fp4x2,
     at::Tensor &A_sc,
-    at::Tensor &A_sc_global
+    at::Tensor &A_sc_global,
+    bool scale_2d
 ) {
     using C = nvfp4_quantize::quantize_config;
     using G = nvfp4_quantize::globals;
@@ -739,7 +757,8 @@ void nvfp4_quantize_entrypoint(
     nvfp4_quantize::zero_kernel<<<1, 1>>>(g);
     nvfp4_quantize::absmax_kernel<<<nvfp4_quantize::absmax_config::NUM_BLOCKS, nvfp4_quantize::absmax_config::NUM_THREADS>>>(g);
     nvfp4_quantize::divide_kernel<<<1, 1>>>(g);
-    kittens::py::launch_kernel<C, G, nvfp4_quantize::quantize_kernel>(g);
+    if (scale_2d) kittens::py::launch_kernel<C, G, nvfp4_quantize::quantize_kernel<true>>(g);
+    else          kittens::py::launch_kernel<C, G, nvfp4_quantize::quantize_kernel<false>>(g);
 }
 
 at::Tensor fp32_to_fp4x2_entrypoint(at::Tensor A_fp32) {
