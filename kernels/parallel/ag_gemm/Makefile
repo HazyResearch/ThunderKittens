@@ -2,7 +2,7 @@
 # export GPU=H100 | B200
 
 ifeq ($(GPU),B200)
-$(error B200 is unsupported.)
+SRC := ag_gemm_b200.cu
 else ifeq ($(GPU),H100)
 SRC := ag_gemm_h100.cu
 else

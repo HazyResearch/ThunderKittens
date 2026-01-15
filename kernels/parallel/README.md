@@ -10,7 +10,7 @@ First export the `GPU` environment variable.
 export GPU=H100 # or B200
 ```
 
-Note that B200 is supported if the directory includes a `*_b100.cu` file or a file with no GPU-specific suffix. That is, if only a `*_h100.cu` file is present, B200 is not supported.
+Note that B200 is supported if the directory includes a `*_b100.cu` file or a file with no GPU-specific suffix. Likewise, H100 is supported if the directory includes a `*_h100.cu` file or a file with no GPU-specific suffix
 
 ```bash
 cd <directory> # navigate to the desired operator directory

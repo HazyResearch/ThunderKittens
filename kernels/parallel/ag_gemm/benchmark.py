@@ -1,6 +1,9 @@
 import sys, os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+gpu = os.environ.get("GPU", "")
+assert gpu == "B200" or gpu == "H100", "GPU must be set to B200 or H100"
+
 import torch
 
 from common import (
@@ -23,7 +26,7 @@ def nccl_all_gather_matmul_func(
     C: torch.Tensor
 ) -> None:
     torch.distributed.all_gather_into_tensor(A, A_local)
-    torch.matmul(A, B, out=C)
+    torch.matmul(A, B if gpu == "H100" else B.T, out=C)
 
 
 def tk_all_gather_matmul_func(
@@ -59,7 +62,10 @@ def run(
     # Note: this is ONLY for convenience; separating A and A_local does NOT affect performance
     A_tk.data_[local_rank * (M // local_world_size):(local_rank + 1) * (M // local_world_size)] = A_local
     A_nccl = torch.zeros(M, K, dtype=torch.bfloat16, device=f"cuda:{local_rank}")
-    B = torch.randn(K, N, dtype=torch.bfloat16, device=f"cuda:{local_rank}") / K ** 0.25
+    if gpu == "H100":
+        B = torch.randn(K, N, dtype=torch.bfloat16, device=f"cuda:{local_rank}") / K ** 0.25
+    elif gpu == "B200":
+        B = torch.randn(N, K, dtype=torch.bfloat16, device=f"cuda:{local_rank}") / K ** 0.25
     C_tk = torch.zeros(M, N, dtype=torch.bfloat16, device=f"cuda:{local_rank}")
     C_nccl = torch.zeros(M, N, dtype=torch.bfloat16, device=f"cuda:{local_rank}")
     barrier = TKParallelTensor(
@@ -109,7 +115,7 @@ if __name__ == "__main__":
     local_rank, local_world_size = init_distributed_environment()
 
     for N in [2048, 4096, 8192, 16384, 32768]:
-        for num_comm_sms in [1, 2, 4, 8, 16, 32, 64]:
+        for num_comm_sms in [2, 4, 8, 16, 32, 64]:
             run(N, N, N // local_world_size, num_comm_sms, local_rank, local_world_size, check_correctness=False, do_profile=False)
 
     destroy_distributed_environment()
