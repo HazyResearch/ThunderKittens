@@ -180,9 +180,8 @@ void matmul(const __grid_constant__ matmul_globals g) {
 }
 
 
-constexpr bool NCU = true;
+constexpr bool NCU = false;
 #include <iostream>
-#include <random>
 #include <cuda_bf16.h>
 
 
@@ -196,167 +195,110 @@ void inner_run(fp8e4m3 *d_A, fp8e4m3 *d_B, half *d_C, size_t M, size_t N, size_t
 }
 
 int run_benchmark(size_t M, size_t N, size_t K) {
-    cudaError_t cudaStatus;
-
     std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
-    std::cout << "Block size: " << Mb*2 << "x" << Nb<< "\n";
+    std::cout << "Block size: " << Mb*2 << "x" << Nb << "\n";
 
-    // Allocate host memory
-    float *h_A = new float[M * K];
-    float *h_B = new float[K * N];
-    float *h_C = new float[M * N];
+    // Cooldown between configurations
+    sleep_ms(500);
 
-    std::cout << "Allocated host memory" << std::endl;
-
-    // Initialize random number generator
-    std::random_device rd;
-    std::mt19937 gen(42);
-    std::uniform_real_distribution<> dis(-0.5, 0.5);
-
-    // Initialize matrices with random values
-    for (int i = 0; i < M * K; ++i) h_A[i] = dis(gen);
-    for (int i = 0; i < K * N; ++i) h_B[i] = dis(gen);
-
-    std::cout << "Initialized matrices" << std::endl;
+    // L2 cache eviction - multiple buffer groups
+    int l2_cache_size;
+    cudaDeviceGetAttribute(&l2_cache_size, cudaDevAttrL2CacheSize, 0);
+    const size_t arg_size = size_t(M) * K + size_t(N) * K + size_t(M) * N * 2;
+    const size_t ideal_arg_size = size_t(l2_cache_size) * 3;
+    const int arg_group_count = (arg_size > ideal_arg_size) ? 1 : int(ideal_arg_size / arg_size) + 1;
 
     // Allocate device memory
-    fp8e4m3 *d_A, *d_B;
-    half *d_C, *d_C_ref;
-    cudaMalloc(&d_A, M*K*sizeof(fp8e4m3));
-    cudaMalloc(&d_B, K*N*sizeof(fp8e4m3));
-    cudaMalloc(&d_C, M*N*sizeof(half));
+    std::vector<fp8e4m3*> d_A(arg_group_count);
+    std::vector<fp8e4m3*> d_B(arg_group_count);
+    std::vector<half*> d_C(arg_group_count);
+    half* d_C_ref;
+    for (int i = 0; i < arg_group_count; i++) {
+        cudaMalloc(&d_A[i], M*K*sizeof(fp8e4m3));
+        cudaMalloc(&d_B[i], N*K*sizeof(fp8e4m3));
+        cudaMalloc(&d_C[i], M*N*sizeof(half));
+    }
     cudaMalloc(&d_C_ref, M*N*sizeof(half));
 
-    // Check for CUDA errors
-    cudaStatus = cudaGetLastError();
-    if (cudaStatus != cudaSuccess) {
-        std::cerr << "CUDA error: " << cudaGetErrorString(cudaStatus) << std::endl;
-        // Optionally, you might want to exit the program or handle the error in some way
-        return -1;
+    // Initialize matrices with random values on device
+    uint64_t seed = 2024;
+    for (int i = 0; i < arg_group_count; i++) {
+        fill<fp8e4m3, FillMode::RANDOM>(d_A[i], M*K, seed + i*100, -1.0f, 1.0f);
+        fill<fp8e4m3, FillMode::RANDOM>(d_B[i], N*K, seed + i*100 + 1, -1.0f, 1.0f);
+        fill<half, FillMode::CONSTANT>(d_C[i], M*N, 0.0f);
     }
+    fill<half, FillMode::CONSTANT>(d_C_ref, M*N, 0.0f);
 
-    std::cout << "Allocated device memory" << std::endl;
-
-    // Convert to __nv_bfloat16 and copy to device
-    fp8e4m3 *h_A_fp8 = new fp8e4m3[M * K];
-    fp8e4m3 *h_B_fp8 = new fp8e4m3[K * N];
-    for (int i = 0; i < M * K; ++i) h_A_fp8[i] = fp8e4m3(h_A[i]);
-    for (int i = 0; i < K * N; ++i) h_B_fp8[i] = fp8e4m3(h_B[i]);
-    for (int i = 0; i < M * K; ++i) h_A[i] = float(h_A_fp8[i]);
-    for (int i = 0; i < K * N; ++i) h_B[i] = float(h_B_fp8[i]);
-
-    cudaMemcpy(d_A, h_A_fp8, M*K*sizeof(fp8e4m3), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_B, h_B_fp8, K*N*sizeof(fp8e4m3), cudaMemcpyHostToDevice);
-    std::cout << "Copied matrices to device" << std::endl;
-
-    // Compute reference GEMM on GPU (transpose_b=true for ABt layout)
-    reference_gemm<fp8e4m3, half, true>(d_C_ref, d_A, d_B, M, N, K);
+    // Compute reference GEMM on device
+    reference_gemm<fp8e4m3, half, true>(d_C_ref, d_A[0], d_B[0], M, N, K);
     cudaDeviceSynchronize();
-    std::cout << "Computed reference GEMM on device" << std::endl;
 
+    // Set kernel attributes
     unsigned long mem_size = MAX_SHARED_MEMORY - 1024;
     cudaFuncSetAttribute(matmul, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
 
-    // Launch kernel
+    // Launch configuration
     dim3 grid(148, 1);
     dim3 block(NUM_THREADS);
-    std::cout << "Launching warmup kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
-    for(int i = 0; i < (NCU ? 1 : 1); i++) { // warmup
-        inner_run(d_A, d_B, d_C, M, N, K, grid, block);
+
+    // Number of iterations
+    int num_warmups = NCU ? 0 : 5;
+    int num_iters = NCU ? 1 : 10;
+
+    // Warmup
+    for (int i = 0; i < num_warmups; i++) {
+        int idx = i % arg_group_count;
+        inner_run(d_A[idx], d_B[idx], d_C[idx], M, N, K, grid, block);
     }
 
-    // Start timing
-    cudaDeviceSynchronize();
-    std::cout << "Launching kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
-    auto start = std::chrono::high_resolution_clock::now();
-
-    constexpr int ITERS = (NCU ? 1 : 5);
-    for(int i = 0; i < ITERS; i++) {
-        inner_run(d_A, d_B, d_C, M, N, K, grid, block);
+    // Benchmark
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    cudaEventRecord(start);
+    for (int i = 0; i < num_iters; i++) {
+        int idx = i % arg_group_count;
+        inner_run(d_A[idx], d_B[idx], d_C[idx], M, N, K, grid, block);
     }
-    cudaDeviceSynchronize();
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
 
-    // End timing
-    auto end = std::chrono::high_resolution_clock::now();
-
-    // Calculate duration
-    std::chrono::duration<double> diff = end - start;
-    double useconds = diff.count() * 1e6 / ITERS;
-
-    // Calculate TFLOPs
-    double flops = double(2.0) * M * N * K; // 2 FLOPs per multiply-add
-    double tflops = (flops / useconds) / 1e6;
-
-    std::cout << "Avg Kernel execution time: " << useconds << " us\n";
+    // Calculate duration and TFLOPs
+    float milliseconds;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    double microseconds = milliseconds * 1000.0 / num_iters;
+    double flops = double(2.0) * M * N * K;
+    double tflops = (flops / microseconds) / 1e6;
+    std::cout << "Average kernel execution time: " << microseconds << " us\n";
     std::cout << "Achieved performance: " << tflops << " TFLOPs\n";
-    
-    // Check for CUDA errors
-    cudaStatus = cudaGetLastError();
-    if (cudaStatus != cudaSuccess) {
-        std::cerr << "CUDA error: " << cudaGetErrorString(cudaStatus) << std::endl;
-        // Optionally, you might want to exit the program or handle the error in some way
-        return -1;
+
+    // Check correctness
+    check_correctness(d_C[0], d_C_ref, M * N);
+
+    // Cleanup
+    for (int i = 0; i < arg_group_count; i++) {
+        cudaFree(d_A[i]);
+        cudaFree(d_B[i]);
+        cudaFree(d_C[i]);
     }
-
-    // Copy result back to host
-    half *h_C_fp16 = new half[M * N];
-    half *h_C_ref_fp16 = new half[M * N];
-    cudaMemcpy(h_C_fp16, d_C, M*N*sizeof(half), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_C_ref_fp16, d_C_ref, M*N*sizeof(half), cudaMemcpyDeviceToHost);
-
-    std::cout << "Copied result back to host" << std::endl;
-
-    // Convert result back to float for comparison
-    float *h_C_ref = new float[M * N];
-    for (int i = 0; i < M * N; ++i) h_C[i] = __half2float(h_C_fp16[i]);
-    for (int i = 0; i < M * N; ++i) h_C_ref[i] = __half2float(h_C_ref_fp16[i]);
-
-    std::cout << "Converted result back to float" << std::endl;
-
-    // Check result
-    float max_error = 0.0f;
-    int error_count = 0;
-    for (int i = 0; i < M * N; ++i) {
-        float error = std::abs(h_C[i] - h_C_ref[i]);
-        if(error > 1.0) { // large because of fp8 vs fp32 numerics
-            if(error_count < 20) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl;
-            else if(error_count == 21) std::cout << "Too many errors to show them all.\n";
-            error_count++;
-        }
-        max_error = std::max(max_error, error);
-    }
-
-    std::cout << "Max error: " << max_error << std::endl;
-    std::cout << "Error count: " << error_count << std::endl;
-
-    // Clean up
-    delete[] h_A;
-    delete[] h_B;
-    delete[] h_C;
-    delete[] h_C_ref;
-    delete[] h_A_fp8;
-    delete[] h_B_fp8;
-    delete[] h_C_fp16;
-    delete[] h_C_ref_fp16;
-    cudaFree(d_A);
-    cudaFree(d_B);
-    cudaFree(d_C);
     cudaFree(d_C_ref);
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
 
     return 0;
 }
 
 int main() {
     int N;
-    // N = 1024;
-    // run_benchmark(N, N, N);
-    // N = 2048;
-    // run_benchmark(N, N, N);
-    // N = 4096;
-    // run_benchmark(N, N, N);
+    N = 1024;
+    run_benchmark(N, N, N);
+    N = 2048;
+    run_benchmark(N, N, N);
+    N = 4096;
+    run_benchmark(N, N, N);
     N = 8192;
     run_benchmark(N, N, N);
-    // N = 16384;
-    // run_benchmark(N, N, N);
+    N = 16384;
+    run_benchmark(N, N, N);
     return 0;
 }
