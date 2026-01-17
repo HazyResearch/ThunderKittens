@@ -101,6 +101,18 @@ constexpr int MAX_SHARED_MEMORY = 227 * 1024;
 constexpr int MAX_SHARED_MEMORY = 164 * 1024;
 #endif
 
+/**
+ * @brief Query the number of SMs on a device.
+ * @param device_id GPU device ordinal. If negative, uses the current device.
+ * @return The number of streaming multiprocessors.
+ */
+__host__ inline int num_sms(int device_id = -1) {
+    if (device_id < 0) CUDACHECK(cudaGetDevice(&device_id));
+    int sm_count;
+    CUDACHECK(cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, device_id));
+    return sm_count;
+}
+
 struct transpose {
     static constexpr int N = 0; // not transposed
     static constexpr int T = 1; // transposed
