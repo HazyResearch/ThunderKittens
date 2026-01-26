@@ -50,7 +50,13 @@ struct globals {
 
     __host__ __inline__ dim3 grid() { return dim3(d.rows()/(C::NUM_CONSUMERS*C::Mb/2) * d.cols()/C::Nb); }
     __host__ __inline__ dim3 block() { return dim3(C::NUM_THREADS); }
-    __host__ __inline__ int dynamic_shared_memory() { return C::DYNAMIC_SHARED_MEMORY; }
+    __host__ __inline__ int dynamic_shared_memory() {
+        size_t _dynamic_shared_memory = sizeof(a_tile) * C::LOAD_PIPE_DEPTH * C::NUM_CONSUMERS +
+                                        sizeof(b_tile) * C::LOAD_PIPE_DEPTH +
+                                        sizeof(d_tile) * C::NUM_D_TILES * C::NUM_CONSUMERS + 1024;
+        assert(_dynamic_shared_memory <= MAX_SHARED_MEMORY - 1024);
+        return _dynamic_shared_memory;
+    }
 };
 
 template <typename C>
@@ -89,9 +95,6 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
     extern __shared__ int __shm[];
     tma_swizzle_allocator al((int*)&__shm[0]);
 
-    static_assert(sizeof(G::a_tile) * C::LOAD_PIPE_DEPTH * C::NUM_CONSUMERS +
-                  sizeof(G::b_tile) * C::LOAD_PIPE_DEPTH +
-                  sizeof(G::d_tile) * C::NUM_D_TILES * C::NUM_CONSUMERS <= C::DYNAMIC_SHARED_MEMORY);
     typename G::a_tile (&a_smem)[C::LOAD_PIPE_DEPTH][C::NUM_CONSUMERS] = al.allocate<G::a_tile, C::LOAD_PIPE_DEPTH, C::NUM_CONSUMERS>();
     typename G::b_tile (&b_smem)[C::LOAD_PIPE_DEPTH]                   = al.allocate<G::b_tile, C::LOAD_PIPE_DEPTH>();
     typename G::d_tile (&d_smem)[C::NUM_CONSUMERS][C::NUM_D_TILES]     = al.allocate<G::d_tile, C::NUM_CONSUMERS, C::NUM_D_TILES>();
@@ -127,10 +130,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
     everyone::tma::cluster::sync();
 
     if (warpgroup::groupid() == C::NUM_CONSUMERS) {
-        if constexpr (C::NUM_CONSUMERS == 1)
-            warpgroup::increase_registers<256>();
-        else
-            warpgroup::decrease_registers<56>();
+        warpgroup::decrease_registers<56>();
 
         if (warp::laneid() == 0 && warpgroup::warpid() == 3) {
             int input_ring = 0;
@@ -191,9 +191,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
         }
     }
     else {
-        if constexpr (C::NUM_CONSUMERS == 1)
-            warpgroup::increase_registers<256>();
-        else
+        if constexpr (!C::OVERLAP_MMA_EPI)
             warpgroup::increase_registers<224>();
 
         d_tt_t d_tt[C::MMA_PIPE_DEPTH];
