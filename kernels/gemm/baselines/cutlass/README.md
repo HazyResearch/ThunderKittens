@@ -77,6 +77,7 @@ Here, we describe how we benchmarked the [CUTLASS](https://github.com/NVIDIA/cut
         --profiling-iterations=100 \
         --verification-enabled=false \
         --enable-best-kernel-for-fixed-shape=true \
+        --use_pdl=1 \
         --dist="uniform,min:-1,max:1,scale:-1"
     done
 
@@ -93,6 +94,7 @@ Here, we describe how we benchmarked the [CUTLASS](https://github.com/NVIDIA/cut
         --profiling-iterations=100 \
         --verification-enabled=false \
         --enable-best-kernel-for-fixed-shape=true \
+        --use_pdl=1 \
         --dist="uniform,min:-448,max:448,scale:-1"
     done
 
@@ -109,6 +111,7 @@ Here, we describe how we benchmarked the [CUTLASS](https://github.com/NVIDIA/cut
         --profiling-iterations=100 \
         --verification-enabled=false \
         --enable-best-kernel-for-fixed-shape=true \
+        --use_pdl=1 \
         --dist="uniform,min:-6,max:6,scale:-1"
     done
     ```
@@ -119,6 +122,7 @@ Some additional notes on the `cutlass_profiler` options:
 * For the same reason, it's very important to use consistent input distribution throughout benchmarks, ideally using the same exact inputs.
 * Quirks on MX/NV input generation: The `--dist` option you specify directly applies to the post-quantized FP4/FP8 values, not pre-quantized FP32 values, and the scales themselves. Unfortunately, CUTLASS profiler does not provide a way for users to specify different distributions for input operands and the scales (either one has to end up with skewed distribution). Thus, for MX/NV GEMMs, you should really only use CUTLASS profiler to find the best kernel configuration, and benchmark them separately on your own.
 * Also very important to set `--enable-best-kernel-for-fixed-shape=true`; otherwise the profiler does not experiment with different threadblock swizzling configurations.
+* `use_pdl=1` to use programmatic dependent launch and stay fair against cuBLAS GEMM. Note that `use_pdl=true` does NOT work and you must set it using `1`.
 
 (Optional) Use the below command to quickly find best configuration / TFLOPs number per shape:
 
