@@ -54,7 +54,7 @@ struct globals {
 };
 
 template <typename C>
-__cluster_dims__(C::CLUSTER_SIZE, 1, 1) __launch_bounds__(C::NUM_THREADS, 1)
+__launch_bounds__(C::NUM_THREADS, 1)
 __global__ void kernel(const __grid_constant__ globals<C> g) {
     using G = globals<C>;
 
@@ -308,17 +308,25 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     // Set kernel attributes
     CUDACHECK(cudaFuncSetAttribute(kernel<C>, cudaFuncAttributeMaxDynamicSharedMemorySize, g[0].dynamic_shared_memory()));
 
-    // Prepare kernel launch attributes
-    cudaLaunchAttribute attribute[1];
-    attribute[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
-    attribute[0].val.programmaticStreamSerializationAllowed = 1;
+    // Set kernel launch attributes
+    cudaLaunchAttribute attribute[3];
+    attribute[0].id = cudaLaunchAttributePreferredClusterDimension;
+    attribute[0].val.preferredClusterDim.x = C::CLUSTER_SIZE;
+    attribute[0].val.preferredClusterDim.y = 1;
+    attribute[0].val.preferredClusterDim.z = 1;
+    attribute[1].id = cudaLaunchAttributeClusterDimension;
+    attribute[1].val.clusterDim.x = C::CLUSTER_SIZE;
+    attribute[1].val.clusterDim.y = 1;
+    attribute[1].val.clusterDim.z = 1;
+    attribute[2].id = cudaLaunchAttributeProgrammaticStreamSerialization;
+    attribute[2].val.programmaticStreamSerializationAllowed = 1;
     cudaLaunchConfig_t launch_config = {0};
     launch_config.gridDim = g[0].grid();
     launch_config.blockDim = g[0].block();
     launch_config.dynamicSmemBytes= g[0].dynamic_shared_memory();
     launch_config.stream = 0;
     launch_config.attrs = attribute;
-    launch_config.numAttrs = 1;
+    launch_config.numAttrs = 3;
 
     // Number of iterations
     int num_warmups = ncu ? 0 : 5;
