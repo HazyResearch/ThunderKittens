@@ -5,7 +5,7 @@ using namespace kittens;
 
 template <int _Mb, int _Nb, int _Kb, int _SUPERGROUP_SIZE, bool _OVERLAP_MMA_EPI, int _LOAD_PIPE_DEPTH, int _EPI_PIPE_DEPTH>
 struct config {
-    static_assert(_Mb == 256, "Mb must be 128 or 256");
+    static_assert(_Mb == 256, "Mb must be 256");
     static_assert(_Nb >= 16 && _Nb <= 256 && _Nb % 16 == 0, "Nb must be 16, 32, ..., 256");
     static_assert(_Kb >= 16 && _Kb % 16 == 0, "Kb must be a multiple of 16");
     static_assert(_SUPERGROUP_SIZE >= 1 && _SUPERGROUP_SIZE <= 16, "SUPERGROUP_SIZE must be 1-16");
@@ -310,8 +310,8 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     LaunchConfig<true, true> launch_config(g[0].grid(), g[0].block(), g[0].dynamic_shared_memory(), 0, C::CLUSTER_SIZE);
 
     // Number of iterations
-    int num_warmups = ncu ? 0 : 5;
-    int num_iters = ncu ? 1 : 10;
+    int num_warmups = ncu ? 0 : 500;
+    int num_iters = ncu ? 1 : 100;
 
     // Warmup
     for(int i = 0; i < num_warmups; i++) {
