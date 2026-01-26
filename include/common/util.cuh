@@ -101,18 +101,6 @@ constexpr int MAX_SHARED_MEMORY = 227 * 1024;
 constexpr int MAX_SHARED_MEMORY = 164 * 1024;
 #endif
 
-/**
- * @brief Query the number of SMs on a device.
- * @param device_id GPU device ordinal. If negative, uses the current device.
- * @return The number of streaming multiprocessors.
- */
-__host__ inline int num_sms(int device_id = -1) {
-    if (device_id < 0) CUDACHECK(cudaGetDevice(&device_id));
-    int sm_count;
-    CUDACHECK(cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, device_id));
-    return sm_count;
-}
-
 struct transpose {
     static constexpr int N = 0; // not transposed
     static constexpr int T = 1; // transposed
@@ -324,6 +312,8 @@ public:
 using tma_allocator = shared_allocator<1024>;
 using tma_swizzle_allocator = tma_allocator; // swizzled TMA modes require up to 1024 byte alignments :/
 
+/* ----------  CLUSTER UTILS  ---------- */
+
 /* Get cluster ID */
 __device__ static inline int3 clusterIdx() {
     int3 cluster_idx;
@@ -340,6 +330,8 @@ __device__ static inline int cluster_ctarank() {
     return ctarank;
 }
 #endif
+
+/* ----------  PIPELINE UTILS  ---------- */
 
 template<int half>
 __device__ static inline int get_phasebit(uint32_t bitfield, int ring_id) {
@@ -364,5 +356,84 @@ __device__ static inline void update_phasebit(uint32_t &bitfield, int ring_id) {
 
 template<int N> __device__ static inline int ring_advance(int ring, int distance=1) { return (ring + distance) % N; }
 template<int N> __device__ static inline int ring_retreat(int ring, int distance=1) { return (ring + 16*N - distance) % N; }
+
+/* ----------  HOST-SIDE UTILS  ---------- */
+
+/**
+ * @brief Query the number of SMs on a device.
+ * @param device_id GPU device ordinal. If negative, uses the current device.
+ * @return The number of streaming multiprocessors.
+ */
+ __host__ inline int num_sms(int device_id = -1) {
+    if (device_id < 0) CUDACHECK(cudaGetDevice(&device_id));
+    int sm_count;
+    CUDACHECK(cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, device_id));
+    return sm_count;
+}
+
+template <bool CLUSTER = false, bool PDL = false>
+struct LaunchConfig {
+    static constexpr unsigned int num_attributes = CLUSTER ? (PDL ? 3 : 2) : 1;
+
+    cudaLaunchAttribute attributes[num_attributes];
+    cudaLaunchConfig_t config = {0};
+
+    __host__ inline LaunchConfig(dim3 grid, dim3 block, size_t shared_memory, cudaStream_t stream) noexcept requires(!CLUSTER) {
+        if constexpr (PDL) {
+            attributes[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
+            attributes[0].val.programmaticStreamSerializationAllowed = 1;
+            config.attrs = attributes;
+            config.numAttrs = num_attributes;
+        } else {
+            config.numAttrs = 0;
+        }
+        config.gridDim = grid;
+        config.blockDim = block;
+        config.dynamicSmemBytes= shared_memory;
+        config.stream = stream;
+    }
+
+    __host__ inline LaunchConfig(dim3 grid, dim3 block, size_t shared_memory, cudaStream_t stream, 
+                                 dim3 cluster_preferred, dim3 cluster_minimum) noexcept requires(CLUSTER) {
+        attributes[0].id = cudaLaunchAttributePreferredClusterDimension;
+        attributes[0].val.preferredClusterDim.x = cluster_preferred.x;
+        attributes[0].val.preferredClusterDim.y = cluster_preferred.y;
+        attributes[0].val.preferredClusterDim.z = cluster_preferred.z;
+        attributes[1].id = cudaLaunchAttributeClusterDimension;
+        attributes[1].val.clusterDim.x = cluster_minimum.x;
+        attributes[1].val.clusterDim.y = cluster_minimum.y;
+        attributes[1].val.clusterDim.z = cluster_minimum.z;
+        if constexpr (PDL) {
+            attributes[2].id = cudaLaunchAttributeProgrammaticStreamSerialization;
+            attributes[2].val.programmaticStreamSerializationAllowed = 1;
+        }
+        config.attrs = attributes;
+        config.numAttrs = num_attributes;
+        config.gridDim = grid;
+        config.blockDim = block;
+        config.dynamicSmemBytes= shared_memory;
+        config.stream = stream;
+    }
+
+    __host__ inline LaunchConfig(const LaunchConfig& other) noexcept : config(other.config) {
+        std::copy_n(other.attributes, num_attributes, attributes);
+        config.attrs = attributes;
+    }
+
+    __host__ inline LaunchConfig& operator=(const LaunchConfig& other) noexcept {
+        if (this != &other) {
+            std::copy_n(other.attributes, num_attributes, attributes);
+            config = other.config;
+            config.attrs = attributes;
+        }
+        return *this;
+    }
+
+    LaunchConfig(LaunchConfig&&) = delete;
+    LaunchConfig& operator=(LaunchConfig&&) = delete;
+
+    __host__ inline operator cudaLaunchConfig_t*() noexcept { return &config; }
+    __host__ inline operator const cudaLaunchConfig_t*() const noexcept { return &config; }
+};
 
 } // namespace kittens
