@@ -135,6 +135,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
         if (warp::laneid() == 0 && warpgroup::warpid() == 3) {
             int input_ring = 0;
             int2 tile_coord = get_tile_idx(blockIdx.x);
+            pdl::wait();
             for (int task_iter = 0; true; task_iter++) {
                 for (int idx = 0; idx < iters_per_task; idx++) {
                     tma::cluster::wait(inputs_finished[input_ring], get_phasebit<1>(bitfield, input_ring));
@@ -307,6 +308,18 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     // Set kernel attributes
     CUDACHECK(cudaFuncSetAttribute(kernel<C>, cudaFuncAttributeMaxDynamicSharedMemorySize, g[0].dynamic_shared_memory()));
 
+    // Prepare kernel launch attributes
+    cudaLaunchAttribute attribute[1];
+    attribute[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
+    attribute[0].val.programmaticStreamSerializationAllowed = 1;
+    cudaLaunchConfig_t launch_config = {0};
+    launch_config.gridDim = g[0].grid();
+    launch_config.blockDim = g[0].block();
+    launch_config.dynamicSmemBytes= g[0].dynamic_shared_memory();
+    launch_config.stream = 0;
+    launch_config.attrs = attribute;
+    launch_config.numAttrs = 1;
+
     // Number of iterations
     int num_warmups = ncu ? 0 : 5;
     int num_iters = ncu ? 1 : 10;
@@ -314,7 +327,7 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     // Warmup
     for(int i = 0; i < num_warmups; i++) {
         int idx = i % arg_group_count;
-        kernel<C><<<g[idx].grid(), g[idx].block(), g[idx].dynamic_shared_memory()>>>(g[idx]);
+        cudaLaunchKernelEx(&launch_config, kernel<C>, g[idx]);
     }
 
     // Benchmark
@@ -324,7 +337,7 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     CUDACHECK(cudaEventRecord(start));
     for(int i = 0; i < num_iters; i++) {
         int idx = i % arg_group_count;
-        kernel<C><<<g[idx].grid(), g[idx].block(), g[idx].dynamic_shared_memory()>>>(g[idx]);
+        cudaLaunchKernelEx(&launch_config, kernel<C>, g[idx]);
     }
     CUDACHECK(cudaEventRecord(stop));
     CUDACHECK(cudaEventSynchronize(stop));
