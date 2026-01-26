@@ -282,6 +282,36 @@ __device__ static inline bool elect_warp_leader() {
     );
     return static_cast<bool>(elected);
 }
+
+/**
+ * @brief Programmatic Dependent Kernel Launch (PDL) utilities. Available on Hopper and later.
+ *
+ * PDL allows partial overlap between two consecutive kernels in the same stream.
+ *
+ * @note The secondary kernel must be launched with `cudaLaunchAttributeProgrammaticStreamSerialization`
+ *       attribute and `programmaticStreamSerializationAllowed` set to 1.
+ */
+namespace pdl {
+
+/**
+ * @brief Signals that a primary kernel has completed its dependent work, enabling a secondary kernel to launch.
+ *
+ * @note The secondary kernel will only launch when all threadblocks in the primary kernel have called this function.
+ *       If a threadblock does not call this, the arrival is implicitly triggered at threadblock exit.
+ * @note This does not guarantee memory visibility. For memory visibility, the secondary kernel must call wait().
+ */
+__device__ static inline void arrive() {
+    cudaTriggerProgrammaticLaunchCompletion();
+}
+
+/**
+ * @brief Blocks until the primary kernel fully completes and flushes memory.
+ */
+__device__ static inline void wait() {
+    cudaGridDependencySynchronize();
+}
+
+}
 #endif
 
 } // namespace kittens
