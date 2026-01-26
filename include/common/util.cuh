@@ -378,7 +378,8 @@ struct LaunchConfig {
     cudaLaunchAttribute attributes[num_attributes];
     cudaLaunchConfig_t config = {0};
 
-    __host__ inline LaunchConfig(dim3 grid, dim3 block, size_t shared_memory, cudaStream_t stream) noexcept requires(!CLUSTER) {
+    __host__ inline LaunchConfig(dim3 grid, dim3 block, size_t dynamic_shared_memory, 
+                                 cudaStream_t stream) noexcept requires(!CLUSTER) {
         if constexpr (PDL) {
             attributes[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
             attributes[0].val.programmaticStreamSerializationAllowed = 1;
@@ -389,12 +390,12 @@ struct LaunchConfig {
         }
         config.gridDim = grid;
         config.blockDim = block;
-        config.dynamicSmemBytes= shared_memory;
+        config.dynamicSmemBytes= dynamic_shared_memory;
         config.stream = stream;
     }
 
-    __host__ inline LaunchConfig(dim3 grid, dim3 block, size_t shared_memory, cudaStream_t stream, 
-                                 dim3 cluster_preferred, dim3 cluster_minimum) noexcept requires(CLUSTER) {
+    __host__ inline LaunchConfig(dim3 grid, dim3 block, size_t dynamic_shared_memory, 
+                                 cudaStream_t stream, dim3 cluster_preferred, dim3 cluster_minimum) noexcept requires(CLUSTER) {
         attributes[0].id = cudaLaunchAttributePreferredClusterDimension;
         attributes[0].val.preferredClusterDim.x = cluster_preferred.x;
         attributes[0].val.preferredClusterDim.y = cluster_preferred.y;
@@ -411,9 +412,13 @@ struct LaunchConfig {
         config.numAttrs = num_attributes;
         config.gridDim = grid;
         config.blockDim = block;
-        config.dynamicSmemBytes= shared_memory;
+        config.dynamicSmemBytes= dynamic_shared_memory;
         config.stream = stream;
     }
+
+    __host__ inline LaunchConfig(dim3 grid, dim3 block, size_t dynamic_shared_memory, 
+                                 cudaStream_t stream, dim3 cluster) noexcept requires(CLUSTER)
+        : LaunchConfig(grid, block, dynamic_shared_memory, stream, cluster, cluster) { }
 
     __host__ inline LaunchConfig(const LaunchConfig& other) noexcept : config(other.config) {
         std::copy_n(other.attributes, num_attributes, attributes);
