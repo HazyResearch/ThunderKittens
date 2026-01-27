@@ -130,8 +130,6 @@ template<int _nblocks_per_sm, int _ncta, bool _managed = true> struct tensor_all
             ::  "r"(addr), "n"(cols)
             );
         } else {
-            asm volatile ("barrier.cluster.arrive.release.aligned;\n");
-            asm volatile ("barrier.cluster.wait.acquire.aligned;\n");
             asm volatile("tcgen05.dealloc.cta_group::2.sync.aligned.b32  %0, %1;\n"
             ::  "r"(addr), "n"(cols)
             );
@@ -140,7 +138,13 @@ template<int _nblocks_per_sm, int _ncta, bool _managed = true> struct tensor_all
 
     __device__ inline ~tensor_allocator() {
         if constexpr (managed) {
-            if (warpid() == 0) deprovision();
+            if (warpid() == 0) {
+                if (ncta == 2) {
+                    asm volatile ("barrier.cluster.arrive.release.aligned;\n");
+                    asm volatile ("barrier.cluster.wait.acquire.aligned;\n");
+                }
+                deprovision();
+            }
         }
     }
 };
