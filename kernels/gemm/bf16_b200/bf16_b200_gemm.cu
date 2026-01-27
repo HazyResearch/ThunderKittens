@@ -101,15 +101,17 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
     typename G::b_tile (&b_smem)[C::LOAD_PIPE_DEPTH]                   = al.allocate<G::b_tile, C::LOAD_PIPE_DEPTH>();
     typename G::d_tile (&d_smem)[C::NUM_CONSUMERS][C::NUM_D_TILES]     = al.allocate<G::d_tile, C::NUM_CONSUMERS, C::NUM_D_TILES>();
 
-    tensor_allocator<C::NUM_BLOCKS_PER_SM, C::CLUSTER_SIZE> tm_alloc{};
+    tensor_allocator<C::NUM_BLOCKS_PER_SM, C::CLUSTER_SIZE, false> tm_alloc{};
     using d_tt_t = tt<float, C::Mb/2, C::Nb>;
 
+    __shared__ uint32_t tmem_addr;
     __shared__ clc::handle clc_handle[C::CLC_PIPE_DEPTH];
-    __shared__ semaphore schedule_arrived[C::CLC_PIPE_DEPTH], schedule_finished[C::CLC_PIPE_DEPTH];
+    __shared__ semaphore tmem_provisioned, schedule_arrived[C::CLC_PIPE_DEPTH], schedule_finished[C::CLC_PIPE_DEPTH];
     __shared__ semaphore inputs_arrived[C::LOAD_PIPE_DEPTH], inputs_finished[C::LOAD_PIPE_DEPTH], outputs_arrived[C::NUM_CONSUMERS], outputs_finished[C::MMA_PIPE_DEPTH];
     uint32_t bitfield = 0xFFFF0000; // ***_finished phase bits start as 1s, ***_arrived phase bits start as 0s
 
     if (threadIdx.x == 0) {
+        init_semaphore(tmem_provisioned, 0, 1);
         #pragma unroll
         for (int i = 0; i < C::CLC_PIPE_DEPTH; i++) {
             init_semaphore(schedule_arrived[i], 0, 1);
@@ -129,7 +131,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
             init_semaphore(outputs_finished[i], 0, C::CLUSTER_SIZE*C::NUM_CONSUMERS);
         }
     }
-    everyone::tma::cluster::sync();
+    everyone::tma::cluster::arrive_aligned();
 
     if (warpgroup::groupid() == C::NUM_CONSUMERS) {
         warpgroup::decrease_registers<56>();
@@ -138,6 +140,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
             int input_ring = 0;
             int2 tile_coord = get_tile_idx(blockIdx.x);
             pdl::wait();
+            everyone::tma::cluster::wait_aligned();
             for (int task_iter = 0; true; task_iter++) {
                 for (int idx = 0; idx < iters_per_task; idx++) {
                     tma::cluster::wait(inputs_finished[input_ring], get_phasebit<1>(bitfield, input_ring));
@@ -155,6 +158,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
                 else break;
             }
         } else if (warp::laneid() == 0 && warpgroup::warpid() == 2) {
+            everyone::tma::cluster::wait_aligned();
             for (int task_iter = 0; true; task_iter++) {
                 if (cta_rank == 0) {
                     tma::cluster::wait(schedule_finished[task_iter%C::CLC_PIPE_DEPTH], ((task_iter+C::CLC_PIPE_DEPTH)/C::CLC_PIPE_DEPTH)%2);
@@ -167,6 +171,9 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
                 if (!schedule.success) break;
             }
         } else if (cta_rank == 0 && warp::laneid() == 0 && warpgroup::warpid() < C::NUM_CONSUMERS) {
+            everyone::tma::cluster::wait_aligned();
+            wait(tmem_provisioned, 0);
+            tm_alloc.set_addr(tmem_addr);
             d_tt_t d_tt[C::MMA_PIPE_DEPTH];
             #pragma unroll
             for (int i = 0; i < C::MMA_PIPE_DEPTH; i++) {
@@ -193,9 +200,16 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
         }
     }
     else {
+        using epilogue_group = group<WARPGROUP_WARPS*C::NUM_CONSUMERS>;
         if constexpr (!C::OVERLAP_MMA_EPI)
             warpgroup::increase_registers<224>();
-
+        everyone::tma::cluster::wait_aligned();
+        if (epilogue_group::warpid() == 0) {
+            tm_alloc.provision(tmem_addr);
+            warp::arrive(tmem_provisioned);
+        }
+        wait(tmem_provisioned, 0);
+        tm_alloc.set_addr(tmem_addr);
         d_tt_t d_tt[C::MMA_PIPE_DEPTH];
         #pragma unroll
         for (int i = 0; i < C::MMA_PIPE_DEPTH; i++) {
@@ -246,6 +260,8 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
             }
             if (!schedule.success) break;
         }
+        epilogue_group::sync(4);
+        if (epilogue_group::warpid() == 0) tm_alloc.deprovision();
     }
 }
 
@@ -313,8 +329,8 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     LaunchConfig<true, true> launch_config(g[0].grid(), g[0].block(), g[0].dynamic_shared_memory(), 0, C::CLUSTER_SIZE);
 
     // Number of iterations
-    int num_warmups = ncu ? 0 : 500;
-    int num_iters = ncu ? 1 : 100;
+    int num_warmups = ncu ? 0 : 5;
+    int num_iters = ncu ? 1 : 10;
 
     // Warmup
     for(int i = 0; i < num_warmups; i++) {
