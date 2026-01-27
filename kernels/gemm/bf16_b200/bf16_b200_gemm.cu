@@ -259,6 +259,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
             if (!schedule.success) break;
         }
         epilogue_group::sync(4);
+        epilogue_group::pdl::arrive();
         if (epilogue_group::warpid() == 0) tm_alloc.deprovision();
     }
 }
