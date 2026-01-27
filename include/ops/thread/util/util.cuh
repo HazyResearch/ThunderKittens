@@ -271,6 +271,7 @@ __device__ static inline result query(handle &h) {
 #endif
 
 #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
+
 __device__ static inline bool elect_warp_leader() {
     uint32_t elected = 0;
     asm volatile(
@@ -312,6 +313,7 @@ __device__ static inline void wait() {
 }
 
 }
+
 #endif
 
 } // namespace kittens
