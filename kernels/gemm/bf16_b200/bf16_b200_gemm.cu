@@ -231,6 +231,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
                     tensor_load_wait();
                     if (i == C::EPI_PIPE_DEPTH - 1) {
                         warpgroup::sync(warpgroup::groupid()+1);
+                        if (!schedule.success) warpgroup::pdl::arrive();
                         warpgroup::tma::cluster::arrive(outputs_finished[task_iter%C::MMA_PIPE_DEPTH], 0);
                     }
                     warpgroup::tma::store_async_read_wait<C::NUM_D_TILES-1>();
@@ -246,6 +247,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
                     warpgroup::load_async(d_reg[i], d_tt[task_iter%C::MMA_PIPE_DEPTH].template subtile<tt<float, C::Mb/2, C::Nb/C::EPI_PIPE_DEPTH>>(0, C::Nb/C::EPI_PIPE_DEPTH*i));
                 tensor_load_wait();
                 warpgroup::sync(warpgroup::groupid()+1);
+                if (!schedule.success) warpgroup::pdl::arrive();
                 warpgroup::tma::cluster::arrive(outputs_finished[task_iter%C::MMA_PIPE_DEPTH], 0);
                 #pragma unroll
                 for(int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
@@ -259,7 +261,6 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
             if (!schedule.success) break;
         }
         epilogue_group::sync(4);
-        epilogue_group::pdl::arrive();
         if (epilogue_group::warpid() == 0) tm_alloc.deprovision();
     }
 }
