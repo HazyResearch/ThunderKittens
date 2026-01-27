@@ -3,7 +3,7 @@
 
 using namespace kittens;
 
-template <int _Mb, int _Nb, int _Kb, int _SUPERGROUP_SIZE, bool _OVERLAP_MMA_EPI, int _LOAD_PIPE_DEPTH, int _EPI_PIPE_DEPTH, int _NUM_BLOCKS_PER_SM>
+template <int _Mb, int _Nb, int _Kb, int _SUPERGROUP_SIZE, bool _OVERLAP_MMA_EPI, int _LOAD_PIPE_DEPTH, int _EPI_PIPE_DEPTH>
 struct config {
     static_assert(_Mb == 256, "Mb must be 256");
     static_assert(_Nb >= 16 && _Nb <= 256 && _Nb % 16 == 0, "Nb must be 16, 32, ..., 256");
@@ -11,7 +11,6 @@ struct config {
     static_assert(_SUPERGROUP_SIZE >= 1 && _SUPERGROUP_SIZE <= 16, "SUPERGROUP_SIZE must be 1-16");
     static_assert(_LOAD_PIPE_DEPTH >= 1 && _LOAD_PIPE_DEPTH <= 16, "LOAD_PIPE_DEPTH must be 1-16");
     static_assert(_EPI_PIPE_DEPTH >= 1 && _EPI_PIPE_DEPTH <= 16, "EPI_PIPE_DEPTH must be 1-16");
-    static_assert(_NUM_BLOCKS_PER_SM == 1 || (_NUM_BLOCKS_PER_SM == 2 && _Nb <= 128), "NUM_BLOCKS_PER_SM must be 1 or 2; if 2, then Nb must be <= 128");
 
     static constexpr int Mb = _Mb; // per MMA
     static constexpr int Nb = _Nb; // per MMA
@@ -33,7 +32,6 @@ struct config {
     static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - 1024;
 
     static constexpr int NUM_D_TILES = EPI_PIPE_DEPTH > 1 ? 2 : 1;
-    static constexpr int NUM_BLOCKS_PER_SM = _NUM_BLOCKS_PER_SM;
 };
 
 template <typename C>
@@ -56,13 +54,13 @@ struct globals {
         constexpr size_t _dynamic_shared_memory = sizeof(a_tile) * C::LOAD_PIPE_DEPTH * C::NUM_CONSUMERS +
                                                   sizeof(b_tile) * C::LOAD_PIPE_DEPTH +
                                                   sizeof(d_tile) * C::NUM_D_TILES * C::NUM_CONSUMERS + 1024;
-        static_assert(_dynamic_shared_memory * C::NUM_BLOCKS_PER_SM <= MAX_SHARED_MEMORY - 1024);
+        static_assert(_dynamic_shared_memory <= MAX_SHARED_MEMORY - 1024);
         return _dynamic_shared_memory;
     }
 };
 
 template <typename C>
-__launch_bounds__(C::NUM_THREADS, C::NUM_BLOCKS_PER_SM)
+__launch_bounds__(C::NUM_THREADS, 1)
 __global__ void kernel(const __grid_constant__ globals<C> g) {
     using G = globals<C>;
 
@@ -101,7 +99,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
     typename G::b_tile (&b_smem)[C::LOAD_PIPE_DEPTH]                   = al.allocate<G::b_tile, C::LOAD_PIPE_DEPTH>();
     typename G::d_tile (&d_smem)[C::NUM_CONSUMERS][C::NUM_D_TILES]     = al.allocate<G::d_tile, C::NUM_CONSUMERS, C::NUM_D_TILES>();
 
-    tensor_allocator<C::NUM_BLOCKS_PER_SM, C::CLUSTER_SIZE, false> tm_alloc{};
+    tensor_allocator<1, C::CLUSTER_SIZE, false> tm_alloc{};
     using d_tt_t = tt<float, C::Mb/2, C::Nb>;
 
     __shared__ uint32_t tmem_addr;
@@ -269,9 +267,8 @@ template <typename C>
 __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
     std::cout << "Template: Mb=" << C::Mb << " Nb=" << C::Nb << " Kb=" << C::Kb << " SUPERGROUP_SIZE=" << C::SUPERGROUP_SIZE
-              << " OVERLAP_MMA_EPI=" << C::OVERLAP_MMA_EPI << " LOAD_PIPE_DEPTH=" << C::LOAD_PIPE_DEPTH 
-              << " EPI_PIPE_DEPTH=" << C::EPI_PIPE_DEPTH << " NUM_BLOCKS_PER_SM=" << C::NUM_BLOCKS_PER_SM << "\n";
-    std::cout << "Total number of tasks: " << (M / (C::Mb*C::NUM_CONSUMERS) * N / C::Nb) << "\n";
+              << " OVERLAP_MMA_EPI=" << C::OVERLAP_MMA_EPI << " LOAD_PIPE_DEPTH=" << C::LOAD_PIPE_DEPTH << " EPI_PIPE_DEPTH=" << C::EPI_PIPE_DEPTH << "\n";
+    std::cout << "Total number of clusters: " << (M / (C::Mb*C::NUM_CONSUMERS) * N / C::Nb) << "\n";
     std::cout << "Number of iterations per task: " << (K / C::Kb) << "\n";
 
     // Cooldown between configurations
@@ -379,17 +376,17 @@ __host__ int main() {
     int N;
     bool ncu = false;
 
-    // Template parameters: Mb, Nb, Kb, SUPERGROUP_SIZE, OVERLAP_MMA_EPI, LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH, NUM_BLOCKS_PER_SM
+    // Template parameters: Mb, Nb, Kb, SUPERGROUP_SIZE, OVERLAP_MMA_EPI, LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH
     N = 1024;
-    run_benchmark<config<256, 64, 128, 4, true, 5, 2, 1>>(N, N, N, ncu);
+    run_benchmark<config<256, 64, 128, 4, true, 5, 2>>(N, N, N, ncu);
     N = 2048;
-    run_benchmark<config<256, 256, 64, 4, true, 5, 8, 1>>(N, N, N, ncu);
+    run_benchmark<config<256, 256, 64, 4, true, 5, 8>>(N, N, N, ncu);
     N = 4096;
-    run_benchmark<config<256, 256,  64, 4, false, 4, 8, 1>>(N, N, N, ncu);
+    run_benchmark<config<256, 256,  64, 4, false, 4, 8>>(N, N, N, ncu);
     N = 8192;
-    run_benchmark<config<256, 256,  64, 8, false, 4, 8, 1>>(N, N, N, ncu);
+    run_benchmark<config<256, 256,  64, 8, false, 4, 8>>(N, N, N, ncu);
     N = 16384;
-    run_benchmark<config<256, 256,  64, 8, false, 4, 8, 1>>(N, N, N, ncu);
+    run_benchmark<config<256, 256,  64, 8, false, 4, 8>>(N, N, N, ncu);
 
     return 0;
 }
