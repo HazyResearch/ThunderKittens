@@ -139,6 +139,7 @@ __device__ inline void kernel(const globals<C> &g) {
 
         if (warp_id == 3 && lane_id == 0) {
             // Load input matrices to shared memory
+            pdl::wait();
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 int supergroup_idx = block_idx / num_blocks_per_supergroup;
                 int idx_within_supergroup = block_idx % num_blocks_per_supergroup;
@@ -629,6 +630,7 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
 
     // Set kernel attributes
     CUDACHECK(cudaFuncSetAttribute(kernel_entrypoint<C>, cudaFuncAttributeMaxDynamicSharedMemorySize, C::DYNAMIC_SHARED_MEMORY));
+    LaunchConfig<true, true> launch_config(C::NUM_BLOCKS, C::NUM_THREADS, C::DYNAMIC_SHARED_MEMORY, 0, C::CLUSTER_SIZE);
 
     // Number of iterations
     int num_warmups = ncu ? 0 : 5;
@@ -637,7 +639,7 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     // Warmup
     for (int i = 0; i < num_warmups; i++) {
         int idx = i % arg_group_count;
-        kernel_entrypoint<C><<<C::NUM_BLOCKS, C::NUM_THREADS, C::DYNAMIC_SHARED_MEMORY>>>(g[idx]);
+        cudaLaunchKernelEx(launch_config, kernel_entrypoint<C>, g[idx]);
     }
 
     // Benchmark
@@ -647,7 +649,7 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     CUDACHECK(cudaEventRecord(start));
     for (int i = 0; i < num_iters; i++) {
         int idx = i % arg_group_count;
-        kernel_entrypoint<C><<<C::NUM_BLOCKS, C::NUM_THREADS, C::DYNAMIC_SHARED_MEMORY>>>(g[idx]);
+        cudaLaunchKernelEx(launch_config, kernel_entrypoint<C>, g[idx]);
     }
     CUDACHECK(cudaEventRecord(stop));
     CUDACHECK(cudaEventSynchronize(stop));
