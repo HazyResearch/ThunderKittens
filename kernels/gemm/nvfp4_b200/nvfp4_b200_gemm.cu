@@ -88,18 +88,18 @@ __device__ inline void kernel(const globals<C> &g) {
     outputs_t       &output_tiles                      = sm_allocator.allocate<outputs_t>();
 
     // Allocate tensor memory
-    tensor_allocator<1, C::CLUSTER_SIZE> tm_allocator;
-    auto out_tm  = tm_allocator.template allocate<full_tt_fl<C::Nb>>(0);
-    auto A_sc_tm = tm_allocator.template allocate<full_tt_fp8e4m3<16*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(256);
-    auto B_sc_tm = tm_allocator.template allocate<full_tt_fp8e4m3<32*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(384);
+    tensor_allocator<1, C::CLUSTER_SIZE, false> tm_allocator;
 
     // Set up mbarriers
+    __shared__ uint32_t tmem_addr;
+    __shared__ semaphore tmem_provisioned;
     __shared__ semaphore inputs_arrived[C::LOAD_PIPE_DEPTH];
     __shared__ semaphore scales_arrived[C::LOAD_PIPE_DEPTH];
     __shared__ semaphore inputs_finished[C::LOAD_PIPE_DEPTH];
     __shared__ semaphore outputs_arrived;
     __shared__ semaphore outputs_finished;
     if (threadIdx.x == 32) {
+        init_semaphore(tmem_provisioned, 0, 1);
         #pragma unroll
         for (int i = 0; i < C::LOAD_PIPE_DEPTH; ++i) {
             init_semaphore(inputs_arrived[i], 0, 1);
@@ -157,6 +157,9 @@ __device__ inline void kernel(const globals<C> &g) {
         } else if (cta_id == 0 && warp_id == 1 && lane_id == 0) {
             // Load A scales from shared memory to tensor memory
             everyone::tma::cluster::wait_aligned();
+            wait(tmem_provisioned, 0);
+            tm_allocator.set_addr(tmem_addr);
+            auto A_sc_tm = tm_allocator.template allocate<full_tt_fp8e4m3<16*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(256);
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 #pragma unroll 4
                 for (int i = 0; i < num_red_blocks; i++) {
@@ -176,6 +179,9 @@ __device__ inline void kernel(const globals<C> &g) {
         } else if (cta_id == 0 && warp_id == 2 && lane_id == 0) {
             // Load B scales from shared memory to tensor memory
             everyone::tma::cluster::wait_aligned();
+            wait(tmem_provisioned, 0);
+            tm_allocator.set_addr(tmem_addr);
+            auto B_sc_tm = tm_allocator.template allocate<full_tt_fp8e4m3<32*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(384);
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 #pragma unroll 4
                 for (int i = 0; i < num_red_blocks; i++) {
@@ -197,6 +203,11 @@ __device__ inline void kernel(const globals<C> &g) {
         } else if (cta_id == 0 && warp_id == 0 && lane_id == 0) {
             // Launch tensor core matrix multiplies
             everyone::tma::cluster::wait_aligned();
+            wait(tmem_provisioned, 0);
+            tm_allocator.set_addr(tmem_addr);
+            auto out_tm  = tm_allocator.template allocate<full_tt_fl<C::Nb>>(0);
+            auto A_sc_tm = tm_allocator.template allocate<full_tt_fp8e4m3<16*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(256);
+            auto B_sc_tm = tm_allocator.template allocate<full_tt_fp8e4m3<32*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(384);
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 tma::cluster::wait(outputs_finished, get_phasebit<1>(phasebits, 0));
                 update_phasebit<1>(phasebits, 0);
@@ -219,6 +230,13 @@ __device__ inline void kernel(const globals<C> &g) {
     } else {
         // Consumer group
         everyone::tma::cluster::wait_aligned();
+        if (warpgroup::warpid() == 0) {
+            tm_allocator.provision(tmem_addr);
+            warp::arrive(tmem_provisioned);
+        }
+        wait(tmem_provisioned, 0);
+        tm_allocator.set_addr(tmem_addr);
+        auto out_tm = tm_allocator.template allocate<full_tt_fl<C::Nb>>(0);
         const bf16 global_scale_bf16 = __float2bfloat16(g.A_sc_global[{0}] * g.B_sc_global[{0}]);
         const bf16_2 global_scale = {global_scale_bf16, global_scale_bf16};
 
@@ -266,6 +284,8 @@ __device__ inline void kernel(const globals<C> &g) {
                 warpgroup::tma::store_async<dim::ROW, cache_policy::EVICT_FIRST>(g.D, output_tiles.D[i%C::NUM_D_TILES], {row_block_idx*2 + cta_id, C::EPI_PIPE_DEPTH*col_block_idx + i});
             }
         }
+        warpgroup::sync(1);
+        if (warpgroup::warpid() == 0) tm_allocator.deprovision();
     }
 }
 
