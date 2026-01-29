@@ -13,6 +13,7 @@ struct config {
     static_assert(_EPI_PIPE_DEPTH <= 1 || _NUM_D_TILES >= 2, "NUM_D_TILES must be at least 2 if EPI_PIPE_DEPTH > 1");
 
     static constexpr int CLUSTER_SIZE = 2;
+    static constexpr bool USE_PDL = true;
 
     static constexpr int STATIC_SHARED_MEMORY = 1024;
     static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - STATIC_SHARED_MEMORY;

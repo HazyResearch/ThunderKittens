@@ -27,15 +27,7 @@ consteval int min_blocks_per_sm() {
 template <typename Config, typename Globals, auto Kernel>
 __global__
 __launch_bounds__(Config::NUM_THREADS, min_blocks_per_sm<Config>())
-void global_kernel_unclustered(const __grid_constant__ Globals G) {
-    Kernel(G);
-}
-
-template <typename Config, typename Globals, auto Kernel>
-__global__
-__launch_bounds__(Config::NUM_THREADS, min_blocks_per_sm<Config>())
-__cluster_dims__(Config::CLUSTER_SIZE)
-void global_kernel_clustered(const __grid_constant__ Globals G) {
+void global_kernel(const __grid_constant__ Globals G) {
     Kernel(G);
 }
 
@@ -174,6 +166,13 @@ concept static_block = requires { Config::NUM_THREADS; };
 template <typename Config>
 concept static_dynamic_shared_memory = requires { Config::DYNAMIC_SHARED_MEMORY; };
 
+template <typename Config>
+concept has_pdl_config = requires { { Config::USE_PDL } -> std::convertible_to<bool>; };
+template <typename Config>
+inline constexpr bool use_pdl = false;
+template <typename Config> requires has_pdl_config<Config>
+inline constexpr bool use_pdl<Config> = Config::USE_PDL;
+
 template <typename Config, typename Globals, auto Kernel>
 static inline void launch_kernel(const Globals &G) {
     dim3 grid;
@@ -196,19 +195,21 @@ static inline void launch_kernel(const Globals &G) {
 
     cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
-    if constexpr (Config::CLUSTER_SIZE <= 1) {
-        CUDACHECK(cudaFuncSetAttribute(global_kernel_unclustered<Config, Globals, Kernel>, cudaFuncAttributeMaxDynamicSharedMemorySize, dynamic_shared_memory));
-        global_kernel_unclustered<Config, Globals, Kernel><<<grid, block, dynamic_shared_memory, stream>>>(G);
-    } else {
 #if defined(KITTENS_HOPPER)
-        static_assert(Config::CLUSTER_SIZE <= 8, "Cluster size must be less than or equal to 8 for Hopper");
+    static_assert(Config::CLUSTER_SIZE <= 8, "Cluster size must be less than or equal to 8 for Hopper");
 #elif defined(KITTENS_BLACKWELL)
-        static_assert(Config::CLUSTER_SIZE <= 16, "Cluster size must be less than or equal to 16 for Blackwell");
-        if constexpr (Config::CLUSTER_SIZE > 8)
-            CUDACHECK(cudaFuncSetAttribute(global_kernel_clustered<Config, Globals, Kernel>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
+    static_assert(Config::CLUSTER_SIZE <= 16, "Cluster size must be less than or equal to 16 for Blackwell");
+    if constexpr (Config::CLUSTER_SIZE > 8)
+        CUDACHECK(cudaFuncSetAttribute(global_kernel<Config, Globals, Kernel>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
 #endif
-        CUDACHECK(cudaFuncSetAttribute(global_kernel_clustered<Config, Globals, Kernel>, cudaFuncAttributeMaxDynamicSharedMemorySize, dynamic_shared_memory));
-        global_kernel_clustered<Config, Globals, Kernel><<<grid, block, dynamic_shared_memory, stream>>>(G);
+    CUDACHECK(cudaFuncSetAttribute(global_kernel<Config, Globals, Kernel>, cudaFuncAttributeMaxDynamicSharedMemorySize, dynamic_shared_memory));
+
+    if constexpr (Config::CLUSTER_SIZE <= 1) {
+        LaunchConfig<false, use_pdl<Config>> launch_config(grid, block, dynamic_shared_memory, stream);
+        CUDACHECK(cudaLaunchKernelEx(launch_config, global_kernel<Config, Globals, Kernel>, G));
+    } else {
+        LaunchConfig<true, use_pdl<Config>> launch_config(grid, block, dynamic_shared_memory, stream, Config::CLUSTER_SIZE);
+        CUDACHECK(cudaLaunchKernelEx(launch_config, global_kernel<Config, Globals, Kernel>, G));
     }
 }
 
