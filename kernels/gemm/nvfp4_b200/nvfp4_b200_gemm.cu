@@ -139,7 +139,7 @@ __device__ inline void kernel(const globals<C> &g) {
         // Producer group
         int warp_id = group<WARPGROUP_WARPS*C::PRODUCER_WARPGROUPS>::warpid();
         if (warp_id == 6 && lane_id == 0) {
-            // Load input matrices to shared memory
+            // Load input tiles to shared memory
             pdl::wait();
             everyone::tma::cluster::wait_aligned();
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
@@ -159,6 +159,7 @@ __device__ inline void kernel(const globals<C> &g) {
                 }
             }
         } else if (warp_id == 5 && lane_id == 0) {
+            // Load input scales to shared memory
             pdl::wait();
             everyone::tma::cluster::wait_aligned();
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
