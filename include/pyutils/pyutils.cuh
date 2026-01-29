@@ -46,13 +46,26 @@ template<ducks::gl::all GL> struct from_object<GL> {
     }
 };
 
+// Extract first argument type from kernel
+template<typename T> struct first_arg;
+template<typename T> struct first_arg<void(*)(T)> { using type = T; };
+template<auto F> using first_arg_t = typename first_arg<decltype(F)>::type;
+
+// Helper to cast a member pointer to the target class. Used for verifying inputs.
+template<typename TGlobal, typename MT, typename TBase>
+constexpr MT TGlobal::* member_cast(MT TBase::* p) {
+    return static_cast<MT TGlobal::*>(p);
+}
+
 template<typename> struct trait;
 template<typename> using object = pybind11::object;
 template<typename MT, typename T> struct trait<MT T::*> { using member_type = MT; using type = T; };
 template<typename T> concept has_dynamic_shared_memory = requires(T t) { { t.dynamic_shared_memory() } -> std::convertible_to<int>; };
-template<auto kernel, typename TGlobal> static void bind_kernel(auto m, auto name, auto TGlobal::*... member_ptrs) {
-    m.def(name, [](object<decltype(member_ptrs)>... args, pybind11::kwargs kwargs) {
-        TGlobal __g__ {from_object<typename trait<decltype(member_ptrs)>::member_type>::make(args)...};
+template<auto kernel, typename... MemberPtrs> static void bind_kernel(auto m, auto name, MemberPtrs... member_ptrs) {
+    using TGlobal = first_arg_t<kernel>;
+    ((void)member_cast<TGlobal>(member_ptrs), ...); // validate pointer compatibility.
+    m.def(name, [=](object<MemberPtrs>... args, pybind11::kwargs kwargs) {
+        TGlobal __g__ {from_object<typename trait<MemberPtrs>::member_type>::make(args)...};
         cudaStream_t raw_stream = nullptr;
         if (kwargs.contains("stream")) {
             // Extract stream pointer
@@ -68,9 +81,11 @@ template<auto kernel, typename TGlobal> static void bind_kernel(auto m, auto nam
         }
     });
 }
-template<auto function, typename TGlobal> static void bind_function(auto m, auto name, auto TGlobal::*... member_ptrs) {
-    m.def(name, [](object<decltype(member_ptrs)>... args) {
-        TGlobal __g__ {from_object<typename trait<decltype(member_ptrs)>::member_type>::make(args)...};
+template<auto function, typename... MemberPtrs> static void bind_function(auto m, auto name, MemberPtrs... member_ptrs) {
+    m.def(name, [=](object<MemberPtrs>... args) {
+        using TGlobal = first_arg_t<function>;
+        ((void)member_cast<TGlobal>(member_ptrs), ...); // validate pointer compatibility.
+        TGlobal __g__ {from_object<typename trait<MemberPtrs>::member_type>::make(args)...};
         function(__g__);
     });
 }
