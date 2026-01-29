@@ -24,9 +24,6 @@ struct config {
     static constexpr int NUM_WARPS = NUM_WARPGROUPS * WARPGROUP_WARPS;
     static constexpr int NUM_THREADS = NUM_WARPS * WARP_THREADS;
 
-    static constexpr int PRODUCER_REGISTERS = 256;
-    static constexpr int CONSUMER_REGISTERS = 256;
-
     static constexpr int LOAD_PIPE_DEPTH = _LOAD_PIPE_DEPTH;
     static constexpr int EPI_PIPE_DEPTH = _EPI_PIPE_DEPTH;
 
@@ -130,8 +127,6 @@ __device__ inline void kernel(const globals<C> &g) {
     // Main divergence
     if (warpgroup_id == C::NUM_WARPGROUPS - 1) {
         // Producer group
-        warpgroup::increase_registers<C::PRODUCER_REGISTERS>();
-
         if (warp_id == 3 && lane_id == 0) {
             // Load input matrices and scales to shared memory
             pdl::wait();
@@ -193,8 +188,6 @@ __device__ inline void kernel(const globals<C> &g) {
         }
     } else {
         // Consumer group
-        warpgroup::increase_registers<C::CONSUMER_REGISTERS>();
-
         for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
             int supergroup_idx = block_idx / num_blocks_per_supergroup;
             int idx_within_supergroup = block_idx % num_blocks_per_supergroup;
