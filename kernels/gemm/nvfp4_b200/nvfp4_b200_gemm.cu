@@ -19,7 +19,7 @@ struct config {
     static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - STATIC_SHARED_MEMORY;
 
     static constexpr int CONSUMER_WARPGROUPS = 1;
-    static constexpr int PRODUCER_WARPGROUPS = 1;
+    static constexpr int PRODUCER_WARPGROUPS = 2;
     static constexpr int NUM_WARPGROUPS = CONSUMER_WARPGROUPS + PRODUCER_WARPGROUPS;
     static constexpr int NUM_WARPS = NUM_WARPGROUPS * WARPGROUP_WARPS;
     static constexpr int NUM_THREADS = NUM_WARPS * WARP_THREADS;
@@ -107,7 +107,7 @@ __device__ inline void kernel(const globals<C> &g) {
         #pragma unroll
         for (int i = 0; i < C::LOAD_PIPE_DEPTH; ++i) {
             init_semaphore(inputs_arrived[i], 0, 1);
-            init_semaphore(scales_arrived[i], 0, 2);
+            init_semaphore(scales_arrived[i], 0, 3);
             init_semaphore(inputs_finished[i], 0, 1);
         }
         init_semaphore(outputs_arrived, 0, 1);
@@ -117,7 +117,6 @@ __device__ inline void kernel(const globals<C> &g) {
 
     // Thread metadata
     int lane_id = warp::laneid();
-    int warp_id = warpgroup::warpid();
     int warpgroup_id = warpgroup::groupid();
     int cta_id = cluster_ctarank();
     int cluster_id = clusterIdx().x;
@@ -134,9 +133,10 @@ __device__ inline void kernel(const globals<C> &g) {
     uint32_t phasebits = 0xFFFF0000;
 
     // Main divergence
-    if (warpgroup_id == C::NUM_WARPGROUPS - 1) {
+    if (warpgroup_id >= C::CONSUMER_WARPGROUPS) {
         // Producer group
-        if (warp_id == 3 && lane_id == 0) {
+        int warp_id = group<WARPGROUP_WARPS*C::PRODUCER_WARPGROUPS>::warpid();
+        if (warp_id == 6 && lane_id == 0) {
             // Load input matrices to shared memory
             pdl::wait();
             everyone::tma::cluster::wait_aligned();
@@ -158,7 +158,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
             }
-        } else if (cta_id == 0 && warp_id == 1 && lane_id == 0) {
+        } else if (cta_id == 0 && warp_id == 5 && lane_id == 0) {
             // Load A scales from shared memory to tensor memory
             everyone::tma::cluster::wait_aligned();
             wait(tmem_provisioned, 0);
@@ -180,7 +180,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
             }
-        } else if (cta_id == 0 && warp_id == 2 && lane_id == 0) {
+        } else if (cta_id == 0 && warp_id < 2 && lane_id == 0) {
             // Load B scales from shared memory to tensor memory
             everyone::tma::cluster::wait_aligned();
             wait(tmem_provisioned, 0);
@@ -193,18 +193,15 @@ __device__ inline void kernel(const globals<C> &g) {
                     update_phasebit<0>(phasebits, stage);
                     #pragma unroll
                     for (int ii = 0; ii < C::MMA_PER_TILE; ii++) {
-                        auto B_sc_tm_subtile_0 = B_sc_tm.template subtile<full_tt_fp8e4m3<16>>(stage*C::MMA_PER_TILE*32 + ii*32 +  0);
-                        auto B_sc_tm_subtile_1 = B_sc_tm.template subtile<full_tt_fp8e4m3<16>>(stage*C::MMA_PER_TILE*32 + ii*32 + 16);
-                        auto &B_sc_sm_subtile_0 = *reinterpret_cast<st_fp8e4m3<32, 16, false> *>(reinterpret_cast<uint64_t>(&input_scales[stage].B[0].data[0]) + 16*32*ii);
-                        auto &B_sc_sm_subtile_1 = *reinterpret_cast<st_fp8e4m3<32, 16, false> *>(reinterpret_cast<uint64_t>(&input_scales[stage].B[1].data[0]) + 16*32*ii);
+                        auto B_sc_tm_subtile_0 = B_sc_tm.template subtile<full_tt_fp8e4m3<16>>(stage*C::MMA_PER_TILE*32 + ii*32 + warp_id*16);
+                        auto &B_sc_sm_subtile_0 = *reinterpret_cast<st_fp8e4m3<32, 16, false> *>(reinterpret_cast<uint64_t>(&input_scales[stage].B[warp_id].data[0]) + 16*32*ii);
                         load_mxnv_scale_async2(B_sc_tm_subtile_0, B_sc_sm_subtile_0);
-                        load_mxnv_scale_async2(B_sc_tm_subtile_1, B_sc_sm_subtile_1);
                     }
                     kittens::detail::tcgen05::commit<2>(scales_arrived[stage], 0b1);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
             }
-        } else if (cta_id == 0 && warp_id == 0 && lane_id == 0) {
+        } else if (cta_id == 0 && warp_id == 7 && lane_id == 0) {
             // Launch tensor core matrix multiplies
             everyone::tma::cluster::wait_aligned();
             wait(tmem_provisioned, 0);
