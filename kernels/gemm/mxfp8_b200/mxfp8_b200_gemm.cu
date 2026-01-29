@@ -104,7 +104,7 @@ __device__ inline void kernel(const globals<C> &g) {
         init_semaphore(outputs_arrived, 0, 1);
         init_semaphore(outputs_finished, 0, C::CLUSTER_SIZE);
     }
-    everyone::tma::cluster::sync();
+    everyone::tma::cluster::arrive_aligned();
 
     // Thread metadata
     int lane_id = warp::laneid();
@@ -130,6 +130,7 @@ __device__ inline void kernel(const globals<C> &g) {
         if (warp_id == 3 && lane_id == 0) {
             // Load input matrices and scales to shared memory
             pdl::wait();
+            everyone::tma::cluster::wait_aligned();
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 int supergroup_idx = block_idx / num_blocks_per_supergroup;
                 int idx_within_supergroup = block_idx % num_blocks_per_supergroup;
@@ -150,6 +151,7 @@ __device__ inline void kernel(const globals<C> &g) {
             }
         } else if (cta_id == 0 && warp_id == 1 && lane_id == 0) {
             // Load A and B scales from shared memory to tensor memory
+            everyone::tma::cluster::wait_aligned();
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 for (int i = 0; i < num_iters_per_block; i++) {
                     tma::cluster::expect_bytes(inputs_arrived[stage], 2 * (sizeof(input_tiles_t) + sizeof(input_scales_t)));
@@ -167,6 +169,7 @@ __device__ inline void kernel(const globals<C> &g) {
             }
         } else if (cta_id == 0 && warp_id == 0 && lane_id == 0) {
             // Launch tensor core matrix multiply
+            everyone::tma::cluster::wait_aligned();
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 tma::cluster::wait(outputs_finished, get_phasebit<1>(phasebits, 0));
                 update_phasebit<1>(phasebits, 0);
@@ -188,6 +191,7 @@ __device__ inline void kernel(const globals<C> &g) {
         }
     } else {
         // Consumer group
+        everyone::tma::cluster::wait_aligned();
         for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
             int supergroup_idx = block_idx / num_blocks_per_supergroup;
             int idx_within_supergroup = block_idx % num_blocks_per_supergroup;
