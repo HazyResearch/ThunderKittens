@@ -288,6 +288,7 @@ __device__ inline void kernel(const globals<C> &g) {
             }
         }
         warpgroup::sync(1);
+        warpgroup::pdl::arrive();
         if (warpgroup::warpid() == 0) tm_allocator.deprovision();
     }
 }
