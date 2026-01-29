@@ -14,7 +14,6 @@ struct config {
 
     static constexpr int CLUSTER_SIZE = 2;
 
-    static constexpr int NUM_BLOCKS = 148;
     static constexpr int STATIC_SHARED_MEMORY = 1024;
     static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - STATIC_SHARED_MEMORY;
 
@@ -244,6 +243,7 @@ __device__ inline void kernel(const globals<C> &g) {
             }
         }
         warpgroup::sync(1);
+        warpgroup::pdl::arrive();
         if (warpgroup::warpid() == 0) tm_allocator.deprovision();
     }
 }
