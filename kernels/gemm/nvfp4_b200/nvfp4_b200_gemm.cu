@@ -24,9 +24,6 @@ struct config {
     static constexpr int NUM_WARPS = NUM_WARPGROUPS * WARPGROUP_WARPS;
     static constexpr int NUM_THREADS = NUM_WARPS * WARP_THREADS;
 
-    static constexpr int PRODUCER_REGISTERS = 256;
-    static constexpr int CONSUMER_REGISTERS = 256;
-
     static constexpr int LOAD_PIPE_DEPTH = _LOAD_PIPE_DEPTH;
     static constexpr int EPI_PIPE_DEPTH = _EPI_PIPE_DEPTH;
 
@@ -135,8 +132,6 @@ __device__ inline void kernel(const globals<C> &g) {
     // Main divergence
     if (warpgroup_id == C::NUM_WARPGROUPS - 1) {
         // Producer group
-        warpgroup::increase_registers<C::PRODUCER_REGISTERS>();
-
         if (warp_id == 3 && lane_id == 0) {
             // Load input matrices to shared memory
             pdl::wait();
@@ -219,7 +214,6 @@ __device__ inline void kernel(const globals<C> &g) {
         }
     } else {
         // Consumer group
-        warpgroup::increase_registers<C::CONSUMER_REGISTERS>();
         const bf16 global_scale_bf16 = __float2bfloat16(g.A_sc_global[{0}] * g.B_sc_global[{0}]);
         const bf16_2 global_scale = {global_scale_bf16, global_scale_bf16};
 
