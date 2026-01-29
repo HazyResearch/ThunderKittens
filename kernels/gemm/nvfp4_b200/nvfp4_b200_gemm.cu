@@ -109,7 +109,7 @@ __device__ inline void kernel(const globals<C> &g) {
         init_semaphore(outputs_arrived, 0, 1);
         init_semaphore(outputs_finished, 0, C::CLUSTER_SIZE);
     }
-    everyone::tma::cluster::sync();
+    everyone::tma::cluster::arrive_aligned();
 
     // Thread metadata
     int lane_id = warp::laneid();
@@ -135,6 +135,7 @@ __device__ inline void kernel(const globals<C> &g) {
         if (warp_id == 3 && lane_id == 0) {
             // Load input matrices to shared memory
             pdl::wait();
+            everyone::tma::cluster::wait_aligned();
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 int supergroup_idx = block_idx / num_blocks_per_supergroup;
                 int idx_within_supergroup = block_idx % num_blocks_per_supergroup;
@@ -155,6 +156,7 @@ __device__ inline void kernel(const globals<C> &g) {
             }
         } else if (cta_id == 0 && warp_id == 1 && lane_id == 0) {
             // Load A scales from shared memory to tensor memory
+            everyone::tma::cluster::wait_aligned();
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 #pragma unroll 4
                 for (int i = 0; i < num_red_blocks; i++) {
@@ -173,6 +175,7 @@ __device__ inline void kernel(const globals<C> &g) {
             }
         } else if (cta_id == 0 && warp_id == 2 && lane_id == 0) {
             // Load B scales from shared memory to tensor memory
+            everyone::tma::cluster::wait_aligned();
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 #pragma unroll 4
                 for (int i = 0; i < num_red_blocks; i++) {
@@ -193,6 +196,7 @@ __device__ inline void kernel(const globals<C> &g) {
             }
         } else if (cta_id == 0 && warp_id == 0 && lane_id == 0) {
             // Launch tensor core matrix multiplies
+            everyone::tma::cluster::wait_aligned();
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 tma::cluster::wait(outputs_finished, get_phasebit<1>(phasebits, 0));
                 update_phasebit<1>(phasebits, 0);
@@ -214,6 +218,7 @@ __device__ inline void kernel(const globals<C> &g) {
         }
     } else {
         // Consumer group
+        everyone::tma::cluster::wait_aligned();
         const bf16 global_scale_bf16 = __float2bfloat16(g.A_sc_global[{0}] * g.B_sc_global[{0}]);
         const bf16_2 global_scale = {global_scale_bf16, global_scale_bf16};
 
