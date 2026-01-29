@@ -54,6 +54,10 @@ struct globals {
     B_gl B;       // N x K
     B_sc_gl B_sc; // (N // 128) x (K // 128) x 32 x 16
     D_gl D;       // M x N
+
+    __host__ inline dim3 grid() const {
+        return dim3(min((D.rows()/(C::Mb/2))*(D.cols()/C::Nb), num_sms()));
+    }
 };
 
 template <typename C>
@@ -459,7 +463,7 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     CUDACHECK(cudaFuncSetAttribute(kernel_entrypoint<C>, cudaFuncAttributeMaxDynamicSharedMemorySize, C::DYNAMIC_SHARED_MEMORY));
 
     // Prepare kernel launch configuration
-    LaunchConfig<true, true> launch_config(C::NUM_BLOCKS, C::NUM_THREADS, C::DYNAMIC_SHARED_MEMORY, 0, C::CLUSTER_SIZE);
+    LaunchConfig<true, true> launch_config(g[0].grid(), C::NUM_THREADS, C::DYNAMIC_SHARED_MEMORY, 0, C::CLUSTER_SIZE);
 
     // Number of iterations
     int num_warmups = ncu ? 0 : 5;
