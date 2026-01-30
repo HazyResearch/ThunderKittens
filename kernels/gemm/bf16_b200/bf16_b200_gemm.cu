@@ -72,25 +72,8 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
 
     const int cta_rank = cluster_ctarank();
     const int iters_per_task = g.a.cols() / C::Kb;
-
-    auto get_tile_idx = [&](int block_idx) -> int2 {
-        const int cluster_idx = block_idx / C::CLUSTER_SIZE;
-        const int rblks = g.d.rows() / (C::Mb * C::NUM_CONSUMERS);
-        const int cblks = g.d.cols() / C::Nb;
-        const int supergroup_cblks = (cblks/C::SUPERGROUP_SIZE)*C::SUPERGROUP_SIZE;
-        const int finalgroup_cblks = cblks-supergroup_cblks;
-        const int supergroup_numel = C::SUPERGROUP_SIZE*rblks;
-        if (cluster_idx < rblks*supergroup_cblks) {
-            const int supergroup_idx = cluster_idx/supergroup_numel;
-            const int rblk_idx = (cluster_idx%supergroup_numel)/C::SUPERGROUP_SIZE;
-            return { (supergroup_idx&1) ? rblks-rblk_idx-1 : rblk_idx, C::SUPERGROUP_SIZE*supergroup_idx + cluster_idx%C::SUPERGROUP_SIZE };
-        } else {
-            const int supergroup_idx = cluster_idx/supergroup_numel;
-            const int remainder_task_id = cluster_idx - supergroup_cblks*cblks;
-            const int rblk_idx = remainder_task_id/finalgroup_cblks;
-            return { (supergroup_idx&1) ? rblks-rblk_idx-1 : rblk_idx, supergroup_cblks + remainder_task_id%finalgroup_cblks };
-        }
-    };
+    const int rblks = g.d.rows() / (C::Mb * C::NUM_CONSUMERS);
+    const int cblks = g.d.cols() / C::Nb;
 
     extern __shared__ int __shm[];
     tma_swizzle_allocator al((int*)&__shm[0]);
@@ -136,7 +119,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
 
         if (warp::laneid() == 0 && warpgroup::warpid() == 3) {
             int input_ring = 0;
-            int2 tile_coord = get_tile_idx(blockIdx.x);
+            int2 tile_coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE>(rblks, cblks, blockIdx.x/C::CLUSTER_SIZE);
             pdl::wait();
             everyone::tma::cluster::wait_aligned();
             for (int task_iter = 0; true; task_iter++) {
@@ -152,7 +135,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
                 tma::cluster::wait(schedule_arrived[task_iter%C::CLC_PIPE_DEPTH], (task_iter/C::CLC_PIPE_DEPTH)%2);
                 auto schedule = clc::query(clc_handle[task_iter%C::CLC_PIPE_DEPTH]);
                 tma::cluster::arrive(schedule_finished[task_iter%C::CLC_PIPE_DEPTH], 0);
-                if (schedule.success) tile_coord = get_tile_idx(schedule.x);
+                if (schedule.success) tile_coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE>(rblks, cblks, schedule.x/C::CLUSTER_SIZE);
                 else break;
             }
         } else if (warp::laneid() == 0 && warpgroup::warpid() == 2) {
@@ -214,14 +197,14 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
             if constexpr(C::Mb == 256) d_tt[i] = tm_alloc.template allocate<d_tt_t>(   (i+warpgroup::groupid())*C::Nb);
             else                       d_tt[i] = tm_alloc.template allocate<d_tt_t>(0, (i+warpgroup::groupid())*C::Nb);
         }
-        int2 tile_coord, next_tile_coord = get_tile_idx(blockIdx.x);
+        int2 tile_coord, next_tile_coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE>(rblks, cblks, blockIdx.x/C::CLUSTER_SIZE);
         for(int task_iter = 0; true; task_iter++) {
             tile_coord = next_tile_coord;
             tma::cluster::wait(schedule_arrived[task_iter%C::CLC_PIPE_DEPTH], (task_iter/C::CLC_PIPE_DEPTH)%2);
             auto schedule = clc::query(clc_handle[task_iter%C::CLC_PIPE_DEPTH]);
             warpgroup::sync(warpgroup::groupid()+1);
             warpgroup::tma::cluster::arrive(schedule_finished[task_iter%C::CLC_PIPE_DEPTH], 0);
-            if (schedule.success) next_tile_coord = get_tile_idx(schedule.x);
+            if (schedule.success) next_tile_coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE>(rblks, cblks, schedule.x/C::CLUSTER_SIZE);
             wait(outputs_arrived[warpgroup::groupid()], task_iter%2);
             if constexpr (C::OVERLAP_MMA_EPI) {
                 rt_bf<C::Mb/8, C::Nb/C::EPI_PIPE_DEPTH> d_reg;

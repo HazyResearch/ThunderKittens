@@ -333,6 +333,59 @@ __device__ static inline int cluster_ctarank() {
 
 /* ----------  PIPELINE UTILS  ---------- */
 
+/**
+ * @brief Map a linear task index to a 2D swizzled (row, col) index using supergroup snake ordering.
+ *
+ * Constraints that must be enforced by the caller:
+ * - SUPERGROUP_SIZE > 0
+ * - 0 <= task_idx < num_rows * num_cols
+ * - num_rows * num_cols must not overflow the index type
+ *
+ * @param num_rows Number of rows in the 2D domain
+ * @param num_cols Number of columns in the 2D domain
+ * @param task_idx Linear task index
+ * @tparam SUPERGROUP_SIZE Supergroup extent (columns if row-major, rows if column-major)
+ * @tparam ROW_MAJOR Select row-major or column-major swizzle
+ * @return int2 {row_idx, col_idx}
+ */
+template <int SUPERGROUP_SIZE, bool ROW_MAJOR = true>
+__device__ static inline int2 get_swizzled_2d_idx(const int num_rows, const int num_cols, const int linear_idx) {
+    static_assert(SUPERGROUP_SIZE > 0, "SUPERGROUP_SIZE must be greater than 0");
+    if constexpr (ROW_MAJOR) {
+        const int supergroup_numel = num_rows*SUPERGROUP_SIZE;
+        const int supergroup_idx = linear_idx/supergroup_numel;
+        const int supersection_cols = (num_cols/SUPERGROUP_SIZE)*SUPERGROUP_SIZE;
+        const int supersection_numel = num_rows*supersection_cols;
+        const int finalsection_cols = num_cols-supersection_cols;
+        int row_idx, col_idx;
+        if (linear_idx < supersection_numel) {
+            row_idx = (linear_idx%supergroup_numel)/SUPERGROUP_SIZE;
+            col_idx = supergroup_idx*SUPERGROUP_SIZE + linear_idx%SUPERGROUP_SIZE;
+        } else {
+            const int remainder_task_id = linear_idx - supersection_numel;
+            row_idx = remainder_task_id/finalsection_cols;
+            col_idx = supersection_cols + remainder_task_id%finalsection_cols;
+        }
+        return { (supergroup_idx&1) ? num_rows-row_idx-1 : row_idx, col_idx };
+    } else {
+        const int supergroup_numel = num_cols*SUPERGROUP_SIZE;
+        const int supergroup_idx = linear_idx/supergroup_numel;
+        const int supersection_rows = (num_rows/SUPERGROUP_SIZE)*SUPERGROUP_SIZE;
+        const int supersection_numel = num_cols*supersection_rows;
+        const int finalsection_rows = num_rows-supersection_rows;
+        int row_idx, col_idx;
+        if (linear_idx < supersection_numel) {
+            row_idx = supergroup_idx*SUPERGROUP_SIZE + linear_idx%SUPERGROUP_SIZE;
+            col_idx = (linear_idx%supergroup_numel)/SUPERGROUP_SIZE;
+        } else {
+            const int remainder_task_id = linear_idx - supersection_numel;
+            row_idx = supersection_rows + remainder_task_id%finalsection_rows;
+            col_idx = remainder_task_id/finalsection_rows;
+        }
+        return { row_idx, (supergroup_idx&1) ? num_cols-col_idx-1 : col_idx };
+    }
+}
+
 template<int half>
 __device__ static inline int get_phasebit(uint32_t bitfield, int ring_id) {
     if constexpr (half == 0)
