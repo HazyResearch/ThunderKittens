@@ -131,9 +131,9 @@ __device__ inline void kernel(const globals<C> &g) {
     uint32_t phasebits = 0xFFFF0000;
 
     // Main divergence
-    if (warpgroup_id == C::NUM_WARPGROUPS - 1) {
+    if (warpgroup_id >= C::CONSUMER_WARPGROUPS && elect_warp_leader()) {
         // Producer group
-        if (warp_id == 3 && lane_id == 0) {
+        if (warp_id == 3) {
             // Load input tiles to shared memory
             pdl::wait();
             everyone::tma::cluster::wait_aligned();
@@ -153,7 +153,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
             }
-        } else if (warp_id == 2 && lane_id == 0) {
+        } else if (warp_id == 2) {
             // Load input scales to shared memory
             pdl::wait();
             everyone::tma::cluster::wait_aligned();
@@ -173,7 +173,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
             }
-        } else if (cta_id == 0 && warp_id == 1 && lane_id == 0) {
+        } else if (cta_id == 0 && warp_id == 1) {
             // Load A and B scales from shared memory to tensor memory
             everyone::tma::cluster::wait_aligned();
             wait(tmem_provisioned, 0);
@@ -197,7 +197,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
             }
-        } else if (cta_id == 0 && warp_id == 0 && lane_id == 0) {
+        } else if (cta_id == 0 && warp_id == 0) {
             // Launch tensor core matrix multiply
             everyone::tma::cluster::wait_aligned();
             wait(tmem_provisioned, 0);
@@ -217,16 +217,16 @@ __device__ inline void kernel(const globals<C> &g) {
                                         A_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 16),
                                         B_sc_tm.template subtile<full_tt_fp8e8m0<32>>(stage * 32),
                                         inputs_finished[stage]);
-                    else mma2_ABt(out_tm, input_tiles[stage].A, input_tiles[stage].B,
-                                  A_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 16),
-                                  B_sc_tm.template subtile<full_tt_fp8e8m0<32>>(stage * 32),
-                                  inputs_finished[stage]);
+                    else       mma2_ABt(out_tm, input_tiles[stage].A, input_tiles[stage].B,
+                                        A_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 16),
+                                        B_sc_tm.template subtile<full_tt_fp8e8m0<32>>(stage * 32),
+                                        inputs_finished[stage]);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
                 kittens::detail::tcgen05::commit<2>(outputs_arrived);
             }
         }
-    } else {
+    } else if (warpgroup_id < C::CONSUMER_WARPGROUPS) {
         // Consumer group
         everyone::tma::cluster::wait_aligned();
         if (warpgroup::warpid() == 0) {

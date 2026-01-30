@@ -135,10 +135,10 @@ __device__ inline void kernel(const globals<C> &g) {
     uint32_t phasebits = 0xFFFF0000;
 
     // Main divergence
-    if (warpgroup_id >= C::CONSUMER_WARPGROUPS) {
+    if (warpgroup_id >= C::CONSUMER_WARPGROUPS && elect_warp_leader()) {
         // Producer group
         int warp_id = group<WARPGROUP_WARPS*C::PRODUCER_WARPGROUPS>::warpid();
-        if (warp_id == 6 && lane_id == 0) {
+        if (warp_id == 6) {
             // Load input tiles to shared memory
             pdl::wait();
             everyone::tma::cluster::wait_aligned();
@@ -158,7 +158,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
             }
-        } else if (warp_id == 5 && lane_id == 0) {
+        } else if (warp_id == 5) {
             // Load input scales to shared memory
             pdl::wait();
             everyone::tma::cluster::wait_aligned();
@@ -178,7 +178,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
             }
-        } else if (cta_id == 0 && warp_id == 2 && lane_id == 0) {
+        } else if (cta_id == 0 && warp_id == 2) {
             // Load A scales from shared memory to tensor memory
             everyone::tma::cluster::wait_aligned();
             wait(tmem_provisioned, 0);
@@ -202,7 +202,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
             }
-        } else if (cta_id == 0 && warp_id < 2 && lane_id == 0) {
+        } else if (cta_id == 0 && warp_id < 2) {
             // Load B scales from shared memory to tensor memory
             everyone::tma::cluster::wait_aligned();
             wait(tmem_provisioned, 0);
@@ -225,7 +225,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
             }
-        } else if (cta_id == 0 && warp_id == 7 && lane_id == 0) {
+        } else if (cta_id == 0 && warp_id == 7) {
             // Launch tensor core matrix multiplies
             everyone::tma::cluster::wait_aligned();
             wait(tmem_provisioned, 0);
@@ -254,7 +254,7 @@ __device__ inline void kernel(const globals<C> &g) {
                 kittens::detail::tcgen05::commit<2>(outputs_arrived);
             }
         }
-    } else {
+    } else if (warpgroup_id < C::CONSUMER_WARPGROUPS) {
         // Consumer group
         everyone::tma::cluster::wait_aligned();
         if (warpgroup::warpid() == 0) {
