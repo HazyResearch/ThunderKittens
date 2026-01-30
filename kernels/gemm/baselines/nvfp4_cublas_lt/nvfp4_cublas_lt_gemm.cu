@@ -106,19 +106,13 @@ struct CublasLtNvfp4Gemm {
   }
 
   void run(__nv_fp4x2_e2m1 const* A, __nv_fp4x2_e2m1 const* B,
-           __nv_fp8_e4m3 const* A_scale, __nv_fp8_e4m3 const* B_scale,
-           float const* A_scale_global, float const* B_scale_global,
+           __nv_fp8_e4m3 const* A_scale, __nv_fp8_e4m3 const* B_scale, float alpha,
            __nv_bfloat16* D, cudaStream_t stream = nullptr) {
 
     // Set block scale pointers
     CHECK_CUBLAS(cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &B_scale, sizeof(B_scale)));
     CHECK_CUBLAS(cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &A_scale, sizeof(A_scale)));
 
-    // Per-tensor scales are incorporated into alpha
-    float h_a_scale, h_b_scale;
-    cudaMemcpy(&h_a_scale, A_scale_global, sizeof(float), cudaMemcpyDeviceToHost);
-    cudaMemcpy(&h_b_scale, B_scale_global, sizeof(float), cudaMemcpyDeviceToHost);
-    float alpha = h_a_scale * h_b_scale;
     float beta = 0.0f;
 
     CHECK_CUBLAS(cublasLtMatmul(handle, matmulDesc, &alpha,
@@ -205,6 +199,15 @@ void benchmark(int M, int N, int K) {
   fill<__nv_bfloat16, FillMode::CONSTANT>(block_D_ref, size_D, 0.0f);
   CHECK_CUDA(cudaDeviceSynchronize());
 
+  // Precompute alpha values for each buffer group
+  std::vector<float> alphas(arg_group_count);
+  for (int i = 0; i < arg_group_count; ++i) {
+    float h_a_scale, h_b_scale;
+    CHECK_CUDA(cudaMemcpy(&h_a_scale, blocks_A_scale_global[i], sizeof(float), cudaMemcpyDeviceToHost));
+    CHECK_CUDA(cudaMemcpy(&h_b_scale, blocks_B_scale_global[i], sizeof(float), cudaMemcpyDeviceToHost));
+    alphas[i] = h_a_scale * h_b_scale;
+  }
+
   // Compute reference GEMM
   reference_nvfp4_gemm<__nv_bfloat16>(
       block_D_ref, blocks_A[0], blocks_B[0],
@@ -225,8 +228,7 @@ void benchmark(int M, int N, int K) {
     int idx = i % arg_group_count;
     gemm.run(blocks_A[idx], blocks_B[idx],
              blocks_A_scale[idx], blocks_B_scale[idx],
-             blocks_A_scale_global[idx], blocks_B_scale_global[idx],
-             blocks_D[idx], stream);
+             alphas[idx], blocks_D[idx], stream);
   }
   CHECK_CUDA(cudaStreamSynchronize(stream));
 
@@ -239,8 +241,7 @@ void benchmark(int M, int N, int K) {
     int idx = i % arg_group_count;
     gemm.run(blocks_A[idx], blocks_B[idx],
              blocks_A_scale[idx], blocks_B_scale[idx],
-             blocks_A_scale_global[idx], blocks_B_scale_global[idx],
-             blocks_D[idx], stream);
+             alphas[idx], blocks_D[idx], stream);
   }
   CHECK_CUDA(cudaEventRecord(stop, stream));
   CHECK_CUDA(cudaStreamSynchronize(stream));
@@ -260,8 +261,7 @@ void benchmark(int M, int N, int K) {
   fill<__nv_bfloat16, FillMode::CONSTANT>(blocks_D[0], size_D, 0.0f);
   gemm.run(blocks_A[0], blocks_B[0],
            blocks_A_scale[0], blocks_B_scale[0],
-           blocks_A_scale_global[0], blocks_B_scale_global[0],
-           blocks_D[0], stream);
+           alphas[0], blocks_D[0], stream);
   CHECK_CUDA(cudaStreamSynchronize(stream));
   check_correctness(blocks_D[0], block_D_ref, size_D);
 
