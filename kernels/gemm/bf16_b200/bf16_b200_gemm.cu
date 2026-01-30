@@ -382,7 +382,7 @@ __host__ int main() {
     N = 1024;
     run_benchmark<config<256, 64, 128, 4, true, 5, 2>>(N, N, N, ncu);
     N = 2048;
-    run_benchmark<config<256, 256, 64, 4, true, 5, 8>>(N, N, N, ncu);
+    run_benchmark<config<256, 256, 64, 8, true, 5, 4>>(N, N, N, ncu);
     N = 4096;
     run_benchmark<config<256, 256,  64, 4, false, 4, 8>>(N, N, N, ncu);
     N = 8192;
