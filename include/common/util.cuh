@@ -323,12 +323,38 @@ __device__ static inline int3 clusterIdx() {
     return cluster_idx;
 }
 
+/* Get cluster ID (alias) */
+__device__ static inline int3 clusterid() {
+    int3 clusterid;
+    asm volatile("mov.u32 %0, %clusterid.x;\n" : "=r"(clusterid.x));
+    asm volatile("mov.u32 %0, %clusterid.y;\n" : "=r"(clusterid.y));
+    asm volatile("mov.u32 %0, %clusterid.z;\n" : "=r"(clusterid.z));
+    return clusterid;
+}
+
+/* Get number of clusters */
+__device__ static inline int3 nclusterid() {
+    int3 nclusterid;
+    asm volatile("mov.u32 %0, %clusterid.x;\n" : "=r"(nclusterid.x));
+    asm volatile("mov.u32 %0, %clusterid.y;\n" : "=r"(nclusterid.y));
+    asm volatile("mov.u32 %0, %clusterid.z;\n" : "=r"(nclusterid.z));
+    return nclusterid;
+}
+
 /* Get CTA ID within a cluster */
 __device__ static inline int cluster_ctarank() {
     uint32_t ctarank;
     asm volatile("mov.u32 %0, %cluster_ctarank;\n" : "=r"(ctarank));
     return ctarank;
 }
+
+/* Get number of CTA within a cluster */
+__device__ static inline int cluster_nctarank() {
+    uint32_t nctarank;
+    asm volatile("mov.u32 %0, %cluster_nctarank;\n" : "=r"(nctarank));
+    return nctarank;
+}
+
 #endif
 
 /* ----------  PIPELINE UTILS  ---------- */
