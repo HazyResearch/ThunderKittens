@@ -135,7 +135,7 @@ __device__ inline void kernel(const globals<C> &g) {
     uint32_t phasebits = 0xFFFF0000;
 
     // Main divergence
-    if (warpgroup_id >= C::CONSUMER_WARPGROUPS && elect_warp_leader()) {
+    if (warpgroup_id >= C::CONSUMER_WARPGROUPS && warp::elect_leader()) {
         // Producer group
         int warp_id = group<WARPGROUP_WARPS*C::PRODUCER_WARPGROUPS>::warpid();
         if (warp_id == 6) {
