@@ -136,7 +136,7 @@ __device__ inline void kernel(const globals<C> &g) {
         if (warp_id == 3) {
             // Load input tiles to shared memory
             pdl::wait();
-            everyone::tma::cluster::wait_aligned();
+            everyone::tma::cluster::wait();
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 int supergroup_idx = block_idx / num_blocks_per_supergroup;
                 int idx_within_supergroup = block_idx % num_blocks_per_supergroup;
@@ -156,7 +156,7 @@ __device__ inline void kernel(const globals<C> &g) {
         } else if (warp_id == 2) {
             // Load input scales to shared memory
             pdl::wait();
-            everyone::tma::cluster::wait_aligned();
+            everyone::tma::cluster::wait();
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 int supergroup_idx = block_idx / num_blocks_per_supergroup;
                 int idx_within_supergroup = block_idx % num_blocks_per_supergroup;
@@ -175,7 +175,7 @@ __device__ inline void kernel(const globals<C> &g) {
             }
         } else if (cta_id == 0 && warp_id == 1) {
             // Load A and B scales from shared memory to tensor memory
-            everyone::tma::cluster::wait_aligned();
+            everyone::tma::cluster::wait();
             wait(tmem_provisioned, 0);
             tm_allocator.set_addr(tmem_addr);
             auto A_sc_tm = tm_allocator.template allocate<full_tt_fp8e8m0<16*C::LOAD_PIPE_DEPTH>>(256);
@@ -199,7 +199,7 @@ __device__ inline void kernel(const globals<C> &g) {
             }
         } else if (cta_id == 0 && warp_id == 0) {
             // Launch tensor core matrix multiply
-            everyone::tma::cluster::wait_aligned();
+            everyone::tma::cluster::wait();
             wait(tmem_provisioned, 0);
             tm_allocator.set_addr(tmem_addr);
             auto out_tm  = tm_allocator.template allocate<full_tt_fl<C::Nb>>(0);

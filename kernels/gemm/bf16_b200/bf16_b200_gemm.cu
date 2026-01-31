@@ -120,7 +120,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
             int input_ring = 0;
             int2 tile_coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE>(rblks, cblks, blockIdx.x/C::CLUSTER_SIZE);
             pdl::wait();
-            everyone::tma::cluster::wait_aligned();
+            everyone::tma::cluster::wait();
             for (int task_iter = 0; true; task_iter++) {
                 for (int idx = 0; idx < iters_per_task; idx++) {
                     tma::cluster::wait(inputs_finished[input_ring], get_phasebit<1>(bitfield, input_ring));
@@ -138,7 +138,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
                 else break;
             }
         } else if (warpgroup::warpid() == 2 && warp::elect_leader()) {
-            everyone::tma::cluster::wait_aligned();
+            everyone::tma::cluster::wait();
             for (int task_iter = 0; true; task_iter++) {
                 if (cta_rank == 0) {
                     tma::cluster::wait(schedule_finished[task_iter%C::CLC_PIPE_DEPTH], ((task_iter+C::CLC_PIPE_DEPTH)/C::CLC_PIPE_DEPTH)%2);
@@ -151,7 +151,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
                 if (!schedule.success) break;
             }
         } else if (cta_rank == 0 && warpgroup::warpid() < C::NUM_CONSUMERS && warp::elect_leader()) {
-            everyone::tma::cluster::wait_aligned();
+            everyone::tma::cluster::wait();
             wait(tmem_provisioned, 0);
             tm_alloc.set_addr(tmem_addr);
             d_tt_t d_tt[C::MMA_PIPE_DEPTH];

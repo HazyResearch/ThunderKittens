@@ -92,8 +92,14 @@ __device__ static inline void sync(int id) {
 // Cluster-level synchronization functions
 namespace tma {
 namespace cluster {
+__device__ static inline void arrive() { // All threads in the cluster must call this
+    asm volatile ("barrier.cluster.arrive.release;\n");
+}
 __device__ static inline void arrive_aligned() { // All threads in the cluster must call this
     asm volatile ("barrier.cluster.arrive.release.aligned;\n");
+}
+__device__ static inline void wait() {
+    asm volatile ("barrier.cluster.wait.acquire;\n");
 }
 __device__ static inline void wait_aligned() {
     asm volatile ("barrier.cluster.wait.acquire.aligned;\n");
