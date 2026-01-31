@@ -335,9 +335,9 @@ __device__ static inline int3 clusterid() {
 /* Get number of clusters */
 __device__ static inline int3 nclusterid() {
     int3 nclusterid;
-    asm volatile("mov.u32 %0, %clusterid.x;\n" : "=r"(nclusterid.x));
-    asm volatile("mov.u32 %0, %clusterid.y;\n" : "=r"(nclusterid.y));
-    asm volatile("mov.u32 %0, %clusterid.z;\n" : "=r"(nclusterid.z));
+    asm volatile("mov.u32 %0, %nclusterid.x;\n" : "=r"(nclusterid.x));
+    asm volatile("mov.u32 %0, %nclusterid.y;\n" : "=r"(nclusterid.y));
+    asm volatile("mov.u32 %0, %nclusterid.z;\n" : "=r"(nclusterid.z));
     return nclusterid;
 }
 
