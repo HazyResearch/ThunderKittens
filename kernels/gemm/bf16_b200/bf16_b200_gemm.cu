@@ -116,7 +116,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
     if (warpgroup::groupid() == C::NUM_CONSUMERS) {
         warpgroup::decrease_registers<56>();
 
-        if (warp::laneid() == 0 && warpgroup::warpid() == 3) {
+        if (warpgroup::warpid() == 3 && warp::elect_leader()) {
             int input_ring = 0;
             int2 tile_coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE>(rblks, cblks, blockIdx.x/C::CLUSTER_SIZE);
             pdl::wait();
@@ -137,7 +137,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
                 if (schedule.success) tile_coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE>(rblks, cblks, schedule.x/C::CLUSTER_SIZE);
                 else break;
             }
-        } else if (warp::laneid() == 0 && warpgroup::warpid() == 2) {
+        } else if (warpgroup::warpid() == 2 && warp::elect_leader()) {
             everyone::tma::cluster::wait_aligned();
             for (int task_iter = 0; true; task_iter++) {
                 if (cta_rank == 0) {
@@ -150,7 +150,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
                 tma::cluster::arrive(schedule_finished[task_iter%C::CLC_PIPE_DEPTH], 0);
                 if (!schedule.success) break;
             }
-        } else if (cta_rank == 0 && warp::laneid() == 0 && warpgroup::warpid() < C::NUM_CONSUMERS) {
+        } else if (cta_rank == 0 && warpgroup::warpid() < C::NUM_CONSUMERS && warp::elect_leader()) {
             everyone::tma::cluster::wait_aligned();
             wait(tmem_provisioned, 0);
             tm_alloc.set_addr(tmem_addr);
