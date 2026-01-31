@@ -29,7 +29,6 @@ struct config {
     static constexpr int NUM_PRODUCERS = 1;
     static constexpr int NUM_WARPS = (NUM_CONSUMERS + NUM_PRODUCERS) * 4;
     static constexpr int NUM_THREADS = NUM_WARPS * WARP_THREADS;
-    static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - 1024;
 
     static constexpr int NUM_D_TILES = EPI_PIPE_DEPTH > 1 ? 2 : 1;
 };
