@@ -113,11 +113,10 @@ __device__ inline void kernel(const globals<C> &g) {
     everyone::tma::cluster::arrive_aligned();
 
     // Thread metadata
-    int lane_id = warp::laneid();
-    int warp_id = warpgroup::warpid();
-    int warpgroup_id = warpgroup::groupid();
-    int cta_id = cluster_ctarank();
-    int cluster_id = clusterIdx().x;
+    const int warp_id = warpgroup::warpid();
+    const int warpgroup_id = warpgroup::groupid();
+    const int cta_id = cluster_ctarank();
+    const int cluster_id = clusterIdx().x;
 
     // Block dimensions
     const int num_blocks_per_row = g.D.cols() / C::Nb;
@@ -145,6 +144,7 @@ __device__ inline void kernel(const globals<C> &g) {
                 int row_block_idx = supergroup_idx * C::SUPERGROUP_SIZE + row_within_supergroup;
                 int col_block_idx = idx_within_supergroup / rows_in_supergroup;
 
+                #pragma unroll 2
                 for (int i = 0; i < num_iters_per_block; ++i) {
                     tma::cluster::wait(inputs_finished[stage], get_phasebit<1>(phasebits, stage));
                     update_phasebit<1>(phasebits, stage);
@@ -165,6 +165,7 @@ __device__ inline void kernel(const globals<C> &g) {
                 int row_block_idx = supergroup_idx * C::SUPERGROUP_SIZE + row_within_supergroup;
                 int col_block_idx = idx_within_supergroup / rows_in_supergroup;
 
+                #pragma unroll 2
                 for (int i = 0; i < num_iters_per_block; ++i) {
                     tma::cluster::wait(scales_tmem_arrived[stage], get_phasebit<1>(phasebits, stage));
                     update_phasebit<1>(phasebits, stage);
@@ -181,6 +182,7 @@ __device__ inline void kernel(const globals<C> &g) {
             auto A_sc_tm = tm_allocator.template allocate<full_tt_fp8e8m0<16*C::LOAD_PIPE_DEPTH>>(256);
             auto B_sc_tm = tm_allocator.template allocate<full_tt_fp8e8m0<32*C::LOAD_PIPE_DEPTH>>(384);
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
+                #pragma unroll 2
                 for (int i = 0; i < num_iters_per_block; i++) {
                     tma::cluster::expect_bytes(scales_smem_arrived[stage], 2*sizeof(input_scales_t));
                     tma::cluster::wait(scales_smem_arrived[stage], get_phasebit<0>(phasebits, stage));
@@ -208,6 +210,7 @@ __device__ inline void kernel(const globals<C> &g) {
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 tma::cluster::wait(outputs_finished, get_phasebit<1>(phasebits, 0));
                 update_phasebit<1>(phasebits, 0);
+                #pragma unroll 2
                 for (int i = 0; i < num_iters_per_block; i++) {
                     tma::cluster::expect_bytes(tiles_arrived[stage], 2*sizeof(input_tiles_t));
                     tma::cluster::wait(tiles_arrived[stage], get_phasebit<0>(phasebits, stage));
@@ -418,7 +421,7 @@ __device__ inline void kernel(const globals &G) {
 #include "../common.cuh"
 
 template <typename C>
-__cluster_dims__(C::CLUSTER_SIZE) __launch_bounds__(C::NUM_THREADS)
+__launch_bounds__(C::NUM_THREADS, 1)
 __global__ void kernel_entrypoint(const __grid_constant__ mxfp8_gemm::globals<C> g) {
     mxfp8_gemm::kernel<C>(g);
 }
