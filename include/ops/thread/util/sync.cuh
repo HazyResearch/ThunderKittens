@@ -271,6 +271,20 @@ __device__ inline static void tensor_store_wait() {
    asm volatile("tcgen05.wait::st.sync.aligned;"); 
 }
 
+template <int ncta>
+__device__ static inline void tensor_commit(kittens::semaphore &sem, uint16_t dst_cta_mask = 0b11) {
+    if constexpr (ncta == 1) {
+        asm volatile(
+            "tcgen05.commit.cta_group::1.mbarrier::arrive::one.b64 [%0];\n"
+        ::  "l"(__cvta_generic_to_shared(&sem)));
+    }
+    else {
+        asm volatile(
+            "tcgen05.commit.cta_group::2.mbarrier::arrive::one.shared::cluster.multicast::cluster.b64 [%0], %1;\n"
+        ::  "l"(__cvta_generic_to_shared(&sem)), "h"(dst_cta_mask));
+    }
+}
+
 #endif
 
 /* ----------   Multi-GPU synchronization  ---------- */
