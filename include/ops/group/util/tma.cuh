@@ -66,3 +66,25 @@ __device__ static inline void store_async_read_wait() {
         : "memory"
     );
 }
+
+/* ------- Non-tensor TMA transfers ------- */
+
+__device__ static inline void load_async(void *dst, void *src, uint32_t size_bytes, semaphore& bar) {
+    if(laneid() == 0) {
+        ::kittens::tma::load_async(dst, src, size_bytes, bar);
+    }
+}
+template<typename T>
+__device__ static inline void load_async(T &dst, T &src, uint32_t size_bytes, semaphore& bar) {
+    load_async(reinterpret_cast<void*>(&dst), reinterpret_cast<void*>(&src), size_bytes, bar);
+}
+
+__device__ static inline void store_async(void *dst, void *src, uint32_t size_bytes) {
+    if(laneid() == 0) {
+        ::kittens::tma::store_async(dst, src, size_bytes);
+    }
+}
+template<typename T>
+__device__ static inline void store_async(T &dst, T &src, uint32_t size_bytes) {
+    store_async(reinterpret_cast<void*>(&dst), reinterpret_cast<void*>(&src), size_bytes);
+}

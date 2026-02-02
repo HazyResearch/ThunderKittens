@@ -80,6 +80,36 @@ __device__ static inline void store_async_read_wait() {
     );
 }
 
+/* ------- Non-tensor TMA transfers ------- */
+
+__device__ static inline void load_async(void *dst, void *src, uint32_t size_bytes, semaphore& bar) {
+    asm volatile (
+        "cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];\n"
+        :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(dst))), 
+           "l"(src), "r"(size_bytes), 
+           "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&bar)))
+        : "memory"
+    );
+}
+template<typename T>
+__device__ static inline void load_async(T &dst, T &src, uint32_t size_bytes, semaphore& bar) {
+    load_async(reinterpret_cast<void*>(&dst), reinterpret_cast<void*>(&src), size_bytes, bar);
+}
+
+__device__ static inline void store_async(void *dst, void *src, uint32_t size_bytes) {
+    asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
+    asm volatile (
+        "cp.async.bulk.global.shared::cta.bulk_group [%0], [%1], %2;\n"
+        :: "l"(dst), "r"(static_cast<uint32_t>(__cvta_generic_to_shared(src))), "r"(size_bytes)
+        : "memory"
+    );
+    store_commit_group();
+}
+template<typename T>
+__device__ static inline void store_async(T &dst, T &src, uint32_t size_bytes) {
+    store_async(reinterpret_cast<void*>(&dst), reinterpret_cast<void*>(&src), size_bytes);
+}
+
 /* ----------   Cluster-scope operations  ---------- */
 
 namespace cluster {
@@ -226,47 +256,21 @@ __device__ static inline void arrive(semaphore& bar, int dst_cta, uint32_t count
     );
 }
 
-// Generic transfer
-__device__ static inline void store_async(void *dst, void *src, int dst_cta, uint32_t size_bytes, semaphore& bar) {
-    void const* const ptr = &bar;
-    uint32_t mbarrier_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
+/* ------- Non-tensor TMA transfers ------- */
 
-    // **************************************************
-    // load from src to dst in different threadblocks
-    uint32_t src_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(src));
-    uint32_t dst_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(dst));
-
-    // mapa instr = https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-mapa 
-    // find dst addr in neighbor's cta
-    uint32_t neighbor_addr_dst;
+__device__ static inline void load_async(void *dst, void *src, uint32_t size_bytes, semaphore& bar, uint16_t cta_mask) {
     asm volatile (
-        "mapa.shared::cluster.u32  %0, %1, %2;\n"
-        : "=r"(neighbor_addr_dst)
-        : "r"(dst_ptr), "r"(dst_cta)
-    );
-    
-    uint32_t neighbor_addr_mbarrier = mbarrier_ptr;
-    asm volatile (
-        "mapa.shared::cluster.u32  %0, %1, %2;\n"
-        : "=r"(neighbor_addr_mbarrier)
-        : "r"(mbarrier_ptr), "r"(dst_cta)
-    );
-    
-    // cp.async instr = https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-cp-async-bulk 
-    // copy src into dst in neighbor's cta
-    asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
-    asm volatile (
-        "cp.async.bulk.shared::cluster.shared::cta.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];\n"
-        :
-        : "r"(neighbor_addr_dst), "r"(src_ptr), "r"(size_bytes), "r"(neighbor_addr_mbarrier)
+        "cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes.multicast::cluster [%0], [%1], %2, [%3], %4;\n"
+        :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(dst))), 
+           "l"(src), "r"(size_bytes), 
+           "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&bar))),
+           "h"(cta_mask)
         : "memory"
     );
 }
-
-// Templated transfer for convenience
 template<typename T>
-__device__ static inline void store_async(T &dst_, T &src_, int dst_cta, semaphore& bar) {
-    store_async((void*)&dst_, (void*)&src_, dst_cta, size_bytes<T>, bar);
+__device__ static inline void load_async(T &dst, T &src, uint32_t size_bytes, semaphore& bar, uint16_t cta_mask) {
+    load_async(reinterpret_cast<void*>(&dst), reinterpret_cast<void*>(&src), size_bytes, bar, cta_mask);
 }
 
 } // namespace cluster

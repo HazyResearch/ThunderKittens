@@ -104,15 +104,14 @@ __device__ static inline void arrive(semaphore& bar, int dst_cta, uint32_t count
     }
 }
 
-// Generic transfer
-__device__ static inline void store_async(void *dst, void *src, int dst_cta, uint32_t size_bytes, semaphore& bar) {
+/* ------- Non-tensor TMA transfers ------- */
+
+__device__ static inline void load_async(void *dst, void *src, uint32_t size_bytes, semaphore& bar, uint16_t cta_mask) {
     if(laneid() == 0) {
-        ::kittens::tma::cluster::store_async(dst, src, dst_cta, size_bytes, bar);
+        ::kittens::tma::cluster::load_async(dst, src, size_bytes, bar, cta_mask);
     }
 }
-
-// Templated transfer for convenience
 template<typename T>
-__device__ static inline void store_async(T &dst_, T &src_, int dst_cta, semaphore& bar) {
-    store_async((void*)&dst_, (void*)&src_, dst_cta, size_bytes<T>, bar);
+__device__ static inline void load_async(T &dst, T &src, uint32_t size_bytes, semaphore& bar, uint16_t cta_mask) {
+    load_async(reinterpret_cast<void*>(&dst), reinterpret_cast<void*>(&src), size_bytes, bar, cta_mask);
 }
