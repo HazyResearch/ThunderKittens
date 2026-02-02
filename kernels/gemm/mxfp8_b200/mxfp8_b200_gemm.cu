@@ -567,7 +567,7 @@ int main() {
 
     // Template parameters: LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH, SUPERGROUP_SIZE, NUM_D_TILES, OVERLAP_EPI
     N = 1024;
-    run_benchmark<mxfp8_gemm::config<5, 8, 12, 4, true>>(N, N, N, ncu);
+    run_benchmark<mxfp8_gemm::config<5, 4, 12, 2, true>>(N, N, N, ncu);
     N = 2048;
     run_benchmark<mxfp8_gemm::config<5, 8, 12, 2, true>>(N, N, N, ncu);
     N = 4096;
