@@ -267,8 +267,7 @@ __device__ inline void kernel(const globals<C> &g) {
         wait(tmem_provisioned, 0);
         tm_allocator.set_addr(tmem_addr);
         auto out_tm = tm_allocator.template allocate<full_tt_fl<C::Nb>>(0);
-        const bf16 global_scale_bf16 = __float2bfloat16(g.A_sc_global[{0}] * g.B_sc_global[{0}]);
-        const bf16_2 global_scale = {global_scale_bf16, global_scale_bf16};
+        const float global_scale = g.A_sc_global[{0}] * g.B_sc_global[{0}];
 
         for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
             int supergroup_idx = block_idx / num_blocks_per_supergroup;
@@ -286,23 +285,14 @@ __device__ inline void kernel(const globals<C> &g) {
             if constexpr (C::OVERLAP_EPI) {
                 #pragma unroll
                 for (int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
-                    rt_bf<C::Mb / 8, C::Nb/C::EPI_PIPE_DEPTH> D_reg;
+                    rt_fl<C::Mb / 8, C::Nb/C::EPI_PIPE_DEPTH> D_reg;
                     warpgroup::load_async(D_reg, out_tm.template subtile<full_tt_fl<C::Nb/C::EPI_PIPE_DEPTH>>(0, C::Nb/C::EPI_PIPE_DEPTH*i));
                     tensor_load_wait();
                     if (i == C::EPI_PIPE_DEPTH - 1) {
                         warpgroup::sync(1);
                         warpgroup::tma::cluster::arrive(outputs_finished, 0, 1); // signal CTA 0
                     }
-                    #pragma unroll
-                    for (int ii = 0; ii < D_reg.height; ii++) {
-                        #pragma unroll
-                        for (int jj = 0; jj < D_reg.width; jj++) {
-                            #pragma unroll
-                            for (int kk = 0; kk < D_reg.packed_per_tile; kk++) {
-                                D_reg.tiles[ii][jj].data[kk] = __hmul2(D_reg.tiles[ii][jj].data[kk], global_scale);
-                            }
-                        }
-                    }
+                    warp::mul(D_reg, D_reg, global_scale);
                     warpgroup::tma::store_async_read_wait<C::NUM_D_TILES-1>();
                     warpgroup::sync(1);
                     warpgroup::store(output_tiles.D[i%C::NUM_D_TILES], D_reg);
@@ -312,23 +302,17 @@ __device__ inline void kernel(const globals<C> &g) {
             } else {
                 rt_bf<C::Mb / 8, C::Nb/C::EPI_PIPE_DEPTH> D_reg[C::EPI_PIPE_DEPTH];
                 #pragma unroll
-                for (int i = 0; i < C::EPI_PIPE_DEPTH; i++)
-                    warpgroup::load_async(D_reg[i], out_tm.template subtile<full_tt_fl<C::Nb/C::EPI_PIPE_DEPTH>>(0, C::Nb/C::EPI_PIPE_DEPTH*i));
-                tensor_load_wait();
+                for (int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
+                    rt_fl<C::Mb / 8, C::Nb/C::EPI_PIPE_DEPTH> D_reg_fl;
+                    warpgroup::load_async(D_reg_fl, out_tm.template subtile<full_tt_fl<C::Nb/C::EPI_PIPE_DEPTH>>(0, C::Nb/C::EPI_PIPE_DEPTH*i));
+                    tensor_load_wait();
+                    warp::mul(D_reg_fl, D_reg_fl, global_scale);
+                    warp::copy(D_reg[i], D_reg_fl);
+                }
                 warpgroup::sync(1);
                 warpgroup::tma::cluster::arrive(outputs_finished, 0, 1); // signal CTA 0
                 #pragma unroll
                 for (int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
-                    #pragma unroll
-                    for (int ii = 0; ii < D_reg[i].height; ii++) {
-                        #pragma unroll
-                        for (int jj = 0; jj < D_reg[i].width; jj++) {
-                            #pragma unroll
-                            for (int kk = 0; kk < D_reg[i].packed_per_tile; kk++) {
-                                D_reg[i].tiles[ii][jj].data[kk] = __hmul2(D_reg[i].tiles[ii][jj].data[kk], global_scale);
-                            }
-                        }
-                    }
                     warpgroup::tma::store_async_read_wait<C::NUM_D_TILES-1>();
                     warpgroup::sync(1);
                     warpgroup::store(output_tiles.D[i%C::NUM_D_TILES], D_reg[i]);
