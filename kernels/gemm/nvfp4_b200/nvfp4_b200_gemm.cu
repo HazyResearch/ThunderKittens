@@ -4,8 +4,9 @@ using namespace kittens;
 
 namespace nvfp4_gemm {
 
-template <int _LOAD_PIPE_DEPTH, int _EPI_PIPE_DEPTH, int _SUPERGROUP_SIZE, int _NUM_D_TILES, bool _OVERLAP_EPI>
+template <int _Nb, int _LOAD_PIPE_DEPTH, int _EPI_PIPE_DEPTH, int _SUPERGROUP_SIZE, int _NUM_D_TILES, bool _OVERLAP_EPI>
 struct config {
+    static_assert(_Nb == 128 || _Nb == 256, "Nb must be 128 or 256");
     static_assert(_LOAD_PIPE_DEPTH > 0 && _LOAD_PIPE_DEPTH <= 5, "LOAD_PIPE_DEPTH must be greater than 0 and at most 5");
     static_assert(_EPI_PIPE_DEPTH > 0, "EPI_PIPE_DEPTH must be greater than 0");
     static_assert(_SUPERGROUP_SIZE > 0, "SUPERGROUP_SIZE must be greater than 0");
@@ -27,8 +28,9 @@ struct config {
 
     static constexpr int SUPERGROUP_SIZE = _SUPERGROUP_SIZE;
     static constexpr int Mb = 256;
-    static constexpr int Nb = 256;
+    static constexpr int Nb = _Nb;
     static constexpr int Kb = 256;
+    static constexpr int B_SC_SIZE = Nb/128;
     static constexpr int MMA_PER_TILE = Kb/64;
 
     static constexpr int NUM_D_TILES = _NUM_D_TILES;
@@ -64,7 +66,7 @@ struct globals {
     };
     struct input_scales_t {
         A_sc_tile A;
-        B_sc_tile B[2];
+        B_sc_tile B[C::B_SC_SIZE];
     };
     struct outputs_t {
         D_tile D[C::NUM_D_TILES];
@@ -131,7 +133,7 @@ __device__ inline void kernel(const globals<C> &g) {
         for (int i = 0; i < C::LOAD_PIPE_DEPTH; ++i) {
             init_semaphore(tiles_arrived[i], 0, 1);
             init_semaphore(scales_smem_arrived[i], 0, 1);
-            init_semaphore(scales_tmem_arrived[i], 0, 3);
+            init_semaphore(scales_tmem_arrived[i], 0, 1+C::B_SC_SIZE);
             init_semaphore(inputs_finished[i], 0, 1);
         }
         init_semaphore(outputs_arrived, 0, 1);
@@ -179,7 +181,8 @@ __device__ inline void kernel(const globals<C> &g) {
                     tma::cluster::wait(scales_tmem_arrived[stage], get_phasebit<1>(phasebits, stage));
                     update_phasebit<1>(phasebits, stage);
                     tma::cluster::load_async(input_scales[stage].A, g.A_sc, {row_block_idx*2 + cta_id, i, 0}, scales_smem_arrived[stage], (uint16_t)(1<<cta_id), 0);
-                    tma::cluster::load_async(input_scales[stage].B[cta_id], g.B_sc, {col_block_idx*2 + cta_id, i, 0}, scales_smem_arrived[stage], (uint16_t)(0b11), 0);
+                    if constexpr (C::B_SC_SIZE == 2) tma::cluster::load_async(input_scales[stage].B[cta_id], g.B_sc, {col_block_idx*2 + cta_id, i, 0}, scales_smem_arrived[stage], (uint16_t)(0b11), 0);
+                    else if (cta_id == 0)            tma::cluster::load_async(input_scales[stage].B[0], g.B_sc, {col_block_idx, i, 0}, scales_smem_arrived[stage], (uint16_t)(0b11), 0);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
             }
@@ -207,7 +210,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
             }
-        } else if (cta_id == 0 && warp_id < 2) {
+        } else if (cta_id == 0 && warp_id < C::B_SC_SIZE) {
             // Load B scales from shared memory to tensor memory
             everyone::tma::cluster::wait();
             wait(tmem_provisioned, 0);
@@ -222,7 +225,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     update_phasebit<1>(phasebits, stage);
                     #pragma unroll
                     for (int ii = 0; ii < C::MMA_PER_TILE; ii++) {
-                        auto B_sc_tm_subtile_0 = B_sc_tm.template subtile<full_tt_fp8e4m3<16>>(stage*C::MMA_PER_TILE*32 + ii*32 + warp_id*16);
+                        auto B_sc_tm_subtile_0 = B_sc_tm.template subtile<full_tt_fp8e4m3<16>>(stage*C::MMA_PER_TILE*32 + ii*C::B_SC_SIZE*16 + warp_id*16);
                         auto &B_sc_sm_subtile_0 = *reinterpret_cast<st_fp8e4m3<32, 16, false> *>(reinterpret_cast<uint64_t>(&input_scales[stage].B[warp_id].data[0]) + 16*32*ii);
                         load_mxnv_scale_async2(B_sc_tm_subtile_0, B_sc_sm_subtile_0);
                     }
@@ -748,17 +751,17 @@ int main() {
     int N;
     bool ncu = false;
 
-    // Template parameters: LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH, SUPERGROUP_SIZE, NUM_D_TILES, OVERLAP_EPI
+    // Template parameters: Nb, LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH, SUPERGROUP_SIZE, NUM_D_TILES, OVERLAP_EPI
     N = 1024;
-    run_benchmark<nvfp4_gemm::config<5, 4, 12, 2, true>>(N, N, N, ncu);
+    run_benchmark<nvfp4_gemm::config<128, 5, 4, 12, 2, true>>(N, N, N, ncu);
     N = 2048;
-    run_benchmark<nvfp4_gemm::config<5, 8, 4, 2, true>>(N, N, N, ncu);
+    run_benchmark<nvfp4_gemm::config<256, 5, 8, 4, 2, true>>(N, N, N, ncu);
     N = 4096;
-    run_benchmark<nvfp4_gemm::config<5, 8, 4, 2, false>>(N, N, N, ncu);
+    run_benchmark<nvfp4_gemm::config<256, 5, 8, 4, 2, false>>(N, N, N, ncu);
     N = 8192;
-    run_benchmark<nvfp4_gemm::config<4, 16, 1, 2, false>>(N, N, N, ncu);
+    run_benchmark<nvfp4_gemm::config<256, 4, 16, 1, 2, false>>(N, N, N, ncu);
     N = 16384;
-    run_benchmark<nvfp4_gemm::config<4, 16, 12, 2, false>>(N, N, N, ncu);
+    run_benchmark<nvfp4_gemm::config<256, 4, 16, 12, 2, false>>(N, N, N, ncu);
 
     return 0;
 }
@@ -777,7 +780,7 @@ void nvfp4_gemm_entrypoint(
     const at::Tensor &B_sc_global,
     at::Tensor &D
 ) {
-    using C = nvfp4_gemm::config<4, 8, 12, 2, false>;
+    using C = nvfp4_gemm::config<256, 4, 8, 12, 2, false>;
     using G = nvfp4_gemm::globals<C>;
 
     G g {

@@ -33,6 +33,7 @@ struct config {
     static constexpr int Mb = 256;
     static constexpr int Nb = _Nb;
     static constexpr int Kb = 128;
+    static constexpr int B_SC_SIZE = Nb/128;
 
     static constexpr int NUM_D_TILES = _NUM_D_TILES;
 };
@@ -72,7 +73,7 @@ __device__ inline void kernel(const globals<C> &g) {
     };
     struct input_scales_t {
         typename G::A_sc_tile A;
-        typename G::B_sc_tile B[C::Nb/128];
+        typename G::B_sc_tile B[C::B_SC_SIZE];
     };
     struct outputs_t {
         typename G::D_tile D[C::NUM_D_TILES];
@@ -175,8 +176,8 @@ __device__ inline void kernel(const globals<C> &g) {
                     tma::cluster::wait(scales_tmem_arrived[stage], get_phasebit<1>(phasebits, stage));
                     update_phasebit<1>(phasebits, stage);
                     tma::cluster::load_async(input_scales[stage].A, g.A_sc, {row_block_idx * 2 + cta_id, i, 0, 0}, scales_smem_arrived[stage], (uint16_t)(1 << cta_id), 0);
-                    if constexpr (C::Nb == 256) tma::cluster::load_async(input_scales[stage].B[cta_id], g.B_sc, {col_block_idx * 2 + cta_id, i, 0, 0}, scales_smem_arrived[stage], (uint16_t)(0b11), 0);
-                    else if (cta_id == 0)       tma::cluster::load_async(input_scales[stage].B[0], g.B_sc, {col_block_idx, i, 0, 0}, scales_smem_arrived[stage], (uint16_t)(0b11), 0);
+                    if constexpr (C::B_SC_SIZE == 2) tma::cluster::load_async(input_scales[stage].B[cta_id], g.B_sc, {col_block_idx * 2 + cta_id, i, 0, 0}, scales_smem_arrived[stage], (uint16_t)(0b11), 0);
+                    else if (cta_id == 0)            tma::cluster::load_async(input_scales[stage].B[0], g.B_sc, {col_block_idx, i, 0, 0}, scales_smem_arrived[stage], (uint16_t)(0b11), 0);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
             }
@@ -199,7 +200,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     load_mxnv_scale_async2(A_sc_tm_subtile, input_scales[stage].A);
                     auto B_sc_tm_subtile_0 = B_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 32);
                     load_mxnv_scale_async2(B_sc_tm_subtile_0, input_scales[stage].B[0]);
-                    if constexpr (C::Nb == 256) {
+                    if constexpr (C::B_SC_SIZE == 2) {
                         auto B_sc_tm_subtile_1 = B_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 32 + 16);
                         load_mxnv_scale_async2(B_sc_tm_subtile_1, input_scales[stage].B[1]);
                     }
