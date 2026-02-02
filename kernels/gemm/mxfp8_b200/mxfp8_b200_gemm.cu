@@ -266,8 +266,8 @@ __device__ inline void kernel(const globals<C> &g) {
                 for (int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
                     rt_bf<C::Mb / 8, C::Nb / C::EPI_PIPE_DEPTH> D_reg;
                     warpgroup::load_async(D_reg, out_tm.template subtile<full_tt_fl<C::Nb / C::EPI_PIPE_DEPTH>>(0, C::Nb / C::EPI_PIPE_DEPTH * i));
-                    tensor_load_wait();
                     if (i == C::EPI_PIPE_DEPTH - 1) {
+                        tensor_load_wait();
                         warpgroup::sync(1);
                         warpgroup::tma::cluster::arrive(outputs_finished, 0, 1); // signal CTA 0
                     }

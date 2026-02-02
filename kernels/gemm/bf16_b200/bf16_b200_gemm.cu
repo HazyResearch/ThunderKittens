@@ -210,8 +210,8 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
                 #pragma unroll
                 for(int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
                     warpgroup::load_async(d_reg, d_tt[task_iter%C::MMA_PIPE_DEPTH].template subtile<tt<float, C::Mb/2, C::Nb/C::EPI_PIPE_DEPTH>>(0, C::Nb/C::EPI_PIPE_DEPTH*i));
-                    tensor_load_wait();
                     if (i == C::EPI_PIPE_DEPTH - 1) {
+                        tensor_load_wait();
                         warpgroup::sync(warpgroup::groupid()+1);
                         if (!schedule.success) warpgroup::pdl::arrive();
                         warpgroup::tma::cluster::arrive(outputs_finished[task_iter%C::MMA_PIPE_DEPTH], 0);
