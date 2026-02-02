@@ -4,8 +4,9 @@ using namespace kittens;
 
 namespace mxfp8_gemm {
 
-template <int _LOAD_PIPE_DEPTH, int _EPI_PIPE_DEPTH, int _SUPERGROUP_SIZE, int _NUM_D_TILES, bool _OVERLAP_EPI>
+template <int _Nb, int _LOAD_PIPE_DEPTH, int _EPI_PIPE_DEPTH, int _SUPERGROUP_SIZE, int _NUM_D_TILES, bool _OVERLAP_EPI>
 struct config {
+    static_assert(_Nb == 128 || _Nb == 256, "Nb must be 128 or 256");
     static_assert(_LOAD_PIPE_DEPTH > 0, "LOAD_PIPE_DEPTH must be greater than 0");
     static_assert(_EPI_PIPE_DEPTH > 0, "EPI_PIPE_DEPTH must be greater than 0");
     static_assert(_SUPERGROUP_SIZE > 0, "SUPERGROUP_SIZE must be greater than 0");
@@ -30,7 +31,7 @@ struct config {
 
     static constexpr int SUPERGROUP_SIZE = _SUPERGROUP_SIZE;
     static constexpr int Mb = 256;
-    static constexpr int Nb = 256;
+    static constexpr int Nb = _Nb;
     static constexpr int Kb = 128;
 
     static constexpr int NUM_D_TILES = _NUM_D_TILES;
@@ -71,7 +72,7 @@ __device__ inline void kernel(const globals<C> &g) {
     };
     struct input_scales_t {
         typename G::A_sc_tile A;
-        typename G::B_sc_tile B[2];
+        typename G::B_sc_tile B[C::Nb/128];
     };
     struct outputs_t {
         typename G::D_tile D[C::NUM_D_TILES];
@@ -173,8 +174,9 @@ __device__ inline void kernel(const globals<C> &g) {
                 for (int i = 0; i < num_iters_per_block; ++i) {
                     tma::cluster::wait(scales_tmem_arrived[stage], get_phasebit<1>(phasebits, stage));
                     update_phasebit<1>(phasebits, stage);
-                    tma::cluster::load_async(input_scales[stage].A,         g.A_sc, {row_block_idx * 2 + cta_id, i, 0, 0}, scales_smem_arrived[stage], (uint16_t)(1 << cta_id), 0);
-                    tma::cluster::load_async(input_scales[stage].B[cta_id], g.B_sc, {col_block_idx * 2 + cta_id, i, 0, 0}, scales_smem_arrived[stage], (uint16_t)(0b11), 0);
+                    tma::cluster::load_async(input_scales[stage].A, g.A_sc, {row_block_idx * 2 + cta_id, i, 0, 0}, scales_smem_arrived[stage], (uint16_t)(1 << cta_id), 0);
+                    if constexpr (C::Nb == 256) tma::cluster::load_async(input_scales[stage].B[cta_id], g.B_sc, {col_block_idx * 2 + cta_id, i, 0, 0}, scales_smem_arrived[stage], (uint16_t)(0b11), 0);
+                    else if (cta_id == 0)       tma::cluster::load_async(input_scales[stage].B[0], g.B_sc, {col_block_idx, i, 0, 0}, scales_smem_arrived[stage], (uint16_t)(0b11), 0);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
             }
@@ -196,9 +198,11 @@ __device__ inline void kernel(const globals<C> &g) {
                     auto A_sc_tm_subtile = A_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 16);
                     load_mxnv_scale_async2(A_sc_tm_subtile, input_scales[stage].A);
                     auto B_sc_tm_subtile_0 = B_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 32);
-                    auto B_sc_tm_subtile_1 = B_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 32 + 16);
                     load_mxnv_scale_async2(B_sc_tm_subtile_0, input_scales[stage].B[0]);
-                    load_mxnv_scale_async2(B_sc_tm_subtile_1, input_scales[stage].B[1]);
+                    if constexpr (C::Nb == 256) {
+                        auto B_sc_tm_subtile_1 = B_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 32 + 16);
+                        load_mxnv_scale_async2(B_sc_tm_subtile_1, input_scales[stage].B[1]);
+                    }
                     kittens::detail::tcgen05::commit<2>(scales_tmem_arrived[stage], 0b11);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
@@ -568,17 +572,17 @@ int main() {
     int N;
     bool ncu = false;
 
-    // Template parameters: LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH, SUPERGROUP_SIZE, NUM_D_TILES, OVERLAP_EPI
+    // Template parameters: Nb, LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH, SUPERGROUP_SIZE, NUM_D_TILES, OVERLAP_EPI
     N = 1024;
-    run_benchmark<mxfp8_gemm::config<5, 4, 12, 2, true>>(N, N, N, ncu);
+    run_benchmark<mxfp8_gemm::config<128, 5, 4, 12, 2, true>>(N, N, N, ncu);
     N = 2048;
-    run_benchmark<mxfp8_gemm::config<5, 8, 12, 2, true>>(N, N, N, ncu);
+    run_benchmark<mxfp8_gemm::config<256, 5, 8, 12, 2, true>>(N, N, N, ncu);
     N = 4096;
-    run_benchmark<mxfp8_gemm::config<5, 8, 8, 2, false>>(N, N, N, ncu);
+    run_benchmark<mxfp8_gemm::config<256, 5, 8, 8, 2, false>>(N, N, N, ncu);
     N = 8192;
-    run_benchmark<mxfp8_gemm::config<6, 16, 16, 4, false>>(N, N, N, ncu);
+    run_benchmark<mxfp8_gemm::config<256, 6, 16, 16, 4, false>>(N, N, N, ncu);
     N = 16384;
-    run_benchmark<mxfp8_gemm::config<4, 8, 8, 2, false>>(N, N, N, ncu);
+    run_benchmark<mxfp8_gemm::config<256, 4, 8, 8, 2, false>>(N, N, N, ncu);
 
     return 0;
 }
@@ -594,7 +598,7 @@ void mxfp8_gemm_entrypoint(
     const at::Tensor &B_sc,
     at::Tensor &D
 ) {
-    using C = mxfp8_gemm::config<6, 16, 12, 4, false>;
+    using C = mxfp8_gemm::config<256, 6, 16, 12, 4, false>;
     using G = mxfp8_gemm::globals<C>;
 
     G g {
