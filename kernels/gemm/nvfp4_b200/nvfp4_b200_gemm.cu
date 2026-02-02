@@ -6,7 +6,7 @@ namespace nvfp4_gemm {
 
 template <int _LOAD_PIPE_DEPTH, int _EPI_PIPE_DEPTH, int _SUPERGROUP_SIZE, int _NUM_D_TILES, bool _OVERLAP_EPI>
 struct config {
-    static_assert(_LOAD_PIPE_DEPTH > 0, "LOAD_PIPE_DEPTH must be greater than 0");
+    static_assert(_LOAD_PIPE_DEPTH > 0 && _LOAD_PIPE_DEPTH <= 5, "LOAD_PIPE_DEPTH must be greater than 0 and at most 5");
     static_assert(_EPI_PIPE_DEPTH > 0, "EPI_PIPE_DEPTH must be greater than 0");
     static_assert(_SUPERGROUP_SIZE > 0, "SUPERGROUP_SIZE must be greater than 0");
     static_assert(_NUM_D_TILES > 0, "NUM_D_TILES must be greater than 0");
@@ -208,7 +208,7 @@ __device__ inline void kernel(const globals<C> &g) {
             everyone::tma::cluster::wait();
             wait(tmem_provisioned, 0);
             tm_allocator.set_addr(tmem_addr);
-            auto B_sc_tm = tm_allocator.template allocate<full_tt_fp8e4m3<32*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(384);
+            auto B_sc_tm = tm_allocator.template allocate<full_tt_fp8e4m3<32*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(256+4*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH);
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 #pragma unroll 4
                 for (int i = 0; i < num_red_blocks; i++) {
@@ -233,7 +233,7 @@ __device__ inline void kernel(const globals<C> &g) {
             tm_allocator.set_addr(tmem_addr);
             auto out_tm  = tm_allocator.template allocate<full_tt_fl<C::Nb>>(0);
             auto A_sc_tm = tm_allocator.template allocate<full_tt_fp8e4m3<16*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(256);
-            auto B_sc_tm = tm_allocator.template allocate<full_tt_fp8e4m3<32*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(384);
+            auto B_sc_tm = tm_allocator.template allocate<full_tt_fp8e4m3<32*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(256+4*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH);
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 tma::cluster::wait(outputs_finished, get_phasebit<1>(phasebits, 0));
                 update_phasebit<1>(phasebits, 0);
@@ -762,11 +762,11 @@ int main() {
 
     // Template parameters: LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH, SUPERGROUP_SIZE, NUM_D_TILES, OVERLAP_EPI
     N = 1024;
-    run_benchmark<nvfp4_gemm::config<4, 8, 12, 2, true>>(N, N, N, ncu);
+    run_benchmark<nvfp4_gemm::config<5, 8, 12, 2, true>>(N, N, N, ncu);
     N = 2048;
-    run_benchmark<nvfp4_gemm::config<4, 16, 4, 2, false>>(N, N, N, ncu);
+    run_benchmark<nvfp4_gemm::config<5, 16, 4, 2, false>>(N, N, N, ncu);
     N = 4096;
-    run_benchmark<nvfp4_gemm::config<4, 8, 4, 2, false>>(N, N, N, ncu);
+    run_benchmark<nvfp4_gemm::config<5, 8, 4, 2, false>>(N, N, N, ncu);
     N = 8192;
     run_benchmark<nvfp4_gemm::config<4, 16, 1, 2, false>>(N, N, N, ncu);
     N = 16384;
