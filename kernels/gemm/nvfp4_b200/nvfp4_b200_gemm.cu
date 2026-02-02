@@ -310,10 +310,10 @@ __device__ inline void kernel(const globals<C> &g) {
                 for (int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
                     rt_fl<C::Mb / 8, C::Nb/C::EPI_PIPE_DEPTH> D_reg_fl;
                     warpgroup::load_async(D_reg_fl, out_tm.template subtile<full_tt_fl<C::Nb/C::EPI_PIPE_DEPTH>>(0, C::Nb/C::EPI_PIPE_DEPTH*i));
-                    tensor_load_wait();
                     warp::mul(D_reg_fl, D_reg_fl, global_scale);
                     warp::copy(D_reg[i], D_reg_fl);
                 }
+                tensor_load_wait();
                 warpgroup::sync(1);
                 warpgroup::tma::cluster::arrive(outputs_finished, 0, 1); // signal CTA 0
                 #pragma unroll
