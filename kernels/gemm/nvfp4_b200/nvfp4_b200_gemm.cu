@@ -87,6 +87,25 @@ template <typename C>
 __device__ inline void kernel(const globals<C> &g) {
     using G = globals<C>;
 
+    if (threadIdx.x == 0) {
+        g.A.template prefetch_tma<typename G::A_fp4x2_tile>();
+        g.A_sc.template prefetch_tma<typename G::A_sc_tile>();
+        g.B.template prefetch_tma<typename G::B_fp4x2_tile>();
+        g.B_sc.template prefetch_tma<typename G::B_sc_tile>();
+        g.D.template prefetch_tma<typename G::D_tile>();
+    }
+
+    const int warpgroup_id = warpgroup::groupid();
+    const int cta_id = cluster_ctarank();
+    const int cluster_id = clusterIdx().x;
+    const int num_row_blocks = g.D.rows() / C::Mb;
+    const int num_col_blocks = g.D.cols() / C::Nb;
+    const int num_blocks = num_row_blocks * num_col_blocks;
+    const int num_red_blocks = 2 * g.A.cols() / C::Kb;
+    const int num_blocks_per_supergroup = C::SUPERGROUP_SIZE * num_col_blocks;
+    uint32_t stage = 0;
+    uint32_t phasebits = 0xFFFF0000;
+
     // Allocate shared memory
     extern __shared__ int __shm[];
     tma_swizzle_allocator sm_allocator((int*)&__shm[0]);
@@ -119,23 +138,6 @@ __device__ inline void kernel(const globals<C> &g) {
         init_semaphore(outputs_finished, 0, C::CLUSTER_SIZE);
     }
     everyone::tma::cluster::arrive_aligned();
-
-    // Thread metadata
-    int lane_id = warp::laneid();
-    int warpgroup_id = warpgroup::groupid();
-    int cta_id = cluster_ctarank();
-    int cluster_id = clusterIdx().x;
-
-    // Block dimensions
-    const int num_row_blocks = g.D.rows() / C::Mb;
-    const int num_col_blocks = g.D.cols() / C::Nb;
-    const int num_blocks = num_row_blocks * num_col_blocks;
-    const int num_red_blocks = 2 * g.A.cols() / C::Kb;
-    const int num_blocks_per_supergroup = C::SUPERGROUP_SIZE * num_col_blocks;
-
-    // Declare stage and phasebits for semaphore waits
-    uint32_t stage = 0;
-    uint32_t phasebits = 0xFFFF0000;
 
     // Main divergence
     if (warpgroup_id >= C::CONSUMER_WARPGROUPS && warp::elect_leader()) {
