@@ -15,9 +15,6 @@ struct config {
     static constexpr int CLUSTER_SIZE = 2;
     static constexpr bool USE_PDL = true;
 
-    static constexpr int STATIC_SHARED_MEMORY = 1024;
-    static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - STATIC_SHARED_MEMORY;
-
     static constexpr int CONSUMER_WARPGROUPS = 1;
     static constexpr int PRODUCER_WARPGROUPS = 2;
     static constexpr int NUM_WARPGROUPS = CONSUMER_WARPGROUPS + PRODUCER_WARPGROUPS;
@@ -61,8 +58,28 @@ struct globals {
     B_sc_global_gl B_sc_global; // (1,)
     D_gl           D;           // M x N
 
+    struct input_tiles_t {
+        A_fp4x2_tile A;
+        B_fp4x2_tile B;
+    };
+    struct input_scales_t {
+        A_sc_tile A;
+        B_sc_tile B[2];
+    };
+    struct outputs_t {
+        D_tile D[C::NUM_D_TILES];
+    };
+
     __host__ inline dim3 grid() const {
         return dim3(min((D.rows()/(C::Mb/2))*(D.cols()/C::Nb), num_sms()));
+    }
+    __host__ inline dim3 block() const { return dim3(C::NUM_THREADS); }
+    __host__ inline int dynamic_shared_memory() const {
+        constexpr int _dynamic_shared_memory = sizeof(input_tiles_t)  * C::LOAD_PIPE_DEPTH + 1024 +
+                                               sizeof(input_scales_t) * C::LOAD_PIPE_DEPTH + 1024 +
+                                               sizeof(outputs_t);
+        static_assert(_dynamic_shared_memory <= MAX_SHARED_MEMORY - 1024);
+        return _dynamic_shared_memory;
     }
 };
 
@@ -70,27 +87,12 @@ template <typename C>
 __device__ inline void kernel(const globals<C> &g) {
     using G = globals<C>;
 
-    struct input_tiles_t {
-        typename G::A_fp4x2_tile A;
-        typename G::B_fp4x2_tile B;
-    };
-    struct input_scales_t {
-        typename G::A_sc_tile A;
-        typename G::B_sc_tile B[2];
-    };
-    struct outputs_t {
-        typename G::D_tile D[C::NUM_D_TILES];
-    };
-
     // Allocate shared memory
     extern __shared__ int __shm[];
     tma_swizzle_allocator sm_allocator((int*)&__shm[0]);
-    static_assert(sizeof(input_tiles_t)  * C::LOAD_PIPE_DEPTH +
-                  sizeof(input_scales_t) * C::LOAD_PIPE_DEPTH + 1024 +
-                  sizeof(outputs_t) <= C::DYNAMIC_SHARED_MEMORY);
-    input_tiles_t  (&input_tiles) [C::LOAD_PIPE_DEPTH] = sm_allocator.allocate<input_tiles_t, C::LOAD_PIPE_DEPTH>();
-    input_scales_t (&input_scales)[C::LOAD_PIPE_DEPTH] = sm_allocator.allocate<input_scales_t, C::LOAD_PIPE_DEPTH>();
-    outputs_t       &output_tiles                      = sm_allocator.allocate<outputs_t>();
+    typename G::input_tiles_t  (&input_tiles) [C::LOAD_PIPE_DEPTH] = sm_allocator.allocate<G::input_tiles_t, C::LOAD_PIPE_DEPTH>();
+    typename G::input_scales_t (&input_scales)[C::LOAD_PIPE_DEPTH] = sm_allocator.allocate<G::input_scales_t, C::LOAD_PIPE_DEPTH>();
+    typename G::outputs_t       &output_tiles                      = sm_allocator.allocate<G::outputs_t>();
 
     // Allocate tensor memory
     tensor_allocator<1, C::CLUSTER_SIZE, false> tm_allocator;
@@ -188,7 +190,7 @@ __device__ inline void kernel(const globals<C> &g) {
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 #pragma unroll 4
                 for (int i = 0; i < num_red_blocks; i++) {
-                    tma::cluster::expect_bytes(scales_smem_arrived[stage], 2*sizeof(input_scales_t));
+                    tma::cluster::expect_bytes(scales_smem_arrived[stage], 2*sizeof(G::input_scales_t));
                     tma::cluster::wait(scales_smem_arrived[stage], get_phasebit<0>(phasebits, stage));
                     update_phasebit<0>(phasebits, stage);
                     tma::cluster::wait(inputs_finished[stage], get_phasebit<1>(phasebits, stage));
@@ -238,7 +240,7 @@ __device__ inline void kernel(const globals<C> &g) {
                 tma::cluster::wait(outputs_finished, get_phasebit<1>(phasebits, 0));
                 update_phasebit<1>(phasebits, 0);
                 for (int i = 0; i < num_red_blocks; i++) {
-                    tma::cluster::expect_bytes(tiles_arrived[stage], 2*sizeof(input_tiles_t));
+                    tma::cluster::expect_bytes(tiles_arrived[stage], 2*sizeof(G::input_tiles_t));
                     tma::cluster::wait(tiles_arrived[stage], get_phasebit<0>(phasebits, stage));
                     tma::cluster::wait(scales_tmem_arrived[stage], get_phasebit<0>(phasebits, stage));
                     update_phasebit<0>(phasebits, stage);
@@ -702,8 +704,8 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     }
 
     // Set kernel attributes
-    CUDACHECK(cudaFuncSetAttribute(kernel_entrypoint<C>, cudaFuncAttributeMaxDynamicSharedMemorySize, C::DYNAMIC_SHARED_MEMORY));
-    LaunchConfig<true, true> launch_config(g[0].grid(), C::NUM_THREADS, C::DYNAMIC_SHARED_MEMORY, 0, C::CLUSTER_SIZE);
+    CUDACHECK(cudaFuncSetAttribute(kernel_entrypoint<C>, cudaFuncAttributeMaxDynamicSharedMemorySize, g[0].dynamic_shared_memory()));
+    LaunchConfig<true, true> launch_config(g[0].grid(), g[0].block(), g[0].dynamic_shared_memory(), 0, C::CLUSTER_SIZE);
 
     // Number of iterations
     int num_warmups = ncu ? 0 : 5;
@@ -762,9 +764,9 @@ int main() {
 
     // Template parameters: LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH, SUPERGROUP_SIZE, NUM_D_TILES, OVERLAP_EPI
     N = 1024;
-    run_benchmark<nvfp4_gemm::config<5, 8, 12, 2, true>>(N, N, N, ncu);
+    run_benchmark<nvfp4_gemm::config<5, 4, 12, 2, true>>(N, N, N, ncu);
     N = 2048;
-    run_benchmark<nvfp4_gemm::config<5, 16, 4, 2, false>>(N, N, N, ncu);
+    run_benchmark<nvfp4_gemm::config<5, 8, 4, 2, true>>(N, N, N, ncu);
     N = 4096;
     run_benchmark<nvfp4_gemm::config<5, 8, 4, 2, false>>(N, N, N, ncu);
     N = 8192;
