@@ -4,7 +4,7 @@ using namespace kittens;
 
 namespace mxfp8_gemm {
 
-template <int _LOAD_PIPE_DEPTH, int _EPI_PIPE_DEPTH, int _SUPERGROUP_SIZE, int _NUM_D_TILES>
+template <int _LOAD_PIPE_DEPTH, int _EPI_PIPE_DEPTH, int _SUPERGROUP_SIZE, int _NUM_D_TILES, bool _OVERLAP_EPI>
 struct config {
     static_assert(_LOAD_PIPE_DEPTH > 0, "LOAD_PIPE_DEPTH must be greater than 0");
     static_assert(_EPI_PIPE_DEPTH > 0, "EPI_PIPE_DEPTH must be greater than 0");
@@ -26,6 +26,7 @@ struct config {
 
     static constexpr int LOAD_PIPE_DEPTH = _LOAD_PIPE_DEPTH;
     static constexpr int EPI_PIPE_DEPTH = _EPI_PIPE_DEPTH;
+    static constexpr bool OVERLAP_EPI = _OVERLAP_EPI;
 
     static constexpr int SUPERGROUP_SIZE = _SUPERGROUP_SIZE;
     static constexpr int Mb = 256;
@@ -251,23 +252,39 @@ __device__ inline void kernel(const globals<C> &g) {
             wait(outputs_arrived, get_phasebit<0>(phasebits, 0));
             update_phasebit<0>(phasebits, 0);
 
-            // Load the output from tensor memory into registers
-            rt_bf<C::Mb / 8, C::Nb / C::EPI_PIPE_DEPTH> D_reg[C::EPI_PIPE_DEPTH];
-            #pragma unroll
-            for (int i = 0; i < C::EPI_PIPE_DEPTH; i++)
-                warpgroup::load_async(D_reg[i], out_tm.template subtile<full_tt_fl<C::Nb / C::EPI_PIPE_DEPTH>>(0, C::Nb / C::EPI_PIPE_DEPTH * i));
-            tensor_load_wait();
-            warpgroup::sync(1);
-            warpgroup::tma::cluster::arrive(outputs_finished, 0, 1); // signal CTA 0
-
-            // Store to HBM with pipelined epilogue
-            #pragma unroll
-            for (int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
-                warpgroup::tma::store_async_read_wait<C::NUM_D_TILES-1>();
+            // Load the output from tensor memory into registers and store to HBM
+            if constexpr (C::OVERLAP_EPI) {
+                #pragma unroll
+                for (int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
+                    rt_bf<C::Mb / 8, C::Nb / C::EPI_PIPE_DEPTH> D_reg;
+                    warpgroup::load_async(D_reg, out_tm.template subtile<full_tt_fl<C::Nb / C::EPI_PIPE_DEPTH>>(0, C::Nb / C::EPI_PIPE_DEPTH * i));
+                    tensor_load_wait();
+                    if (i == C::EPI_PIPE_DEPTH - 1) {
+                        warpgroup::sync(1);
+                        warpgroup::tma::cluster::arrive(outputs_finished, 0, 1); // signal CTA 0
+                    }
+                    warpgroup::tma::store_async_read_wait<C::NUM_D_TILES-1>();
+                    warpgroup::sync(1);
+                    warpgroup::store(output_tiles.D[i%C::NUM_D_TILES], D_reg);
+                    warpgroup::sync(1);
+                    warpgroup::tma::store_async<dim::ROW, cache_policy::EVICT_FIRST>(g.D, output_tiles.D[i%C::NUM_D_TILES], {row_block_idx * 2 + cta_id, col_block_idx * C::EPI_PIPE_DEPTH + i});
+                }
+            } else {
+                rt_bf<C::Mb / 8, C::Nb / C::EPI_PIPE_DEPTH> D_reg[C::EPI_PIPE_DEPTH];
+                #pragma unroll
+                for (int i = 0; i < C::EPI_PIPE_DEPTH; i++)
+                    warpgroup::load_async(D_reg[i], out_tm.template subtile<full_tt_fl<C::Nb / C::EPI_PIPE_DEPTH>>(0, C::Nb / C::EPI_PIPE_DEPTH * i));
+                tensor_load_wait();
                 warpgroup::sync(1);
-                warpgroup::store(output_tiles.D[i%C::NUM_D_TILES], D_reg[i]);
-                warpgroup::sync(1);
-                warpgroup::tma::store_async<dim::ROW, cache_policy::EVICT_FIRST>(g.D, output_tiles.D[i%C::NUM_D_TILES], {row_block_idx * 2 + cta_id, col_block_idx * C::EPI_PIPE_DEPTH + i});
+                warpgroup::tma::cluster::arrive(outputs_finished, 0, 1); // signal CTA 0
+                #pragma unroll
+                for (int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
+                    warpgroup::tma::store_async_read_wait<C::NUM_D_TILES-1>();
+                    warpgroup::sync(1);
+                    warpgroup::store(output_tiles.D[i%C::NUM_D_TILES], D_reg[i]);
+                    warpgroup::sync(1);
+                    warpgroup::tma::store_async<dim::ROW, cache_policy::EVICT_FIRST>(g.D, output_tiles.D[i%C::NUM_D_TILES], {row_block_idx * 2 + cta_id, col_block_idx * C::EPI_PIPE_DEPTH + i});
+                }
             }
         }
         warpgroup::sync(1);
@@ -431,8 +448,10 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     using G = mxfp8_gemm::globals<C>;
 
     std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
-    std::cout << "Template: Mb=" << C::Mb << " Nb=" << C::Nb << " Kb=" << C::Kb << " SUPERGROUP_SIZE=" << C::SUPERGROUP_SIZE
-              << " LOAD_PIPE_DEPTH=" << C::LOAD_PIPE_DEPTH << " EPI_PIPE_DEPTH=" << C::EPI_PIPE_DEPTH << " NUM_D_TILES=" << C::NUM_D_TILES << "\n";
+    std::cout << "Template: Mb=" << C::Mb << " Nb=" << C::Nb << " Kb=" << C::Kb 
+              << " SUPERGROUP_SIZE=" << C::SUPERGROUP_SIZE << " LOAD_PIPE_DEPTH=" << C::LOAD_PIPE_DEPTH 
+              << " EPI_PIPE_DEPTH=" << C::EPI_PIPE_DEPTH << " NUM_D_TILES=" << C::NUM_D_TILES 
+              << " OVERLAP_EPI=" << C::OVERLAP_EPI << "\n";
 
     // Cooldown between configurations
     sleep_ms(500);
@@ -546,17 +565,17 @@ int main() {
     int N;
     bool ncu = false;
 
-    // Template parameters: LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH, SUPERGROUP_SIZE, NUM_D_TILES
+    // Template parameters: LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH, SUPERGROUP_SIZE, NUM_D_TILES, OVERLAP_EPI
     N = 1024;
-    run_benchmark<mxfp8_gemm::config<5, 8, 12, 4>>(N, N, N, ncu);
+    run_benchmark<mxfp8_gemm::config<5, 8, 12, 4, true>>(N, N, N, ncu);
     N = 2048;
-    run_benchmark<mxfp8_gemm::config<5, 8, 12, 2>>(N, N, N, ncu);
+    run_benchmark<mxfp8_gemm::config<5, 8, 12, 2, true>>(N, N, N, ncu);
     N = 4096;
-    run_benchmark<mxfp8_gemm::config<5, 8, 8, 2>>(N, N, N, ncu);
+    run_benchmark<mxfp8_gemm::config<5, 8, 8, 2, false>>(N, N, N, ncu);
     N = 8192;
-    run_benchmark<mxfp8_gemm::config<6, 16, 16, 4>>(N, N, N, ncu);
+    run_benchmark<mxfp8_gemm::config<6, 16, 16, 4, false>>(N, N, N, ncu);
     N = 16384;
-    run_benchmark<mxfp8_gemm::config<4, 8, 8, 2>>(N, N, N, ncu);
+    run_benchmark<mxfp8_gemm::config<4, 8, 8, 2, false>>(N, N, N, ncu);
 
     return 0;
 }
@@ -572,7 +591,7 @@ void mxfp8_gemm_entrypoint(
     const at::Tensor &B_sc,
     at::Tensor &D
 ) {
-    using C = mxfp8_gemm::config<6, 16, 12, 4>;
+    using C = mxfp8_gemm::config<6, 16, 12, 4, false>;
     using G = mxfp8_gemm::globals<C>;
 
     G g {
