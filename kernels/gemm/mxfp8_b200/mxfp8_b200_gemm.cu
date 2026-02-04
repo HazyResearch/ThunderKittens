@@ -16,9 +16,6 @@ struct config {
     static constexpr int CLUSTER_SIZE = 2;
     static constexpr bool USE_PDL = true;
 
-    static constexpr int STATIC_SHARED_MEMORY = 1024;
-    static constexpr int DYNAMIC_SHARED_MEMORY = MAX_SHARED_MEMORY - STATIC_SHARED_MEMORY;
-
     static constexpr int CONSUMER_WARPGROUPS = 1;
     static constexpr int PRODUCER_WARPGROUPS = 1;
     static constexpr int NUM_WARPGROUPS = CONSUMER_WARPGROUPS + PRODUCER_WARPGROUPS;
@@ -58,26 +55,34 @@ struct globals {
     B_sc_gl B_sc; // (N // 128) x (K // 128) x 32 x 16
     D_gl D;       // M x N
 
+    struct input_tiles_t {
+        A_fp8_tile A;
+        B_fp8_tile B;
+    };
+    struct input_scales_t {
+        A_sc_tile A;
+        B_sc_tile B[C::B_SC_SIZE];
+    };
+    struct outputs_t {
+        D_tile D[C::NUM_D_TILES];
+    };
+
     __host__ inline dim3 grid() const {
         return dim3(min((D.rows()/(C::Mb/2))*(D.cols()/C::Nb), num_sms()));
+    }
+    __host__ inline dim3 block() const { return dim3(C::NUM_THREADS); }
+    __host__ inline int dynamic_shared_memory() const {
+        constexpr int _dynamic_shared_memory = sizeof(input_tiles_t)  * C::LOAD_PIPE_DEPTH + 1024 +
+                                               sizeof(input_scales_t) * C::LOAD_PIPE_DEPTH + 1024 +
+                                               sizeof(outputs_t);
+        static_assert(_dynamic_shared_memory <= MAX_SHARED_MEMORY - 1024);
+        return _dynamic_shared_memory;
     }
 };
 
 template <typename C>
 __device__ inline void kernel(const globals<C> &g) {
     using G = globals<C>;
-
-    struct input_tiles_t {
-        typename G::A_fp8_tile A;
-        typename G::B_fp8_tile B;
-    };
-    struct input_scales_t {
-        typename G::A_sc_tile A;
-        typename G::B_sc_tile B[C::B_SC_SIZE];
-    };
-    struct outputs_t {
-        typename G::D_tile D[C::NUM_D_TILES];
-    };
 
     if (threadIdx.x == 0) {
         g.A.template prefetch_tma<typename G::A_fp8_tile>();
@@ -87,27 +92,23 @@ __device__ inline void kernel(const globals<C> &g) {
         g.D.template prefetch_tma<typename G::D_tile>();
     }
 
-    const int warp_id = warpgroup::warpid();
     const int warpgroup_id = warpgroup::groupid();
     const int cta_id = cluster_ctarank();
     const int cluster_id = clusterIdx().x;
-    const int num_blocks_per_row = g.D.cols() / C::Nb;
-    const int num_blocks_per_col = g.D.rows() / C::Mb;
-    const int num_blocks = num_blocks_per_row * num_blocks_per_col;
+    const int num_row_blocks = g.D.rows() / C::Mb;
+    const int num_col_blocks = g.D.cols() / C::Nb;
+    const int num_blocks = num_col_blocks * num_row_blocks;
     const int num_iters_per_block = g.A.cols() / C::Kb;
-    const int num_blocks_per_supergroup = C::SUPERGROUP_SIZE * num_blocks_per_row;
+    const int num_blocks_per_supergroup = C::SUPERGROUP_SIZE * num_col_blocks;
     uint32_t stage = 0;
     uint32_t phasebits = 0xFFFF0000;
 
     // Allocate shared memory
     extern __shared__ int __shm[];
     tma_swizzle_allocator sm_allocator((int*)&__shm[0]);
-    static_assert(sizeof(input_tiles_t) * C::LOAD_PIPE_DEPTH +
-                  sizeof(input_scales_t) * C::LOAD_PIPE_DEPTH + 1024 +
-                  sizeof(outputs_t) <= C::DYNAMIC_SHARED_MEMORY);
-    input_tiles_t  (&input_tiles) [C::LOAD_PIPE_DEPTH] = sm_allocator.allocate<input_tiles_t, C::LOAD_PIPE_DEPTH>();
-    input_scales_t (&input_scales)[C::LOAD_PIPE_DEPTH] = sm_allocator.allocate<input_scales_t, C::LOAD_PIPE_DEPTH>();
-    outputs_t &output_tiles = sm_allocator.allocate<outputs_t>();
+    typename G::input_tiles_t  (&input_tiles) [C::LOAD_PIPE_DEPTH] = sm_allocator.allocate<G::input_tiles_t, C::LOAD_PIPE_DEPTH>();
+    typename G::input_scales_t (&input_scales)[C::LOAD_PIPE_DEPTH] = sm_allocator.allocate<G::input_scales_t, C::LOAD_PIPE_DEPTH>();
+    typename G::outputs_t       &output_tiles                      = sm_allocator.allocate<G::outputs_t>();
 
     // Declare tensor memory
     tensor_allocator<1, C::CLUSTER_SIZE, false> tm_allocator;
@@ -116,8 +117,7 @@ __device__ inline void kernel(const globals<C> &g) {
     __shared__ uint32_t tmem_addr;
     __shared__ semaphore tmem_provisioned;
     __shared__ semaphore tiles_arrived[C::LOAD_PIPE_DEPTH];
-    __shared__ semaphore scales_smem_arrived[C::LOAD_PIPE_DEPTH];
-    __shared__ semaphore scales_tmem_arrived[C::LOAD_PIPE_DEPTH];
+    __shared__ semaphore scales_arrived[C::LOAD_PIPE_DEPTH];
     __shared__ semaphore inputs_finished[C::LOAD_PIPE_DEPTH];
     __shared__ semaphore outputs_arrived;
     __shared__ semaphore outputs_finished;
@@ -126,8 +126,7 @@ __device__ inline void kernel(const globals<C> &g) {
         #pragma unroll
         for (int i = 0; i < C::LOAD_PIPE_DEPTH; ++i) {
             init_semaphore(tiles_arrived[i], 0, 1);
-            init_semaphore(scales_smem_arrived[i], 0, 1);
-            init_semaphore(scales_tmem_arrived[i], 0, 1);
+            init_semaphore(scales_arrived[i], 0, 1);
             init_semaphore(inputs_finished[i], 0, 1);
         }
         init_semaphore(outputs_arrived, 0, 1);
@@ -138,6 +137,7 @@ __device__ inline void kernel(const globals<C> &g) {
     // Main divergence
     if (warpgroup_id >= C::CONSUMER_WARPGROUPS && warp::elect_leader()) {
         // Producer group
+        int warp_id = group<WARPGROUP_WARPS*C::PRODUCER_WARPGROUPS>::warpid();
         if (warp_id == 3) {
             // Load input tiles to shared memory
             pdl::wait();
@@ -145,17 +145,17 @@ __device__ inline void kernel(const globals<C> &g) {
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 int supergroup_idx = block_idx / num_blocks_per_supergroup;
                 int idx_within_supergroup = block_idx % num_blocks_per_supergroup;
-                int rows_in_supergroup = min(C::SUPERGROUP_SIZE, num_blocks_per_col - supergroup_idx * C::SUPERGROUP_SIZE);
+                int rows_in_supergroup = min(C::SUPERGROUP_SIZE, num_row_blocks - supergroup_idx * C::SUPERGROUP_SIZE);
                 int row_within_supergroup = idx_within_supergroup % rows_in_supergroup;
                 int row_block_idx = supergroup_idx * C::SUPERGROUP_SIZE + row_within_supergroup;
                 int col_block_idx = idx_within_supergroup / rows_in_supergroup;
 
                 #pragma unroll 2
                 for (int i = 0; i < num_iters_per_block; ++i) {
-                    tma::cluster::wait(inputs_finished[stage], get_phasebit<1>(phasebits, stage));
-                    update_phasebit<1>(phasebits, stage);
+                    wait(inputs_finished[stage], get_phasebit<1>(phasebits, stage));
                     tma::cluster::load_async(input_tiles[stage].A, g.A, {row_block_idx * 2 + cta_id, i}, tiles_arrived[stage], (uint16_t)(1 << cta_id), 0);
                     tma::cluster::load_async(input_tiles[stage].B, g.B, {col_block_idx * 2 + cta_id, i}, tiles_arrived[stage], (uint16_t)(1 << cta_id), 0);
+                    update_phasebit<1>(phasebits, stage);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
             }
@@ -166,45 +166,18 @@ __device__ inline void kernel(const globals<C> &g) {
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 int supergroup_idx = block_idx / num_blocks_per_supergroup;
                 int idx_within_supergroup = block_idx % num_blocks_per_supergroup;
-                int rows_in_supergroup = min(C::SUPERGROUP_SIZE, num_blocks_per_col - supergroup_idx * C::SUPERGROUP_SIZE);
+                int rows_in_supergroup = min(C::SUPERGROUP_SIZE, num_row_blocks - supergroup_idx * C::SUPERGROUP_SIZE);
                 int row_within_supergroup = idx_within_supergroup % rows_in_supergroup;
                 int row_block_idx = supergroup_idx * C::SUPERGROUP_SIZE + row_within_supergroup;
                 int col_block_idx = idx_within_supergroup / rows_in_supergroup;
 
                 #pragma unroll 2
                 for (int i = 0; i < num_iters_per_block; ++i) {
-                    tma::cluster::wait(scales_tmem_arrived[stage], get_phasebit<1>(phasebits, stage));
+                    wait(inputs_finished[stage], get_phasebit<1>(phasebits, stage));
+                    tma::cluster::load_async(input_scales[stage].A, g.A_sc, {row_block_idx * 2 + cta_id, i, 0, 0}, scales_arrived[stage], (uint16_t)(1 << cta_id), 0);
+                    if constexpr (C::B_SC_SIZE == 2) tma::cluster::load_async(input_scales[stage].B[cta_id], g.B_sc, {col_block_idx * 2 + cta_id, i, 0, 0}, scales_arrived[stage], (uint16_t)(0b11), 0);
+                    else if (cta_id == 0)            tma::cluster::load_async(input_scales[stage].B[0], g.B_sc, {col_block_idx, i, 0, 0}, scales_arrived[stage], (uint16_t)(0b11), 0);
                     update_phasebit<1>(phasebits, stage);
-                    tma::cluster::load_async(input_scales[stage].A, g.A_sc, {row_block_idx * 2 + cta_id, i, 0, 0}, scales_smem_arrived[stage], (uint16_t)(1 << cta_id), 0);
-                    if constexpr (C::B_SC_SIZE == 2) tma::cluster::load_async(input_scales[stage].B[cta_id], g.B_sc, {col_block_idx * 2 + cta_id, i, 0, 0}, scales_smem_arrived[stage], (uint16_t)(0b11), 0);
-                    else if (cta_id == 0)            tma::cluster::load_async(input_scales[stage].B[0], g.B_sc, {col_block_idx, i, 0, 0}, scales_smem_arrived[stage], (uint16_t)(0b11), 0);
-                    stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
-                }
-            }
-        } else if (cta_id == 0 && warp_id == 1) {
-            // Load A and B scales from shared memory to tensor memory
-            everyone::tma::cluster::wait();
-            wait(tmem_provisioned, 0);
-            tm_allocator.set_addr(tmem_addr);
-            auto A_sc_tm = tm_allocator.template allocate<full_tt_fp8e8m0<16*C::LOAD_PIPE_DEPTH>>(256);
-            auto B_sc_tm = tm_allocator.template allocate<full_tt_fp8e8m0<32*C::LOAD_PIPE_DEPTH>>(384);
-            for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
-                #pragma unroll 2
-                for (int i = 0; i < num_iters_per_block; i++) {
-                    tma::cluster::expect_bytes(scales_smem_arrived[stage], 2*sizeof(input_scales_t));
-                    tma::cluster::wait(scales_smem_arrived[stage], get_phasebit<0>(phasebits, stage));
-                    update_phasebit<0>(phasebits, stage);
-                    tma::cluster::wait(inputs_finished[stage], get_phasebit<1>(phasebits, stage));
-                    update_phasebit<1>(phasebits, stage);
-                    auto A_sc_tm_subtile = A_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 16);
-                    load_mxnv_scale_async2(A_sc_tm_subtile, input_scales[stage].A);
-                    auto B_sc_tm_subtile_0 = B_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 32);
-                    load_mxnv_scale_async2(B_sc_tm_subtile_0, input_scales[stage].B[0]);
-                    if constexpr (C::B_SC_SIZE == 2) {
-                        auto B_sc_tm_subtile_1 = B_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 32 + 16);
-                        load_mxnv_scale_async2(B_sc_tm_subtile_1, input_scales[stage].B[1]);
-                    }
-                    kittens::detail::tcgen05::commit<2>(scales_tmem_arrived[stage], 0b11);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
             }
@@ -217,14 +190,21 @@ __device__ inline void kernel(const globals<C> &g) {
             auto A_sc_tm = tm_allocator.template allocate<full_tt_fp8e8m0<16*C::LOAD_PIPE_DEPTH>>(256);
             auto B_sc_tm = tm_allocator.template allocate<full_tt_fp8e8m0<32*C::LOAD_PIPE_DEPTH>>(384);
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
-                tma::cluster::wait(outputs_finished, get_phasebit<1>(phasebits, 0));
-                update_phasebit<1>(phasebits, 0);
+                wait(outputs_finished, get_phasebit<1>(phasebits, 0));
                 #pragma unroll 2
                 for (int i = 0; i < num_iters_per_block; i++) {
-                    tma::cluster::expect_bytes(tiles_arrived[stage], 2*sizeof(input_tiles_t));
-                    tma::cluster::wait(tiles_arrived[stage], get_phasebit<0>(phasebits, stage));
-                    tma::cluster::wait(scales_tmem_arrived[stage], get_phasebit<0>(phasebits, stage));
-                    update_phasebit<0>(phasebits, stage);
+                    tma::expect_bytes(scales_arrived[stage], 2*sizeof(G::input_scales_t));
+                    wait(scales_arrived[stage], get_phasebit<0>(phasebits, stage));
+                    auto A_sc_tm_subtile = A_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage*16);
+                    load_mxnv_scale_async2(A_sc_tm_subtile, input_scales[stage].A);
+                    auto B_sc_tm_subtile_0 = B_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage*32);
+                    load_mxnv_scale_async2(B_sc_tm_subtile_0, input_scales[stage].B[0]);
+                    if constexpr (C::B_SC_SIZE == 2) {
+                        auto B_sc_tm_subtile_1 = B_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage*32+16);
+                        load_mxnv_scale_async2(B_sc_tm_subtile_1, input_scales[stage].B[1]);
+                    }
+                    tma::expect_bytes(tiles_arrived[stage], 2*sizeof(G::input_tiles_t));
+                    wait(tiles_arrived[stage], get_phasebit<0>(phasebits, stage));
                     if (i == 0) mm2_ABt(out_tm, input_tiles[stage].A, input_tiles[stage].B,
                                         A_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 16),
                                         B_sc_tm.template subtile<full_tt_fp8e8m0<32>>(stage * 32),
@@ -233,8 +213,10 @@ __device__ inline void kernel(const globals<C> &g) {
                                         A_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage * 16),
                                         B_sc_tm.template subtile<full_tt_fp8e8m0<32>>(stage * 32),
                                         inputs_finished[stage]);
+                    update_phasebit<0>(phasebits, stage);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
+                update_phasebit<1>(phasebits, 0);
                 kittens::detail::tcgen05::commit<2>(outputs_arrived);
             }
         }
@@ -251,14 +233,13 @@ __device__ inline void kernel(const globals<C> &g) {
         for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
             int supergroup_idx = block_idx / num_blocks_per_supergroup;
             int idx_within_supergroup = block_idx % num_blocks_per_supergroup;
-            int rows_in_supergroup = min(C::SUPERGROUP_SIZE, num_blocks_per_col - supergroup_idx * C::SUPERGROUP_SIZE);
+            int rows_in_supergroup = min(C::SUPERGROUP_SIZE, num_row_blocks - supergroup_idx * C::SUPERGROUP_SIZE);
             int row_within_supergroup = idx_within_supergroup % rows_in_supergroup;
             int row_block_idx = supergroup_idx * C::SUPERGROUP_SIZE + row_within_supergroup;
             int col_block_idx = idx_within_supergroup / rows_in_supergroup;
 
             // Wait for the last matmul to complete
             wait(outputs_arrived, get_phasebit<0>(phasebits, 0));
-            update_phasebit<0>(phasebits, 0);
 
             // Load the output from tensor memory into registers and store to HBM
             if constexpr (C::OVERLAP_EPI) {
@@ -294,6 +275,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     warpgroup::tma::store_async<dim::ROW, cache_policy::EVICT_FIRST>(g.D, output_tiles.D[i%C::NUM_D_TILES], {row_block_idx * 2 + cta_id, col_block_idx * C::EPI_PIPE_DEPTH + i});
                 }
             }
+            update_phasebit<0>(phasebits, 0);
         }
         warpgroup::sync(1);
         warpgroup::pdl::arrive();
@@ -515,10 +497,10 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     }
 
     // Set kernel attributes
-    CUDACHECK(cudaFuncSetAttribute(kernel_entrypoint<C>, cudaFuncAttributeMaxDynamicSharedMemorySize, C::DYNAMIC_SHARED_MEMORY));
+    CUDACHECK(cudaFuncSetAttribute(kernel_entrypoint<C>, cudaFuncAttributeMaxDynamicSharedMemorySize, g[0].dynamic_shared_memory()));
 
     // Prepare kernel launch configuration
-    LaunchConfig<true, true> launch_config(g[0].grid(), C::NUM_THREADS, C::DYNAMIC_SHARED_MEMORY, 0, C::CLUSTER_SIZE);
+    LaunchConfig<true, true> launch_config(g[0].grid(), g[0].block(), g[0].dynamic_shared_memory(), 0, C::CLUSTER_SIZE);
 
     // Number of iterations
     int num_warmups = ncu ? 0 : 5;
