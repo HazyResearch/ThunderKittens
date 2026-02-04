@@ -508,9 +508,9 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, trans_a> a_desc(a);
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, trans_b> b_desc(b);
 
-    // Memory consistency
-    kittens::tensor_after_thread_sync();
-    asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
+    // This is not neeeded if using mbarrier synchronization with acquire/release (default) semantics.
+    // However, it must be used if manually storing to SMEM/TMEM with generic operations.
+    // asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
 
     // Generate instruction descriptors
     constexpr uint32_t idescs[4] = {

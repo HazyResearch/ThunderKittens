@@ -26,7 +26,6 @@ template<int ncta=1, kittens::ducks::tt::full TT, kittens::ducks::st::all ST>
 __device__ inline static void load_mxnv_scale_async(TT &dst, const ST &src, kittens::semaphore &sem) {
     load_mxnv_scale_async<ncta>(dst, src);
     kittens::detail::tcgen05::commit<ncta>(sem);
-    kittens::tensor_before_thread_sync();
 }
 template<kittens::ducks::tt::full TT, kittens::ducks::st::all ST>
 __device__ inline static void load_mxnv_scale_async2(TT &dst, const ST &src) {
