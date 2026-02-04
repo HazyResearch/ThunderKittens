@@ -90,7 +90,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
     __shared__ semaphore inputs_arrived[C::LOAD_PIPE_DEPTH], inputs_finished[C::LOAD_PIPE_DEPTH], outputs_arrived[C::NUM_CONSUMERS], outputs_finished[C::MMA_PIPE_DEPTH];
     uint32_t bitfield = 0xFFFF0000; // ***_finished phase bits start as 1s, ***_arrived phase bits start as 0s
 
-    if (threadIdx.x == 0) {
+    if (threadIdx.x == 32) {
         init_semaphore(tmem_provisioned, 0, 1);
         #pragma unroll
         for (int i = 0; i < C::CLC_PIPE_DEPTH; i++) {
@@ -123,15 +123,15 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
             everyone::tma::cluster::wait();
             for (int task_iter = 0; true; task_iter++) {
                 for (int idx = 0; idx < iters_per_task; idx++) {
-                    tma::cluster::wait(inputs_finished[input_ring], get_phasebit<1>(bitfield, input_ring));
-                    update_phasebit<1>(bitfield, input_ring);
+                    wait(inputs_finished[input_ring], get_phasebit<1>(bitfield, input_ring));
                     #pragma unroll
                     for (int i = 0; i < C::NUM_CONSUMERS; i++)
                         tma::cluster::load_async(a_smem[input_ring][i], g.a, {(tile_coord.x*2+cta_rank)*C::NUM_CONSUMERS+i, idx}, inputs_arrived[input_ring], (uint16_t)(1<<cta_rank), 0);
                     tma::cluster::load_async(b_smem[input_ring], g.b, {tile_coord.y*2+cta_rank, idx}, inputs_arrived[input_ring], (uint16_t)(1<<cta_rank), 0);
+                    update_phasebit<1>(bitfield, input_ring);
                     input_ring=ring_advance<C::LOAD_PIPE_DEPTH>(input_ring);
                 }
-                tma::cluster::wait(schedule_arrived[task_iter%C::CLC_PIPE_DEPTH], (task_iter/C::CLC_PIPE_DEPTH)%2);
+                wait(schedule_arrived[task_iter%C::CLC_PIPE_DEPTH], (task_iter/C::CLC_PIPE_DEPTH)%2);
                 auto schedule = clc::query(clc_handle[task_iter%C::CLC_PIPE_DEPTH]);
                 tma::cluster::arrive(schedule_finished[task_iter%C::CLC_PIPE_DEPTH], 0);
                 if (schedule.success) tile_coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE>(rblks, cblks, schedule.x/C::CLUSTER_SIZE);
@@ -141,11 +141,11 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
             everyone::tma::cluster::wait();
             for (int task_iter = 0; true; task_iter++) {
                 if (cta_rank == 0) {
-                    tma::cluster::wait(schedule_finished[task_iter%C::CLC_PIPE_DEPTH], ((task_iter+C::CLC_PIPE_DEPTH)/C::CLC_PIPE_DEPTH)%2);
+                    wait(schedule_finished[task_iter%C::CLC_PIPE_DEPTH], ((task_iter+C::CLC_PIPE_DEPTH)/C::CLC_PIPE_DEPTH)%2);
                     clc::schedule(clc_handle[task_iter%C::CLC_PIPE_DEPTH], schedule_arrived[task_iter%C::CLC_PIPE_DEPTH]);
                 }
-                tma::cluster::expect_bytes(schedule_arrived[task_iter%C::CLC_PIPE_DEPTH], sizeof(clc_handle[task_iter%C::CLC_PIPE_DEPTH]));
-                tma::cluster::wait(schedule_arrived[task_iter%C::CLC_PIPE_DEPTH], (task_iter/C::CLC_PIPE_DEPTH)%2);
+                tma::expect_bytes(schedule_arrived[task_iter%C::CLC_PIPE_DEPTH], sizeof(clc_handle[task_iter%C::CLC_PIPE_DEPTH]));
+                wait(schedule_arrived[task_iter%C::CLC_PIPE_DEPTH], (task_iter/C::CLC_PIPE_DEPTH)%2);
                 auto schedule = clc::query(clc_handle[task_iter%C::CLC_PIPE_DEPTH]);
                 tma::cluster::arrive(schedule_finished[task_iter%C::CLC_PIPE_DEPTH], 0);
                 if (!schedule.success) break;
@@ -162,16 +162,16 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
             }
             int input_ring = 0;
             for (int task_iter = 0; true; task_iter++) {
-                tma::cluster::wait(schedule_arrived[task_iter%C::CLC_PIPE_DEPTH], (task_iter/C::CLC_PIPE_DEPTH)%2);
+                wait(schedule_arrived[task_iter%C::CLC_PIPE_DEPTH], (task_iter/C::CLC_PIPE_DEPTH)%2);
                 auto schedule = clc::query(clc_handle[task_iter%C::CLC_PIPE_DEPTH]);
                 tma::cluster::arrive(schedule_finished[task_iter%C::CLC_PIPE_DEPTH], 0);
-                tma::cluster::wait(outputs_finished[task_iter%C::MMA_PIPE_DEPTH], ((task_iter+C::MMA_PIPE_DEPTH)/C::MMA_PIPE_DEPTH)%2);
+                wait(outputs_finished[task_iter%C::MMA_PIPE_DEPTH], ((task_iter+C::MMA_PIPE_DEPTH)/C::MMA_PIPE_DEPTH)%2);
                 for(int idx = 0; idx < iters_per_task; idx++) {
-                    tma::cluster::expect_bytes(inputs_arrived[input_ring], (C::CLUSTER_SIZE*C::NUM_CONSUMERS*sizeof(G::a_tile) + 2*sizeof(G::b_tile))/C::NUM_CONSUMERS);
-                    tma::cluster::wait(inputs_arrived[input_ring], get_phasebit<0>(bitfield, input_ring));
-                    update_phasebit<0>(bitfield, input_ring);
+                    tma::expect_bytes(inputs_arrived[input_ring], (C::CLUSTER_SIZE*C::NUM_CONSUMERS*sizeof(G::a_tile) + 2*sizeof(G::b_tile))/C::NUM_CONSUMERS);
+                    wait(inputs_arrived[input_ring], get_phasebit<0>(bitfield, input_ring));
                     if (idx == 0) mm2_ABt (d_tt[task_iter%C::MMA_PIPE_DEPTH], a_smem[input_ring][warpgroup::warpid()], b_smem[input_ring], inputs_finished[input_ring]);
                     else          mma2_ABt(d_tt[task_iter%C::MMA_PIPE_DEPTH], a_smem[input_ring][warpgroup::warpid()], b_smem[input_ring], inputs_finished[input_ring]);
+                    update_phasebit<0>(bitfield, input_ring);
                     input_ring=ring_advance<C::LOAD_PIPE_DEPTH>(input_ring);
                 }
                 detail::tcgen05::commit<C::CLUSTER_SIZE>(outputs_arrived[warpgroup::warpid()]);
@@ -199,7 +199,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
         int2 tile_coord, next_tile_coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE>(rblks, cblks, blockIdx.x/C::CLUSTER_SIZE);
         for(int task_iter = 0; true; task_iter++) {
             tile_coord = next_tile_coord;
-            tma::cluster::wait(schedule_arrived[task_iter%C::CLC_PIPE_DEPTH], (task_iter/C::CLC_PIPE_DEPTH)%2);
+            wait(schedule_arrived[task_iter%C::CLC_PIPE_DEPTH], (task_iter/C::CLC_PIPE_DEPTH)%2);
             auto schedule = clc::query(clc_handle[task_iter%C::CLC_PIPE_DEPTH]);
             warpgroup::sync(warpgroup::groupid()+1);
             warpgroup::tma::cluster::arrive(schedule_finished[task_iter%C::CLC_PIPE_DEPTH], 0);
