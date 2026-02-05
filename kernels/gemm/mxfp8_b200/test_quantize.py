@@ -15,17 +15,23 @@ def torch_mxfp8_quantize(
     assert V.shape[0] % 128 == 0
     assert V.shape[1] % 128 == 0
 
+    M, N = V.shape
+    V = V.to(torch.float32)
+
+    # Important: Use explicit float32 constants to match kernel precision
+    dest_max = torch.tensor(448.0, dtype=torch.float32, device=V.device)
+    min_exp = torch.tensor(-127.0, dtype=torch.float32, device=V.device)
+    fp8e8m0_bias = torch.tensor(127.0, dtype=torch.float32, device=V.device)
+
     # Following not the OCP MX specs, but the NVIDIA recipe: https://arxiv.org/pdf/2506.08027
     # This specifically follows the Appendix (page 13)
     # To be more precise, we have to use Blackwell hardware (thus, in the kernel)
-    block_amax = torch.amax(torch.abs(V).view(V.shape[0], V.shape[1] // 32, 32), dim=-1)
-    dest_max = 448.0
+    block_amax = torch.amax(torch.abs(V).view(M, N // 32, 32), dim=-1)
     decode_scale = block_amax / dest_max
-    V_sc_unswizzled = torch.clamp(torch.ceil(torch.log2(decode_scale)), min=-127)
+    V_sc_unswizzled = torch.clamp(torch.ceil(torch.log2(decode_scale)), min=min_exp)
     V_fp8 = (V / (2 ** V_sc_unswizzled.repeat_interleave(32, dim=-1))).to(torch.float8_e4m3fn)
 
     # Torch (up to 2.8) does not support float8_e8m0, so we need to manually convert to uint8
-    fp8e8m0_bias = 127
     V_sc_unswizzled = (V_sc_unswizzled + fp8e8m0_bias).to(torch.uint8)
 
     return (

@@ -19,18 +19,24 @@ def torch_nvfp4_quantize(
     M, N = V.shape
     V = V.to(torch.float32)
 
-    s_global_enc = 6. * 448. / torch.amax(torch.abs(V), dim=None).clamp(min=1e-12)
-    s_global_dec = 1. / s_global_enc
+    # Important: Use explicit float32 constants to match kernel precision and prevent reciprocal multiply
+    one = torch.tensor(1.0, dtype=torch.float32, device=V.device)
+    fp4_max = torch.tensor(6.0, dtype=torch.float32, device=V.device)
+    fp8_max = torch.tensor(448.0, dtype=torch.float32, device=V.device)
+    eps = torch.tensor(1e-12, dtype=torch.float32, device=V.device)
+
+    s_global_enc = fp4_max * fp8_max / torch.amax(torch.abs(V)).clamp(min=eps)
+    s_global_dec = one / s_global_enc
 
     # Compute local amax: 1D uses 1x16 blocks, 2D uses 16x16 blocks (then replicates)
     if scale_2d:
-        s_local_dec = torch.amax(torch.abs(V).view(M // 16, 16, N // 16, 16), dim=(1, 3)) / 6.
+        s_local_dec = torch.amax(torch.abs(V).view(M // 16, 16, N // 16, 16), dim=(1, 3)) / fp4_max
         s_local_dec = s_local_dec.repeat_interleave(16, dim=0)
     else:
-        s_local_dec = torch.amax(torch.abs(V).view(M, N // 16, 16), dim=-1) / 6.
+        s_local_dec = torch.amax(torch.abs(V).view(M, N // 16, 16), dim=-1) / fp4_max
     s_local_dec_e4m3 = (s_local_dec * s_global_enc).to(torch.float8_e4m3fn) # round-to-even
     s_local_dec = s_local_dec_e4m3.to(torch.float32) # choked
-    s_enc = 1. / (s_local_dec * s_global_dec).clamp(min=1e-12)
+    s_enc = one / (s_local_dec * s_global_dec).clamp(min=eps)
 
     V_fp4x2 = fp32_to_fp4x2(V * s_enc.repeat_interleave(16, dim=-1)) # round-to-even or stochastic (refer to the recipe)
     V_sc_unswizzled = s_local_dec_e4m3 # alias for prettiness
