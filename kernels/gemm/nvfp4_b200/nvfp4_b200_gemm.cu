@@ -194,6 +194,7 @@ __device__ inline void kernel(const globals<C> &g) {
             auto B_sc_tm = tm_allocator.template allocate<full_tt_fp8e4m3<32*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(256+4*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH);
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 wait(outputs_finished, get_phasebit<1>(phasebits, 0));
+                tensor_after_thread_sync();
                 for (int i = 0; i < num_red_blocks; i++) {
                     tma::expect_bytes(scales_arrived[stage], 2*sizeof(G::input_scales_t));
                     wait(scales_arrived[stage], get_phasebit<0>(phasebits, stage));
@@ -224,7 +225,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     update_phasebit<0>(phasebits, stage);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
-                kittens::detail::tcgen05::commit<2>(outputs_arrived);
+                tensor_commit<2>(outputs_arrived);
                 update_phasebit<1>(phasebits, 0);
             }
         }
@@ -259,6 +260,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     warpgroup::load_async(D_reg, out_tm.template subtile<full_tt_fl<C::Nb/C::EPI_PIPE_DEPTH>>(0, C::Nb/C::EPI_PIPE_DEPTH*i));
                     if (i == C::EPI_PIPE_DEPTH - 1) {
                         tensor_load_wait();
+                        tensor_before_thread_sync();
                         warpgroup::sync(1);
                         warpgroup::tma::cluster::arrive(outputs_finished, 0, 1); // signal CTA 0
                     }
@@ -279,6 +281,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     warp::copy(D_reg[i], D_reg_fl);
                 }
                 tensor_load_wait();
+                tensor_before_thread_sync();
                 warpgroup::sync(1);
                 warpgroup::tma::cluster::arrive(outputs_finished, 0, 1); // signal CTA 0
                 #pragma unroll

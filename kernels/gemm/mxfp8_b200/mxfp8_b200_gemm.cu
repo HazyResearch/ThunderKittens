@@ -191,6 +191,7 @@ __device__ inline void kernel(const globals<C> &g) {
             auto B_sc_tm = tm_allocator.template allocate<full_tt_fp8e8m0<32*C::LOAD_PIPE_DEPTH>>(384);
             for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
                 wait(outputs_finished, get_phasebit<1>(phasebits, 0));
+                tensor_after_thread_sync();
                 #pragma unroll 2
                 for (int i = 0; i < num_iters_per_block; i++) {
                     tma::expect_bytes(scales_arrived[stage], 2*sizeof(G::input_scales_t));
@@ -217,7 +218,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
                 update_phasebit<1>(phasebits, 0);
-                kittens::detail::tcgen05::commit<2>(outputs_arrived);
+                tensor_commit<2>(outputs_arrived);
             }
         }
     } else if (warpgroup_id < C::CONSUMER_WARPGROUPS) {
@@ -249,6 +250,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     warpgroup::load_async(D_reg, out_tm.template subtile<full_tt_fl<C::Nb / C::EPI_PIPE_DEPTH>>(0, C::Nb / C::EPI_PIPE_DEPTH * i));
                     if (i == C::EPI_PIPE_DEPTH - 1) {
                         tensor_load_wait();
+                        tensor_before_thread_sync();
                         warpgroup::sync(1);
                         warpgroup::tma::cluster::arrive(outputs_finished, 0, 1); // signal CTA 0
                     }
@@ -264,6 +266,7 @@ __device__ inline void kernel(const globals<C> &g) {
                 for (int i = 0; i < C::EPI_PIPE_DEPTH; i++)
                     warpgroup::load_async(D_reg[i], out_tm.template subtile<full_tt_fl<C::Nb / C::EPI_PIPE_DEPTH>>(0, C::Nb / C::EPI_PIPE_DEPTH * i));
                 tensor_load_wait();
+                tensor_before_thread_sync();
                 warpgroup::sync(1);
                 warpgroup::tma::cluster::arrive(outputs_finished, 0, 1); // signal CTA 0
                 #pragma unroll
