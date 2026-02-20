@@ -387,6 +387,7 @@ Learn more about ThunderKittens and how GPUs work by checking out our blog posts
 * [One Kernel for All Your GPUs, Sep 2025](https://hazyresearch.stanford.edu/blog/2025-09-22-pgl)
 * [We Bought the Whole GPU, So We're Damn Well Going to Use the Whole GPU, Sep 2025](https://hazyresearch.stanford.edu/blog/2025-09-28-tp-llama-main)
 * [Loads and Loads of Fluffy Kittens, Nov 2025](https://hazyresearch.stanford.edu/blog/2025-11-17-fluffy-kittens)
+* [ThunderKittens 2.0: Even Faster Kernels for Your GPUs, Feb 2026](https://hazyresearch.stanford.edu/blog/2026-02-19-tk-2)
 
 Explore the Kittens Cinematic Universe:
 
