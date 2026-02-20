@@ -91,7 +91,7 @@ NVCCFLAGS += -DKITTENS_BLACKWELL -gencode arch=compute_100a,code=sm_100a
 else ifeq ($(GPU),H100)
 NVCCFLAGS += -DKITTENS_HOPPER -gencode arch=compute_90a,code=sm_90a
 else ifeq ($(GPU),A100)
-NVCCFLAGS += -DKITTENS_AMPERE -gencode arch=compute_80a,code=sm_80a
+NVCCFLAGS += -DKITTENS_AMPERE -gencode arch=compute_80,code=sm_80
 else
 $(error Unsupported GPU: $(GPU). Please set GPU to H100, B200, or B300.)
 endif
