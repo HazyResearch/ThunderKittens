@@ -11,3 +11,5 @@ Change the `LEVEL` field in the `Makefile` to `01` - `07`, then `make clean && m
 - Level 03: Use shared memory
 - Level 04: Use tensor cores
 - Level 05: Use tensor cores (tcgen05 mma) with TMA
+- Level 06: Warp-specialized pipelined TMA/MMA with sliced epilogue
+- Level 07: 2-CTA cluster, warpgroup producer-consumer.
