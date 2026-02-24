@@ -430,16 +430,16 @@ void entrypoint(
 
     cudaStream_t stream = at::cuda::getCurrentCUDAStream();
     
-    CUDACHECK(cudaFuncSetAttribute(kittens::py::global_kernel_unclustered<config, globals, attn_comm_partial_kernel>, cudaFuncAttributeMaxDynamicSharedMemorySize, config::DYNAMIC_SHARED_MEMORY));
-    kittens::py::global_kernel_unclustered<config, globals, attn_comm_partial_kernel><<<num_comm_sms + G.num_partial_blocks(), config::NUM_THREADS, config::DYNAMIC_SHARED_MEMORY, stream>>>(G);
+    CUDACHECK(cudaFuncSetAttribute(kittens::py::global_kernel<config, globals, attn_comm_partial_kernel>, cudaFuncAttributeMaxDynamicSharedMemorySize, config::DYNAMIC_SHARED_MEMORY));
+    kittens::py::global_kernel<config, globals, attn_comm_partial_kernel><<<num_comm_sms + G.num_partial_blocks(), config::NUM_THREADS, config::DYNAMIC_SHARED_MEMORY, stream>>>(G);
 
     if (ring_stage > 0) {
-        CUDACHECK(cudaFuncSetAttribute(kittens::py::global_kernel_unclustered<config, globals, attn_reduction_kernel>, cudaFuncAttributeMaxDynamicSharedMemorySize, config::DYNAMIC_SHARED_MEMORY));
-        kittens::py::global_kernel_unclustered<config, globals, attn_reduction_kernel><<<G.num_reduction_blocks(), config::NUM_THREADS, config::DYNAMIC_SHARED_MEMORY, stream>>>(G);
+        CUDACHECK(cudaFuncSetAttribute(kittens::py::global_kernel<config, globals, attn_reduction_kernel>, cudaFuncAttributeMaxDynamicSharedMemorySize, config::DYNAMIC_SHARED_MEMORY));
+        kittens::py::global_kernel<config, globals, attn_reduction_kernel><<<G.num_reduction_blocks(), config::NUM_THREADS, config::DYNAMIC_SHARED_MEMORY, stream>>>(G);
     }
 
-    CUDACHECK(cudaFuncSetAttribute(kittens::py::global_kernel_unclustered<barrier_config, globals, barrier_kernel>, cudaFuncAttributeMaxDynamicSharedMemorySize, barrier_config::DYNAMIC_SHARED_MEMORY));
-    kittens::py::global_kernel_unclustered<barrier_config, globals, barrier_kernel><<<barrier_config::NUM_BLOCKS, barrier_config::NUM_THREADS, barrier_config::DYNAMIC_SHARED_MEMORY, stream>>>(G);
+    CUDACHECK(cudaFuncSetAttribute(kittens::py::global_kernel<barrier_config, globals, barrier_kernel>, cudaFuncAttributeMaxDynamicSharedMemorySize, barrier_config::DYNAMIC_SHARED_MEMORY));
+    kittens::py::global_kernel<barrier_config, globals, barrier_kernel><<<barrier_config::NUM_BLOCKS, barrier_config::NUM_THREADS, barrier_config::DYNAMIC_SHARED_MEMORY, stream>>>(G);
 }
 
 #include <torch/csrc/utils/pybind.h>
