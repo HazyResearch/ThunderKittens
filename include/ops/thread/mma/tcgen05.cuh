@@ -363,6 +363,8 @@ __device__ static inline void mma(D &d, const A &a, const B &b) {
         "Currently unsupported type combination for matrix multiply."
     );
 
+    static_assert(trans_a == transpose::N, "A from TMEM can't be transposed in TS (tensor-shared) MMA.");
+
     uint32_t idesc = detail::tcgen05::instruction_descriptor<T_D, T_AB, M, N, trans_a, trans_b, false>();
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, trans_b> b_desc(b);
 
