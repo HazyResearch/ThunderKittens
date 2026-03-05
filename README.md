@@ -154,10 +154,10 @@ Altogether, this is less than 100 lines of code, and achieves about 855 TFLOPs o
 
 ThunderKittens does use a bunch of modern stuff, so it has fairly aggressive requirements.
 
-* **CUDA 12.8+**. Anything after CUDA 12.1 will _probably_ work, but you'll likely end up with serialized wgmma pipelines on H100s due to a bug in those earlier versions of CUDA. We do our dev work on CUDA 12.8-13.1, because we want our kittens to play in the nicest, most modern environment possible. Make sure you run the following to set up your CUDA environment properly:
+* **CUDA 12.8+**. We want our kittens to play in the nicest, most modern environment possible. Make sure you run the following to set up your CUDA environment properly:
 
     ```bash
-    export CUDA_HOME=/usr/local/cuda-<YOUR-CUDA-VERSION> # ex. cuda-12.6
+    export CUDA_HOME=/usr/local/cuda-<YOUR-CUDA-VERSION> # ex. cuda-12.8
     export PATH=${CUDA_HOME}/bin:${PATH} 
     export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
     ```
