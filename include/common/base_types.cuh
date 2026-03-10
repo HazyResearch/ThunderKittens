@@ -299,13 +299,13 @@ template<> struct packing<char> {
     static __device__ inline constexpr int num() { return 1; }
     using unpacked_type = char;
     using packed_type = char2;
-    static __device__ inline constexpr char2 pack(const signed char &i) { return char2{i, i}; } // this replication makes code cleaner later.
+    static __device__ inline constexpr char2 pack(const char &i) { return char2{static_cast<signed char>(i), static_cast<signed char>(i)}; }
 };
 template<> struct packing<char2> {
     static __device__ inline constexpr int num() { return 2; }
     using unpacked_type = char;
     using packed_type = char2;
-    static __device__ inline constexpr char2 pack(const signed char &i) { return char2{i, i}; } // this replication makes code cleaner later.
+    static __device__ inline constexpr char2 pack(const char &i) { return char2{static_cast<signed char>(i), static_cast<signed char>(i)}; }
 };
 template<> struct packing<int> {
     static __device__ inline constexpr int num() { return 1; }
