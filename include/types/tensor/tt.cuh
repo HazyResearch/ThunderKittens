@@ -82,12 +82,7 @@ struct tt {
     }
     template<int transpose> __device__ inline uint32_t chunk_addr(int chunk) const {
         if constexpr (transpose) {
-            if constexpr (std::is_same_v<T, bf16> || std::is_same_v<T, half> || std::is_same_v<T, fp8e4m3> || std::is_same_v<T, fp8e5m2>) {
-                return addr + ((16 * chunk) << 16);
-            }
-            else {
-                static_assert(sizeof(T) == 999, "Currently unsupported type for input to an mma.");
-            }
+            static_assert(!transpose, "Transposed TMEM chunk addressing is not supported due to Blackwell tensor-core limitations.");
         }
         else {
             if constexpr (std::is_same_v<T, bf16> || std::is_same_v<T, half>) {
