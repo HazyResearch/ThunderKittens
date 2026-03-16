@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "base_types.cuh"
+
 namespace kittens {
 
 enum class reduce_op {

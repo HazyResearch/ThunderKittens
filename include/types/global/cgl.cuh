@@ -5,13 +5,7 @@
  
 #pragma once
 
-#include "../../common/common.cuh"
-#include "../shared/cst.cuh"
 #include "gl.cuh"
-#include "util.cuh"
-#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
-#include "tma.cuh"
-#endif
 
 namespace kittens {
 

@@ -19,8 +19,8 @@
 #ifdef KITTENS_BLACKWELL
 #include <cuda_fp4.h>
 #endif
-#include <string>
 #include <bit>
+#include <type_traits>
 
 
 namespace kittens {

@@ -6,6 +6,7 @@
 #pragma once
 
 #include "st.cuh"
+#include "csv.cuh"
 
 namespace kittens {
 

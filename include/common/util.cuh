@@ -5,9 +5,10 @@
 
 #pragma once
 
-#include <concepts>
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <iostream>
-#include <memory>
 #include <stdint.h>
 #include <type_traits>
 

@@ -5,8 +5,6 @@
 
 #pragma once
 
-#include <cuda/pipeline>
-
 #include "../../common/common.cuh"
 #include "../../types/types.cuh"
 #include "../thread/thread.cuh" // several group memory ops rely on underlying single-thread-scope ops

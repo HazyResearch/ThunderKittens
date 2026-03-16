@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <type_traits>
+#include <unistd.h>
 
 #include "../../common/common.cuh"
 #include "vmm.cuh"

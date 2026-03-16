@@ -7,6 +7,7 @@
 
 #include "../../../common/common.cuh"
 #include "../../../types/types.cuh"
+#include "sync.cuh"
 
 namespace kittens {
 /**

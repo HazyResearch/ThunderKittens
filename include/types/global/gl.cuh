@@ -5,11 +5,12 @@
  
 #pragma once
 
+#include <type_traits>
+
 #include "../../common/common.cuh"
 #include "../shared/shared.cuh"
 #include "util.cuh"
 #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
-#include <utility>
 #include "tma.cuh"
 #endif
 

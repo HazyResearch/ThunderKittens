@@ -9,7 +9,7 @@
 #include <type_traits>
 
 #include "../../common/common.cuh"
-#include "rv_layout.cuh"
+#include "rv.cuh"
 
 namespace kittens {
 

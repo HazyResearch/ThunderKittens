@@ -5,7 +5,7 @@
  
 #pragma once
 
-#include "st.cuh"
+#include "sv.cuh"
 
 namespace kittens {
 
