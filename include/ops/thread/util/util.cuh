@@ -290,14 +290,14 @@ namespace pdl {
  * @note This does not guarantee memory visibility. For memory visibility, the secondary kernel must call wait().
  */
 __device__ static inline void arrive() {
-    cudaTriggerProgrammaticLaunchCompletion();
+    asm volatile("griddepcontrol.launch_dependents;" ::: "memory");
 }
 
 /**
  * @brief Blocks until the primary kernel fully completes and flushes memory.
  */
 __device__ static inline void wait() {
-    cudaGridDependencySynchronize();
+    asm volatile("griddepcontrol.wait;" ::: "memory");
 }
 
 }

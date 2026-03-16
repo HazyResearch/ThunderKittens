@@ -78,7 +78,7 @@ struct pdl {
  */
 __device__ static inline void arrive() {
     if (laneid() == 0) {
-        cudaTriggerProgrammaticLaunchCompletion();
+        asm volatile("griddepcontrol.launch_dependents;" ::: "memory");
     }
 }
 
@@ -86,7 +86,7 @@ __device__ static inline void arrive() {
  * @brief Blocks until the primary kernel fully completes and flushes memory.
  */
 __device__ static inline void wait() {
-    cudaGridDependencySynchronize();
+    asm volatile("griddepcontrol.wait;" ::: "memory");
 }
 
 };
