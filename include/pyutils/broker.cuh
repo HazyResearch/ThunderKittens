@@ -383,8 +383,8 @@ struct KittensBroker {
         detail::broker::sync(local_world_size_, shm_);
     }
 
-    KittensBroker(const KittensBroker&) = delete;
-    KittensBroker& operator=(const KittensBroker&) = delete;
+    __host__ KittensBroker(const KittensBroker&) = delete;
+    __host__ KittensBroker& operator=(const KittensBroker&) = delete;
 
     __host__ inline KittensBroker(KittensBroker&& other) noexcept
         : local_rank_(other.local_rank_),

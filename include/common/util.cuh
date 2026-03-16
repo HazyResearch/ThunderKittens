@@ -35,7 +35,7 @@
 
 // Convenience utility
 #define CHECK_CUDA_ERROR(val) check((val), #val, __FILE__, __LINE__)
-template <typename T> void check(
+template <typename T> __host__ void check(
     T err, char const* const func, char const* const file, int const line
 ) {
     if (err != cudaSuccess) {
@@ -513,8 +513,8 @@ struct LaunchConfig {
         return *this;
     }
 
-    LaunchConfig(LaunchConfig&&) = delete;
-    LaunchConfig& operator=(LaunchConfig&&) = delete;
+    __host__ LaunchConfig(LaunchConfig&&) = delete;
+    __host__ LaunchConfig& operator=(LaunchConfig&&) = delete;
 
     __host__ inline operator cudaLaunchConfig_t*() noexcept { return &config; }
     __host__ inline operator const cudaLaunchConfig_t*() const noexcept { return &config; }

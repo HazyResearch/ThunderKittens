@@ -17,7 +17,7 @@ template <typename Config>
 concept has_min_blocks_per_sm = requires { std::integral_constant<int, int(Config::MIN_BLOCKS_PER_SM)>{}; };
 
 template <typename Config>
-consteval int min_blocks_per_sm() {
+__host__ consteval int min_blocks_per_sm() {
     if constexpr(has_min_blocks_per_sm<Config>)
         return Config::MIN_BLOCKS_PER_SM;
     else
@@ -32,7 +32,7 @@ void global_kernel(const __grid_constant__ Globals G) {
 }
 
 template <typename Layout, bool TypeCheck = true>
-static inline void tensor_check(const at::Tensor &t) {
+__host__ static inline void tensor_check(const at::Tensor &t) {
     TORCH_CHECK(t.is_cuda(), "Tensor must be on CUDA device")
     TORCH_CHECK(t.is_contiguous(), "Tensor must be contiguous")
     TORCH_CHECK(t.dim() <= 4, "Expected Tensor.dim() <= 4");
@@ -73,7 +73,7 @@ static inline void tensor_check(const at::Tensor &t) {
 }
 
 template <kittens::ducks::pgl::all PGL, bool TypeCheck = true>
-static inline void parallel_tensor_check(const TKParallelTensor& t) {
+__host__ static inline void parallel_tensor_check(const TKParallelTensor& t) {
     tensor_check<PGL, TypeCheck>(t.data_);
     TORCH_CHECK(t.data_.sizes().vec() == t.shape_, "Shape mismatch between TKParallelTensor and the underlying tensor");
     TORCH_CHECK(t.data_.dtype() == t.dtype_, "Dtype mismatch between TKParallelTensor and the underlying tensor");
@@ -85,7 +85,7 @@ static inline void parallel_tensor_check(const TKParallelTensor& t) {
 }
 
 template <kittens::ducks::gl::all GL, bool TypeCheck = true>
-static inline GL tensor_to_gl(const at::Tensor &t) {
+__host__ static inline GL tensor_to_gl(const at::Tensor &t) {
     tensor_check<GL, TypeCheck>(t);
 
     std::array<int, 4> shape = {1, 1, 1, 1};
@@ -98,14 +98,14 @@ static inline GL tensor_to_gl(const at::Tensor &t) {
 }
 
 template <kittens::ducks::gl::all GL, bool TypeCheck = true>
-static inline GL tensor_to_gl(const at::Tensor &t, int B, int D, int R, int C) {
+__host__ static inline GL tensor_to_gl(const at::Tensor &t, int B, int D, int R, int C) {
     tensor_check<GL, TypeCheck>(t);
 
     return ::kittens::make_gl<GL>(reinterpret_cast<uint64_t>(t.data_ptr()), B, D, R, C);
 }
 
 template <kittens::ducks::pgl::all PGL, bool TypeCheck = true>
-static inline PGL parallel_tensor_to_pgl(TKParallelTensor &t) {
+__host__ static inline PGL parallel_tensor_to_pgl(TKParallelTensor &t) {
     parallel_tensor_check<PGL, TypeCheck>(t);
 
     std::array<int, 4> shape = {1, 1, 1, 1};
@@ -122,7 +122,7 @@ static inline PGL parallel_tensor_to_pgl(TKParallelTensor &t) {
 }
 
 template <kittens::ducks::pgl::all PGL, bool TypeCheck = true>
-static inline PGL parallel_tensor_to_pgl(TKParallelTensor &t, int B, int D, int R, int C) {
+__host__ static inline PGL parallel_tensor_to_pgl(TKParallelTensor &t, int B, int D, int R, int C) {
     parallel_tensor_check<PGL, TypeCheck>(t);
 
     if constexpr (PGL::multicast)
@@ -134,26 +134,26 @@ static inline PGL parallel_tensor_to_pgl(TKParallelTensor &t, int B, int D, int 
 }
 
 template <kittens::ducks::gl::all GL>
-static inline GL make_fake_gl(const int batch, const int depth, const int rows, const int cols) {
+__host__ static inline GL make_fake_gl(const int batch, const int depth, const int rows, const int cols) {
     return ::kittens::make_gl<GL>(reinterpret_cast<uint64_t>(nullptr), batch, depth, rows, cols);
 }
 
-static inline void _device_check(const at::Tensor& first, const at::Tensor& second) {
+__host__ static inline void _device_check(const at::Tensor& first, const at::Tensor& second) {
     TORCH_CHECK(first.device() == second.device(), "All tensors must be on the same device");
 }
 
 template <typename T1, typename... Ts>
-static inline void device_check(const T1& first, const Ts&... rest) {
+__host__ static inline void device_check(const T1& first, const Ts&... rest) {
     (_device_check(first, rest), ...);
 }
 
-static inline void _parallel_tensor_check(const TKParallelTensor& first, const TKParallelTensor& second) {
+__host__ static inline void _parallel_tensor_check(const TKParallelTensor& first, const TKParallelTensor& second) {
     TORCH_CHECK(first.local_rank_ == second.local_rank_, "All parallel tensors must have the same local_rank");
     TORCH_CHECK(first.local_world_size_ == second.local_world_size_, "All parallel tensors must have the same local_world_size");
 }
 
 template <typename T1, typename... Ts>
-static inline void parallel_tensor_check(const T1& first, const Ts&... rest) {
+__host__ static inline void parallel_tensor_check(const T1& first, const Ts&... rest) {
     (_parallel_tensor_check(first, rest), ...);
 }
 
@@ -174,7 +174,7 @@ template <typename Config> requires has_pdl_config<Config>
 inline constexpr bool use_pdl<Config> = Config::USE_PDL;
 
 template <typename Config, typename Globals, auto Kernel>
-static inline void launch_kernel(const Globals &G) {
+__host__ static inline void launch_kernel(const Globals &G) {
     dim3 grid;
     if constexpr (static_grid<Config>)
         grid = dim3{Config::NUM_BLOCKS, 1, 1};

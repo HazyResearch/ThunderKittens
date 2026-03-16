@@ -430,7 +430,7 @@ __global__ void kernel(const __grid_constant__ typename config::globals globals)
     else group<NUM_WARPS>::sync(15);
 }
 template<typename config, typename... ops>
-void run(typename config::globals &globals) {
+__host__ void run(typename config::globals &globals) {
     cudaFuncSetAttribute(kernel<config, ops...>, cudaFuncAttributeMaxDynamicSharedMemorySize, globals.dynamic_shared_memory());
     kernel<config, ops...><<<globals.grid(), globals.block(), globals.dynamic_shared_memory()>>>(globals);
 }

@@ -112,9 +112,9 @@ struct TKParallelTensor {
             initialize_multicast();
     }
 
-    TKParallelTensor(const TKParallelTensor&) = delete;
-    TKParallelTensor& operator=(const TKParallelTensor&) = delete;
-    TKParallelTensor& operator=(TKParallelTensor&& other) = delete;
+    __host__ TKParallelTensor(const TKParallelTensor&) = delete;
+    __host__ TKParallelTensor& operator=(const TKParallelTensor&) = delete;
+    __host__ TKParallelTensor& operator=(TKParallelTensor&& other) = delete;
 
     __host__ inline TKParallelTensor(TKParallelTensor&& other) :
         data_(std::move(other.data_)),

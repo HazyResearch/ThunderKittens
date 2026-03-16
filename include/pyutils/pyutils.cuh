@@ -7,12 +7,12 @@ namespace kittens {
 namespace py {
 
 template<typename T> struct from_object {
-    static T make(pybind11::object obj) {
+    __host__ static T make(pybind11::object obj) {
         return obj.cast<T>();
     }
 };
 template<ducks::gl::all GL> struct from_object<GL> {
-    static GL make(pybind11::object obj) {
+    __host__ static GL make(pybind11::object obj) {
         // Check if argument is a torch.Tensor
         if (pybind11::hasattr(obj, "__class__") && 
             obj.attr("__class__").attr("__name__").cast<std::string>() == "Tensor") {
@@ -53,7 +53,7 @@ template<auto F> using first_arg_t = typename first_arg<decltype(F)>::type;
 
 // Helper to cast a member pointer to the target class. Used for verifying inputs.
 template<typename TGlobal, typename MT, typename TBase>
-constexpr MT TGlobal::* member_cast(MT TBase::* p) {
+__host__ constexpr MT TGlobal::* member_cast(MT TBase::* p) {
     return static_cast<MT TGlobal::*>(p);
 }
 
@@ -61,7 +61,7 @@ template<typename> struct trait;
 template<typename> using object = pybind11::object;
 template<typename MT, typename T> struct trait<MT T::*> { using member_type = MT; using type = T; };
 template<typename T> concept has_dynamic_shared_memory = requires(T t) { { t.dynamic_shared_memory() } -> std::convertible_to<int>; };
-template<auto kernel, typename... MemberPtrs> static void bind_kernel(auto m, auto name, MemberPtrs... member_ptrs) {
+template<auto kernel, typename... MemberPtrs> __host__ static void bind_kernel(auto m, auto name, MemberPtrs... member_ptrs) {
     using TGlobal = first_arg_t<kernel>;
     ((void)member_cast<TGlobal>(member_ptrs), ...); // validate pointer compatibility.
     m.def(name, [=](object<MemberPtrs>... args, pybind11::kwargs kwargs) {
@@ -81,7 +81,7 @@ template<auto kernel, typename... MemberPtrs> static void bind_kernel(auto m, au
         }
     });
 }
-template<auto function, typename... MemberPtrs> static void bind_function(auto m, auto name, MemberPtrs... member_ptrs) {
+template<auto function, typename... MemberPtrs> __host__ static void bind_function(auto m, auto name, MemberPtrs... member_ptrs) {
     m.def(name, [=](object<MemberPtrs>... args) {
         using TGlobal = first_arg_t<function>;
         ((void)member_cast<TGlobal>(member_ptrs), ...); // validate pointer compatibility.

@@ -201,7 +201,7 @@ template<typename T> concept all = requires {
 //     int b, d, r, c;
 //     unsafe_gl(uint64_t data, int b, int d, int r, int c) : data(data), b(b), d(d), r(r), c(c) {}
 // };
-template<int N> auto make_unsafe_gl_arg(int param) { // typename std::conditional_t<(N < 0), std::nullptr_t, int>
+template<int N> __host__ auto make_unsafe_gl_arg(int param) { // typename std::conditional_t<(N < 0), std::nullptr_t, int>
     if constexpr (N > 0) { return nullptr; }
     else                 { return param;   }
 }
