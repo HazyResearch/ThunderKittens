@@ -3,6 +3,8 @@
  * @brief Single-threaded ops for loading shared memory into tensor tiles
  */
 
+#pragma once
+
 #include "../../mma/tcgen05.cuh"
 
 template<int ncta=1, kittens::ducks::tt::full TT, kittens::ducks::st::all ST>
