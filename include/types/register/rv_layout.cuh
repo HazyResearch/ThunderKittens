@@ -5,8 +5,6 @@
 
 #pragma once
 
-#include <concepts>
-
 namespace kittens {
 namespace ducks {
 /**

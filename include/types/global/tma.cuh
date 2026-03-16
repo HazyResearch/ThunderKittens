@@ -1,8 +1,5 @@
 #pragma once
 
-#include <cuda.h>
-#include <assert.h>
-
 #include "../../common/common.cuh"
 #include "../shared/shared.cuh"
 #include "util.cuh"

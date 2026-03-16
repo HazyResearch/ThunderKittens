@@ -10,19 +10,6 @@
 
 #pragma once
 
-#include <stdint.h>
-#include <cuda_fp16.h>
-#include <cuda_bf16.h>
-#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
-#include <cuda_fp8.h>
-#endif
-#ifdef KITTENS_BLACKWELL
-#include <cuda_fp4.h>
-#endif
-#include <bit>
-#include <type_traits>
-
-
 namespace kittens {
 
 /**

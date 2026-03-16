@@ -5,8 +5,6 @@
  
 #pragma once
 
-#include <type_traits>
-
 #include "../../common/common.cuh"
 #include "../shared/shared.cuh"
 #include "util.cuh"

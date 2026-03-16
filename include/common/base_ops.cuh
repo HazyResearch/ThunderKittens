@@ -5,7 +5,6 @@
 
 #pragma once
 
-#include <cuda_bf16.h>
 #include "base_types.cuh"
 
 namespace kittens {

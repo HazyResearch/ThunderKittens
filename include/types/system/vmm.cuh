@@ -1,9 +1,5 @@
 #pragma once
 
-#include <cuda.h>
-#include <vector>
-#include <stdexcept>
-
 #include "../../common/common.cuh"
 
 namespace kittens {

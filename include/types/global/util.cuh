@@ -1,9 +1,5 @@
 #pragma once
 
-#include <type_traits>
-#include <cstddef>
-#include <sstream>
-
 namespace kittens {
 namespace ducks {
 namespace gl {
