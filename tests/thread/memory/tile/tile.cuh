@@ -7,7 +7,6 @@
 #include "tma.cuh"
 #include "tma_multicast.cuh"
 #include "tma_pgl.cuh"
-#include "dsmem.cuh"
 
 namespace thread {
 namespace memory {

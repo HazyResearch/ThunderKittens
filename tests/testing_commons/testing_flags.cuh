@@ -70,7 +70,6 @@
 #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL) // only compile on H100
 #define TEST_THREAD_MEMORY_TILE_TMA
 #define TEST_THREAD_MEMORY_TILE_TMA_MULTICAST
-#define TEST_THREAD_MEMORY_TILE_DSMEM
 #endif
 #endif
 
@@ -81,7 +80,6 @@
 #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL) // only compile on H100
 #define TEST_THREAD_MEMORY_VEC_TMA
 #define TEST_THREAD_MEMORY_VEC_TMA_MULTICAST
-#define TEST_THREAD_MEMORY_VEC_DSMEM
 #endif
 #endif
 

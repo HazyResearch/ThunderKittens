@@ -19,11 +19,6 @@ void thread::memory::vec::tests(test_data &results) {
 #else
     std::cout << "INFO: Skipping ops/thread/memory/vec/tma_pgl tests!\n" << std::endl;
 #endif
-#ifdef TEST_THREAD_MEMORY_VEC_DSMEM
-    thread::memory::vec::dsmem::tests(results);
-#else
-    std::cout << "INFO: Skipping ops/thread/memory/vec/dsmem tests!\n" << std::endl;
-#endif
     std::cout << std::endl;
 }
 

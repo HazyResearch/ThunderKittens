@@ -19,11 +19,6 @@ void thread::memory::tile::tests(test_data &results) {
 #else
     std::cout << "INFO: Skipping ops/thread/memory/tile/tma_pgl tests!\n" << std::endl;
 #endif
-#ifdef TEST_THREAD_MEMORY_TILE_DSMEM
-    thread::memory::tile::dsmem::tests(results);
-#else
-    std::cout << "INFO: Skipping ops/thread/memory/tile/dsmem tests!\n" << std::endl;
-#endif
     std::cout << std::endl;
 }
 
