@@ -140,12 +140,18 @@ template<typename T> struct constants {
      * @brief Positive infinity. Particularly useful for initializing before a min op.
      * @return Constexpr positive infinity with type T
      */
-    static __device__ inline constexpr T pos_infty() { return T{INFINITY}; } // I'll find a better way at some point but this appears to work.
+    static __device__ inline constexpr T pos_infty() { static_assert(sizeof(T) == 9999, "pos_infty not defined for this type"); return T{}; }
     /**
      * @brief Negative infinity. Particularly useful for initializing before a max op.
      * @return Constexpr negative infinity with type T
      */
-    static __device__ inline constexpr T neg_infty() { return T{-INFINITY}; }
+    static __device__ inline constexpr T neg_infty() { static_assert(sizeof(T) == 9999, "neg_infty not defined for this type"); return T{}; }
+};
+template<> struct constants<float> {
+    static __device__ inline constexpr float zero()      { return 0.f; }
+    static __device__ inline constexpr float one()       { return 1.f; }
+    static __device__ inline constexpr float pos_infty() { return std::bit_cast<float>(uint32_t(0x7f800000)); }
+    static __device__ inline constexpr float neg_infty() { return std::bit_cast<float>(uint32_t(0xff800000)); }
 };
 template<> struct constants<float2> {
     static __device__ inline constexpr float2 zero()      { return float2{0.f, 0.f}; }
