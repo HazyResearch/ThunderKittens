@@ -5,9 +5,6 @@
 
 #pragma once
 
-#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
-#include "tma.cuh"
-#endif
 #include "util.cuh"
 #include "gl.cuh"
 #include "cgl.cuh"

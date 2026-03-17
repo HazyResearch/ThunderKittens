@@ -62,13 +62,14 @@ struct pgl {
         return &mc_ptr[((idx.b * static_cast<uint64_t>(gl.depth()) + idx.d) * gl.rows() + idx.r) * gl.cols() + idx.c];
     }
 
+    __host__ __device__ pgl() = delete;
+#ifndef KITTENS_NO_HOST
     __host__ inline pgl(T **_data,  // an array of NUM_DEVICES pointers to the data on each device
                         ducks::gl::make_arg_t<GL::__b__> _batch,
                         ducks::gl::make_arg_t<GL::__d__> _depth,
                         ducks::gl::make_arg_t<GL::__r__> _rows,
                         ducks::gl::make_arg_t<GL::__c__> _cols) : 
         pgl(std::make_index_sequence<NUM_DEVICES>{}, _data, _batch, _depth, _rows, _cols) { }
-
     __host__ inline pgl(T *_mc_ptr, // multicast pointer, initialized by the caller
                         T **_data,  // an array of NUM_DEVICES pointers to the data on each device
                         ducks::gl::make_arg_t<GL::__b__> _batch,
@@ -76,7 +77,6 @@ struct pgl {
                         ducks::gl::make_arg_t<GL::__r__> _rows,
                         ducks::gl::make_arg_t<GL::__c__> _cols) : 
         pgl(std::make_index_sequence<NUM_DEVICES>{}, _mc_ptr, _data, _batch, _depth, _rows, _cols) { }
-
     template<size_t... I>
     __host__ inline pgl(std::index_sequence<I...>,
                         T **_data,
@@ -87,7 +87,6 @@ struct pgl {
             mc_ptr(nullptr), gls{GL(_data[I], _batch, _depth, _rows, _cols)...} {
         static_assert(!MULTICAST, "Multicast pointer not passed to multicast-enabled PGL.");
     }
-
     template<size_t... I>
     __host__ inline pgl(std::index_sequence<I...>,
                         T *_mc_ptr,
@@ -101,6 +100,7 @@ struct pgl {
         tma_descs = detail::descriptor_dict<TMA_Types...>(
             mc_ptr, gls[0].batch_internal, gls[0].depth_internal, gls[0].rows_internal, gls[0].cols_internal);
     }
+#endif // KITTENS_NO_HOST
 
     template<typename U, int axis> 
     __device__ inline const CUtensorMap* get_tma() const {
@@ -116,6 +116,8 @@ struct pgl {
     template<int axis> __device__ inline size_t shape() const { return gls[0].template shape<axis>(); }
     template<int axis> __device__ inline size_t stride() const { return gls[0].template stride<axis>(); }
 };
+
+#ifndef KITTENS_NO_HOST
 
 template<ducks::pgl::all PGL, bool safe=true> __host__ inline PGL make_pgl(
     uint64_t *data, int b, int d, int r, int c
@@ -169,6 +171,8 @@ template<ducks::pgl::all PGL, bool safe=true> __host__ inline PGL make_pgl(
         make_unsafe_gl_arg<PGL::GL::__c__>(c)
     );
 }
+
+#endif // KITTENS_NO_HOST
 
 // Convenience type alias for inter-device barriers
 template <int NUM_DEVICES>
