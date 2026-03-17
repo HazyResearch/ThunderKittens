@@ -16,9 +16,9 @@
 template<typename op, ducks::rv::all T>
 __device__ static inline void unary_op(T &dst, const T &src) {
     #pragma unroll
-    for(int i = 0; i < dst.outer_dim; i++) {
+    for(int i = 0; i < T::outer_dim; i++) {
         #pragma unroll
-        for(int j = 0; j < dst.inner_dim; j++) {
+        for(int j = 0; j < T::inner_dim; j++) {
             dst[i][j] = op::template op<typename T::dtype>(src[i][j]);
         }
     }
@@ -35,9 +35,9 @@ __device__ static inline void unary_op(T &dst, const T &src) {
 template<typename op, ducks::rv::all T>
 __device__ static inline void bin_op(T &dst, const T &lhs, const T &rhs) {
     #pragma unroll
-    for(int i = 0; i < dst.outer_dim; i++) {
+    for(int i = 0; i < T::outer_dim; i++) {
         #pragma unroll
-        for(int j = 0; j < dst.inner_dim; j++) {
+        for(int j = 0; j < T::inner_dim; j++) {
             dst[i][j] = op::template op<typename T::dtype>(lhs[i][j], rhs[i][j]);
         }
     }
@@ -54,9 +54,9 @@ __device__ static inline void bin_op(T &dst, const T &lhs, const T &rhs) {
 template<typename op, ducks::rv::all T>
 __device__ static inline void bin_op(T &dst, const T &src, const typename T::dtype &param) {
     #pragma unroll
-    for(int i = 0; i < dst.outer_dim; i++) {
+    for(int i = 0; i < T::outer_dim; i++) {
         #pragma unroll
-        for(int j = 0; j < dst.inner_dim; j++) {
+        for(int j = 0; j < T::inner_dim; j++) {
             dst[i][j] = op::template op<typename T::dtype>(src[i][j], param);
         }
     }
@@ -85,7 +85,7 @@ __device__ static inline void apply(RV &dst, const RV &src, Lambda &&lambda) {
     static_assert(sizeof(RV::T) != 1, "Cannot apply lambda to 8-bit types");
     if constexpr (ducks::rv::ortho_layout<RV>) {
         #pragma unroll
-        for(int i = 0; i < dst.outer_dim; i++) {
+        for(int i = 0; i < RV::outer_dim; i++) {
             int base_idx = group_offset + i*16 + ::kittens::laneid()/4;
             dst[i][0].x = lambda(base_idx+0, src[i][0].x);
             dst[i][0].y = lambda(base_idx+8, src[i][0].y);
@@ -93,7 +93,7 @@ __device__ static inline void apply(RV &dst, const RV &src, Lambda &&lambda) {
     }
     else if constexpr (ducks::rv::align_layout<RV>) {
         #pragma unroll
-        for(int i = 0; i < dst.outer_dim; i++) {
+        for(int i = 0; i < RV::outer_dim; i++) {
             int base_idx = group_offset + i*16 + 2*(::kittens::laneid()%4);
             dst[i][0].x = lambda(base_idx+0, src[i][0].x);
             dst[i][0].y = lambda(base_idx+1, src[i][0].y);
@@ -103,9 +103,9 @@ __device__ static inline void apply(RV &dst, const RV &src, Lambda &&lambda) {
     }
     else {
         #pragma unroll
-        for(int i = 0; i < dst.outer_dim; i++) {
+        for(int i = 0; i < RV::outer_dim; i++) {
             int base_idx = group_offset + i*32 + ::kittens::laneid();
-            if (i < dst.outer_dim-1 || dst.length%32 == 0 || ::kittens::laneid()<16) {
+            if (i < RV::outer_dim-1 || RV::length%32 == 0 || ::kittens::laneid()<16) {
                 dst[i][0] = lambda(base_idx, src[i][0]);
             }
         }

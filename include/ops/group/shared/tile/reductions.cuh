@@ -17,10 +17,10 @@
 template<typename op, ducks::sv::all V, ducks::st::all T, bool reset>
 __device__ static inline void row_reduce(V &row_accum, const T &src, const V &src_accum) {
     using dtype = typename V::dtype;
-    for (int row = laneid(); row < src.rows; row += GROUP_THREADS) {
+    for (int row = laneid(); row < T::rows; row += GROUP_THREADS) {
         dtype accum = src[{row, 0}];
         #pragma unroll
-        for (int col = 1; col < src.cols; col++) {
+        for (int col = 1; col < T::cols; col++) {
             accum = op::template op<dtype>(accum, src[{row, col}]);
         }
         if (reset) {
@@ -45,10 +45,10 @@ __device__ static inline void row_reduce(V &row_accum, const T &src, const V &sr
 template<typename op, ducks::sv::all V, ducks::st::all T, bool reset>
 __device__ static inline void col_reduce(V &col_accum, const T &src, const V &src_accum) {
     using dtype = typename V::dtype;
-    for (int col = laneid(); col < src.cols; col += GROUP_THREADS) {
+    for (int col = laneid(); col < T::cols; col += GROUP_THREADS) {
         dtype accum = src[{0, col}];
         #pragma unroll
-        for (int row = 1; row < src.rows; row++) {
+        for (int row = 1; row < T::rows; row++) {
             accum = op::template op<dtype>(accum, src[{row, col}]);
         }
         if (reset) {

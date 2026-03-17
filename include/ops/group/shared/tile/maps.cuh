@@ -17,7 +17,7 @@
 template<typename op, ducks::st::all T> // T2, w, h can be inferred from dst as long as op is specialized
 __device__ static inline void unary_map(T &dst, const T &src) {
     #pragma unroll
-    for(int i = laneid(); i < dst.num_elements; i += GROUP_THREADS) {
+    for(int i = laneid(); i < T::num_elements; i += GROUP_THREADS) {
         dst.data[i] = op::template op<typename T::dtype>(src.data[i]);
     }
 }
@@ -37,7 +37,7 @@ __device__ static inline void unary_map(T &dst, const T &src) {
 template<typename op, ducks::st::all T>
 __device__ static inline void bin_map(T &dst, const T &src, const typename T::dtype &param) {
     #pragma unroll
-    for(int i = laneid(); i < dst.num_elements; i += GROUP_THREADS) {
+    for(int i = laneid(); i < T::num_elements; i += GROUP_THREADS) {
         dst.data[i] = op::template op<typename T::dtype>(src.data[i], param);
     }
 }
@@ -57,7 +57,7 @@ __device__ static inline void bin_map(T &dst, const T &src, const typename T::dt
 template<typename op, ducks::st::all T>
 __device__ static inline void bin_map(T &dst, const T &lhs, const T &rhs) {
     #pragma unroll
-    for(int i = laneid(); i < dst.num_elements; i += GROUP_THREADS) {
+    for(int i = laneid(); i < T::num_elements; i += GROUP_THREADS) {
         dst.data[i] = op::template op<typename T::dtype>(lhs.data[i], rhs.data[i]);
     }
 }
@@ -81,8 +81,8 @@ __device__ static inline void row_map(T &dst, const T &src, const V &vec) {
     static_assert(std::is_same<typename T::dtype, typename V::dtype>::value, "Tile and vector must have the same data type");
     static_assert(V::length == T::rows, "Vector length must match the number of rows in the tile");
     #pragma unroll
-    for(int i = laneid(); i < dst.num_elements; i += GROUP_THREADS) {
-        int row = i/dst.cols, col = i%dst.cols;
+    for(int i = laneid(); i < T::num_elements; i += GROUP_THREADS) {
+        int row = i/T::cols, col = i%T::cols;
         dst[{row, col}] = op::template op<typename T::dtype>(src[{row, col}], vec[row]);
     }
 }
@@ -106,8 +106,8 @@ __device__ static inline void col_map(T &dst, const T &src, const V &vec) {
     static_assert(std::is_same<typename T::dtype, typename V::dtype>::value, "Tile and vector must have the same data type");
     static_assert(V::length == T::cols, "Vector length must match the number of columns in the tile");
     #pragma unroll
-    for(int i = laneid(); i < dst.num_elements; i += GROUP_THREADS) {
-        int row = i/dst.cols, col = i%dst.cols;
+    for(int i = laneid(); i < T::num_elements; i += GROUP_THREADS) {
+        int row = i/T::cols, col = i%T::cols;
         dst[{row, col}] = op::template op<typename T::dtype>(src[{row, col}], vec[col]);
     }
 }

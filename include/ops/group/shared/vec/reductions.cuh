@@ -26,14 +26,14 @@ __device__ static inline void reduce(typename SV::dtype &dst_accum, const SV &sr
         using T = SV::dtype;
         int lane = laneid();
         T accum;
-        if(lane < src.length) accum = src[lane]; // initialize a register accumulator
+        if(lane < SV::length) accum = src[lane]; // initialize a register accumulator
         __syncwarp();
-        for(int i = lane+kittens::WARP_THREADS; i < src.length; i+=kittens::WARP_THREADS) {
+        for(int i = lane+kittens::WARP_THREADS; i < SV::length; i+=kittens::WARP_THREADS) {
             accum = op::template op<T>(accum, src[i]);
         }
         __syncwarp();
         // We can now reduce within the warp.
-        if constexpr (src.length > 16) {
+        if constexpr (SV::length > 16) {
             accum = op::template op<T>(accum, packed_shfl_down_sync(kittens::MASK_ALL, accum, 16));
             __syncwarp();
         }

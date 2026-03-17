@@ -16,11 +16,11 @@
 template<typename op, ducks::rt::all T>
 __device__ static inline void unary_map(T &dst, const T &src) {
     #pragma unroll
-    for(int i = 0; i < dst.height; i++) {
+    for(int i = 0; i < T::height; i++) {
         #pragma unroll
-        for(int j = 0; j < dst.width; j++) {
+        for(int j = 0; j < T::width; j++) {
             #pragma unroll
-            for(int k = 0; k < dst.packed_per_tile; k++) {
+            for(int k = 0; k < T::packed_per_tile; k++) {
                 dst.tiles[i][j].data[k] = op::template op<typename T::dtype>(src.tiles[i][j].data[k]);
             }
         }
@@ -39,11 +39,11 @@ __device__ static inline void unary_map(T &dst, const T &src) {
 template<typename op, ducks::rt::all T>
 __device__ static inline void bin_map(T &dst, const T &src, const typename T::dtype &param) {
     #pragma unroll
-    for(int i = 0; i < dst.height; i++) {
+    for(int i = 0; i < T::height; i++) {
         #pragma unroll
-        for(int j = 0; j < dst.width; j++) {
+        for(int j = 0; j < T::width; j++) {
             #pragma unroll
-            for(int k = 0; k < dst.packed_per_tile; k++) {
+            for(int k = 0; k < T::packed_per_tile; k++) {
                 dst.tiles[i][j].data[k] = op::template op<typename T::dtype>(src.tiles[i][j].data[k], param);
             }
         }
@@ -75,11 +75,11 @@ __device__ static inline void bin_map(T &dst, const T &src, const typename base_
 template<typename op, ducks::rt::all T>
 __device__ static inline void bin_map(T &dst, const T &lhs, const T &rhs) {
     #pragma unroll
-    for(int i = 0; i < dst.height; i++) {
+    for(int i = 0; i < T::height; i++) {
         #pragma unroll
-        for(int j = 0; j < dst.width; j++) {
+        for(int j = 0; j < T::width; j++) {
             #pragma unroll
-            for(int k = 0; k < dst.packed_per_tile; k++) {
+            for(int k = 0; k < T::packed_per_tile; k++) {
                 dst.tiles[i][j].data[k] = op::template op<typename T::dtype>(lhs.tiles[i][j].data[k], rhs.tiles[i][j].data[k]);
             }
         }
@@ -95,11 +95,11 @@ __device__ static inline void apply(RT &dst, const RT &src, Lambda &&lambda) {
     static_assert(sizeof(RT::T) != 1, "Cannot apply lambda to 8-bit types");
     if constexpr (ducks::rt::row_layout<RT>) {
         #pragma unroll
-        for(int i = 0; i < dst.height; i++) {
+        for(int i = 0; i < RT::height; i++) {
             #pragma unroll
-            for(int j = 0; j < dst.width; j++) {
+            for(int j = 0; j < RT::width; j++) {
                 #pragma unroll
-                for(int k = 0; k < dst.packed_per_tile; k++) {
+                for(int k = 0; k < RT::packed_per_tile; k++) {
                     int row = row_offset + i*TILE_ROW_DIM<typename RT::T> + (k%2) * (TILE_ROW_DIM<typename RT::T>/2) + ::kittens::laneid()/4;
                     int col = j*TILE_COL_DIM<typename RT::T> + (k/2) * (TILE_COL_DIM<typename RT::T>/2) + (::kittens::laneid()%4)*2;
                     dst.tiles[i][j].data[k].x = lambda(row, col+0, src.tiles[i][j].data[k].x);
@@ -110,11 +110,11 @@ __device__ static inline void apply(RT &dst, const RT &src, Lambda &&lambda) {
     }
     else {
         #pragma unroll
-        for(int i = 0; i < dst.height; i++) {
+        for(int i = 0; i < RT::height; i++) {
             #pragma unroll
-            for(int j = 0; j < dst.width; j++) {
+            for(int j = 0; j < RT::width; j++) {
                 #pragma unroll
-                for(int k = 0; k < dst.packed_per_tile; k++) {
+                for(int k = 0; k < RT::packed_per_tile; k++) {
                     int row = row_offset + i*TILE_ROW_DIM<typename RT::T> + (k/2) * (TILE_ROW_DIM<typename RT::T>/2) + (::kittens::laneid()%4)*2;
                     int col = j*TILE_COL_DIM<typename RT::T> + (k%2) * (TILE_COL_DIM<typename RT::T>/2) + ::kittens::laneid()/4;
                     dst.tiles[i][j].data[k].x = lambda(row+0, col, src.tiles[i][j].data[k].x);
@@ -153,13 +153,13 @@ __device__ static inline void row_map(T &dst, const T &src, const V &row_values)
     using dtype = T::dtype;
 
     #pragma unroll
-    for(int i = 0; i < dst.height; i++) {
+    for(int i = 0; i < T::height; i++) {
         dtype packed_top_row    = base_types::packing<dtype>::pack(row_values[i][0].x); //  first value in eager mode
         dtype packed_bottom_row = base_types::packing<dtype>::pack(row_values[i][0].y); // second value in eager mode
         #pragma unroll
-        for(int j = 0; j < dst.width; j++) {
+        for(int j = 0; j < T::width; j++) {
             #pragma unroll
-            for(int k = 0; k < dst.packed_per_tile; k+=2) {
+            for(int k = 0; k < T::packed_per_tile; k+=2) {
                 dst.tiles[i][j].data[k+0] = op::template op<dtype>(src.tiles[i][j].data[k+0], packed_top_row);
                 dst.tiles[i][j].data[k+1] = op::template op<dtype>(src.tiles[i][j].data[k+1], packed_bottom_row);
             }
@@ -186,11 +186,11 @@ __device__ static inline void row_map(T &dst, const T &src, const V &row_values)
     using dtype = T::dtype;
 
     #pragma unroll
-    for(int i = 0; i < dst.height; i++) {
+    for(int i = 0; i < T::height; i++) {
         #pragma unroll
-        for(int j = 0; j < dst.width; j++) {
+        for(int j = 0; j < T::width; j++) {
             #pragma unroll
-            for(int k = 0; k < dst.packed_per_tile/2; k++) {
+            for(int k = 0; k < T::packed_per_tile/2; k++) {
                 dst.tiles[i][j].data[k+0] = op::template op<dtype>(src.tiles[i][j].data[k+0], row_values[i][0]);
                 dst.tiles[i][j].data[k+2] = op::template op<dtype>(src.tiles[i][j].data[k+2], row_values[i][1]);
             }
@@ -222,13 +222,13 @@ __device__ static inline void row_map(T &dst, const T &a, const T &b, const V &r
     using dtype = T::dtype;
 
     #pragma unroll
-    for(int i = 0; i < dst.height; i++) {
+    for(int i = 0; i < T::height; i++) {
         dtype packed_top_row    = base_types::packing<dtype>::pack(row_values[i][0].x); //  first value in eager mode
         dtype packed_bottom_row = base_types::packing<dtype>::pack(row_values[i][0].y); // second value in eager mode
         #pragma unroll
-        for(int j = 0; j < dst.width; j++) {
+        for(int j = 0; j < T::width; j++) {
             #pragma unroll
-            for(int k = 0; k < dst.packed_per_tile; k+=2) {
+            for(int k = 0; k < T::packed_per_tile; k+=2) {
                 dst.tiles[i][j].data[k+0] = op::template op<dtype>(a.tiles[i][j].data[k+0], b.tiles[i][j].data[k+0], packed_top_row);
                 dst.tiles[i][j].data[k+1] = op::template op<dtype>(a.tiles[i][j].data[k+1], b.tiles[i][j].data[k+1], packed_bottom_row);
             }
@@ -256,11 +256,11 @@ __device__ static inline void row_map(T &dst, const T &a, const T &b, const V &r
     using dtype = T::dtype;
 
     #pragma unroll
-    for(int i = 0; i < dst.height; i++) {
+    for(int i = 0; i < T::height; i++) {
         #pragma unroll
-        for(int j = 0; j < dst.width; j++) {
+        for(int j = 0; j < T::width; j++) {
             #pragma unroll
-            for(int k = 0; k < dst.packed_per_tile/2; k++) {
+            for(int k = 0; k < T::packed_per_tile/2; k++) {
                 dst.tiles[i][j].data[k+0] = op::template op<dtype>(a.tiles[i][j].data[k+0], b.tiles[i][j].data[k+0], row_values[i][0]);
                 dst.tiles[i][j].data[k+2] = op::template op<dtype>(a.tiles[i][j].data[k+2], b.tiles[i][j].data[k+2], row_values[i][1]);
             }
@@ -291,11 +291,11 @@ __device__ static inline void col_map(T &dst, const T &src, const V &col_values)
     using dtype = T::dtype;
 
     #pragma unroll
-    for(int j = 0; j < dst.width; j++) {
+    for(int j = 0; j < T::width; j++) {
         #pragma unroll
-        for(int i = 0; i < dst.height; i++) {
+        for(int i = 0; i < T::height; i++) {
             #pragma unroll
-            for(int k = 0; k < dst.packed_per_tile/2; k++) {
+            for(int k = 0; k < T::packed_per_tile/2; k++) {
                 dst.tiles[i][j].data[k+0] = op::template op<dtype>(src.tiles[i][j].data[k+0], col_values[j][0]);
                 dst.tiles[i][j].data[k+2] = op::template op<dtype>(src.tiles[i][j].data[k+2], col_values[j][1]);
             }
@@ -323,13 +323,13 @@ __device__ static inline void col_map(T &dst, const T &src, const V &col_values)
     using dtype = T::dtype;
 
     #pragma unroll
-    for(int j = 0; j < dst.width; j++) {
+    for(int j = 0; j < T::width; j++) {
         dtype packed_left_col  = base_types::packing<dtype>::pack(col_values[j][0].x); //  first value in eager mode
         dtype packed_right_col = base_types::packing<dtype>::pack(col_values[j][0].y); // second value in eager mode
         #pragma unroll
-        for(int i = 0; i < dst.height; i++) {
+        for(int i = 0; i < T::height; i++) {
             #pragma unroll
-            for(int k = 0; k < dst.packed_per_tile; k+=2) {
+            for(int k = 0; k < T::packed_per_tile; k+=2) {
                 dst.tiles[i][j].data[k+0] = op::template op<dtype>(src.tiles[i][j].data[k+0], packed_left_col);
                 dst.tiles[i][j].data[k+1] = op::template op<dtype>(src.tiles[i][j].data[k+1], packed_right_col);
             }
@@ -360,11 +360,11 @@ __device__ static inline void col_map(T &dst, const T &a, const T &b, const V &c
     using dtype = T::dtype;
 
     #pragma unroll
-    for(int j = 0; j < dst.width; j++) {
+    for(int j = 0; j < T::width; j++) {
         #pragma unroll
-        for(int i = 0; i < dst.height; i++) {
+        for(int i = 0; i < T::height; i++) {
             #pragma unroll
-            for(int k = 0; k < dst.packed_per_tile/2; k++) {
+            for(int k = 0; k < T::packed_per_tile/2; k++) {
                 dst.tiles[i][j].data[k+0] = op::template op<dtype>(a.tiles[i][j].data[k+0], b.tiles[i][j].data[k+0], col_values[j][0]);
                 dst.tiles[i][j].data[k+2] = op::template op<dtype>(a.tiles[i][j].data[k+2], b.tiles[i][j].data[k+2], col_values[j][1]);
             }
@@ -392,13 +392,13 @@ __device__ static inline void col_map(T &dst, const T &a, const T &b, const V &c
 
     using dtype = T::dtype;
     #pragma unroll
-    for(int j = 0; j < dst.width; j++) {
+    for(int j = 0; j < T::width; j++) {
         dtype packed_left_col  = base_types::packing<dtype>::pack(col_values[j][0].x); //  first value in eager mode
         dtype packed_right_col = base_types::packing<dtype>::pack(col_values[j][0].y); // second value in eager mode
         #pragma unroll
-        for(int i = 0; i < dst.height; i++) {
+        for(int i = 0; i < T::height; i++) {
             #pragma unroll
-            for(int k = 0; k < dst.packed_per_tile; k+=2) {
+            for(int k = 0; k < T::packed_per_tile; k+=2) {
                 dst.tiles[i][j].data[k+0] = op::template op<dtype>(a.tiles[i][j].data[k+0], b.tiles[i][j].data[k+0], packed_left_col);
                 dst.tiles[i][j].data[k+1] = op::template op<dtype>(a.tiles[i][j].data[k+1], b.tiles[i][j].data[k+1], packed_right_col);
             }

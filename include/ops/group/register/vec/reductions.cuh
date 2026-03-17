@@ -30,7 +30,7 @@ __device__ static inline void reduce(
     if constexpr (std::is_same_v<typename RV::layout, ortho_l>) {
         T accum = op::template op<T>(src[0][0].x, src[0][0].y);
         #pragma unroll
-        for(int i = 1; i < src.outer_dim; i++) {
+        for(int i = 1; i < RV::outer_dim; i++) {
             accum = op::template op<T>(accum, src[i][0].x);
             accum = op::template op<T>(accum, src[i][0].y);
         }
@@ -48,7 +48,7 @@ __device__ static inline void reduce(
         accum = op::template op<T>(accum,       src[0][1].x);
         accum = op::template op<T>(accum,       src[0][1].y);
         #pragma unroll
-        for(int i = 1; i < src.outer_dim; i++) {
+        for(int i = 1; i < RV::outer_dim; i++) {
             // it is possible that shfl_sync's would be faster but I doubt it, replication is likely better. Certainly simpler.
             accum = op::template op<T>(accum, src[i][0].x);
             accum = op::template op<T>(accum, src[i][0].y);
@@ -66,12 +66,12 @@ __device__ static inline void reduce(
     else if constexpr (std::is_same_v<typename RV::layout, naive_l>) {
         T accum = src[0][0];
         #pragma unroll
-        for(int i = 1; i < src.outer_dim; i++) {
-            if (i < src.outer_dim-1 || i*kittens::TILE_ROW_DIM<T>*2 + laneid < src.length) {
+        for(int i = 1; i < RV::outer_dim; i++) {
+            if (i < RV::outer_dim-1 || i*kittens::TILE_ROW_DIM<T>*2 + laneid < RV::length) {
                 accum = op::template op<T>(accum, src[i][0]);
             }
         }
-        if(src.length > 16) accum = op::template op<T>(accum, packed_shfl_down_sync(kittens::MASK_ALL, accum, 16));
+        if(RV::length > 16) accum = op::template op<T>(accum, packed_shfl_down_sync(kittens::MASK_ALL, accum, 16));
         accum = op::template op<T>(accum, packed_shfl_down_sync(kittens::MASK_ALL, accum, 8));
         accum = op::template op<T>(accum, packed_shfl_down_sync(kittens::MASK_ALL, accum, 4));
         accum = op::template op<T>(accum, packed_shfl_down_sync(kittens::MASK_ALL, accum, 2));

@@ -32,7 +32,7 @@ __device__ static inline void load(ST &dst, const GL &src, const COORD &idx) {
         int load_idx = i * GROUP_THREADS + laneid;
         
         int row = load_idx / memcpy_per_row;
-        int col = (load_idx*elem_per_memcpy) % dst.cols;
+        int col = (load_idx*elem_per_memcpy) % ST::cols;
 
         if constexpr (assume_aligned) {
             float4 tmp;
@@ -71,8 +71,8 @@ __device__ static inline void store(const GL &dst, const ST &src, const COORD &i
     const int row_stride = dst.template stride<axis>();
     // we can handle this many rows each time we run a memcpy_async
     constexpr int elem_per_memcpy = sizeof(float4)/sizeof(typename ST::dtype);
-    constexpr int memcpy_per_row = src.cols / elem_per_memcpy;
-    constexpr int total_calls = (src.rows*src.cols + GROUP_THREADS*elem_per_memcpy-1) / (GROUP_THREADS*elem_per_memcpy); // round up
+    constexpr int memcpy_per_row = ST::cols / elem_per_memcpy;
+    constexpr int total_calls = (ST::rows*ST::cols + GROUP_THREADS*elem_per_memcpy-1) / (GROUP_THREADS*elem_per_memcpy); // round up
 
     coord<> unit_coord = idx.template unit_coord<axis, 3>();
     typename GL::dtype *dst_ptr = (typename GL::dtype*)&dst[unit_coord];
@@ -85,7 +85,7 @@ __device__ static inline void store(const GL &dst, const ST &src, const COORD &i
         int load_idx = i * GROUP_THREADS + laneid;
         
         int row = load_idx / memcpy_per_row;
-        int col = (load_idx*elem_per_memcpy) % src.cols;
+        int col = (load_idx*elem_per_memcpy) % ST::cols;
 
         if constexpr (assume_aligned) {
             float4 tmp;
@@ -135,7 +135,7 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
         int load_idx = i * GROUP_THREADS + laneid;
         
         int row = load_idx / memcpy_per_row;
-        int col = (load_idx*elem_per_memcpy) % dst.cols;
+        int col = (load_idx*elem_per_memcpy) % ST::cols;
 
         if constexpr (assume_aligned) {
             asm volatile(

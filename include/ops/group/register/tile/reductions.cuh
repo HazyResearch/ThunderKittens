@@ -28,13 +28,13 @@ __device__ static inline void row_reduce(V &row_accum, const T &src, const V &sr
 
     const int leader = threadIdx.x & 0x1C; // 11100 in binary
     #pragma unroll
-    for(int i = 0; i < src.height; i++) {
+    for(int i = 0; i < T::height; i++) {
         dtype accum_top_row    = op::template op<dtype>(src.tiles[i][0].data[0], src.tiles[i][0].data[2]);
         dtype accum_bottom_row = op::template op<dtype>(src.tiles[i][0].data[1], src.tiles[i][0].data[3]);
         #pragma unroll
-        for(int j = 1; j < src.width; j++) {
+        for(int j = 1; j < T::width; j++) {
             #pragma unroll
-            for(int k = 0; k < src.packed_per_tile; k+=2) {
+            for(int k = 0; k < T::packed_per_tile; k+=2) {
                 accum_top_row    = op::template op<dtype>(accum_top_row,    src.tiles[i][j].data[k+0]);
                 accum_bottom_row = op::template op<dtype>(accum_bottom_row, src.tiles[i][j].data[k+1]);
             }
@@ -83,13 +83,13 @@ __device__ static inline void row_reduce(V &row_accum, const T &src, const V &sr
 
     const int leader = threadIdx.x & 0x3; // 00011 in binary
     #pragma unroll
-    for(int i = 0; i < src.height; i++) {
+    for(int i = 0; i < T::height; i++) {
         dtype accum_top_rows    = op::template op<dtype>(src.tiles[i][0].data[0], src.tiles[i][0].data[1]);
         dtype accum_bottom_rows = op::template op<dtype>(src.tiles[i][0].data[2], src.tiles[i][0].data[3]);
         #pragma unroll
-        for(int j = 1; j < src.width; j++) {
+        for(int j = 1; j < T::width; j++) {
             #pragma unroll
-            for(int k = 0; k < src.packed_per_tile/2; k++) {
+            for(int k = 0; k < T::packed_per_tile/2; k++) {
                 accum_top_rows    = op::template op<dtype>(accum_top_rows,    src.tiles[i][j].data[k+0]);
                 accum_bottom_rows = op::template op<dtype>(accum_bottom_rows, src.tiles[i][j].data[k+2]);
             }
@@ -146,13 +146,13 @@ __device__ static inline void col_reduce(V &col_accum, const T &src, const V &sr
 
     const int leader = threadIdx.x & 0x3; // 00011 in binary
     #pragma unroll
-    for(int j = 0; j < src.width; j++) {
+    for(int j = 0; j < T::width; j++) {
         dtype accum_left_cols  = op::template op<dtype>(src.tiles[0][j].data[0], src.tiles[0][j].data[1]);
         dtype accum_right_cols = op::template op<dtype>(src.tiles[0][j].data[2], src.tiles[0][j].data[3]);
         #pragma unroll
-        for(int i = 1; i < src.height; i++) {
+        for(int i = 1; i < T::height; i++) {
             #pragma unroll
-            for(int k = 0; k < src.packed_per_tile/2; k++) {
+            for(int k = 0; k < T::packed_per_tile/2; k++) {
                 accum_left_cols  = op::template op<dtype>(accum_left_cols,  src.tiles[i][j].data[k+0]);
                 accum_right_cols = op::template op<dtype>(accum_right_cols, src.tiles[i][j].data[k+2]);
             }
@@ -206,13 +206,13 @@ __device__ static inline void col_reduce(V &col_accum, const T &src, const V &sr
     using dtype = V::dtype;
     const int leader = threadIdx.x & 0x1C; // 11100 in binary
     #pragma unroll
-    for(int j = 0; j < src.width; j++) { // note now width is the outer loop
+    for(int j = 0; j < T::width; j++) { // note now width is the outer loop
         dtype accum_left_col  = op::template op<dtype>(src.tiles[0][j].data[0], src.tiles[0][j].data[2]);
         dtype accum_right_col = op::template op<dtype>(src.tiles[0][j].data[1], src.tiles[0][j].data[3]);
         #pragma unroll
-        for(int i = 1; i < src.height; i++) { // and height is the inner loop
+        for(int i = 1; i < T::height; i++) { // and height is the inner loop
             #pragma unroll
-            for(int k = 0; k < src.packed_per_tile; k+=2) {
+            for(int k = 0; k < T::packed_per_tile; k+=2) {
                 accum_left_col  = op::template op<dtype>(accum_left_col,  src.tiles[i][j].data[k+0]);
                 accum_right_col = op::template op<dtype>(accum_right_col, src.tiles[i][j].data[k+1]);
             }

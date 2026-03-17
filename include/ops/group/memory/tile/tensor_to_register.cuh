@@ -23,41 +23,41 @@ __device__ inline static void load_async(RT &dst, const TM &src) {
 
         if constexpr (sizeof(typename TM::dtype) == 1) {
             #pragma unroll
-            for(int i = 0; i < dst.height; i++) {
+            for(int i = 0; i < RT::height; i++) {
                 #pragma unroll
-                for(int j = 0; j < dst.width; j++) {
+                for(int j = 0; j < RT::width; j++) {
                     asm volatile(
                         "tcgen05.ld.sync.aligned.16x128b.x2.b32 {%0, %1, %2, %3}, [%4];\n"   // pack::16b doesn't make sense for fp8
                         : "=r"(*(uint32_t*) &dst.tiles[i][j].data[0]),
                             "=r"(*(uint32_t*) &dst.tiles[i][j].data[1]),
                             "=r"(*(uint32_t*) &dst.tiles[i][j].data[2]),
                             "=r"(*(uint32_t*) &dst.tiles[i][j].data[3])
-                        : "r"(src.addr + ((i * dst.tile_size_row) << 16) + (j * dst.tile_size_col)/(4/(uint32_t)sizeof(U)))
+                        : "r"(src.addr + ((i * RT::tile_size_row) << 16) + (j * RT::tile_size_col)/(4/(uint32_t)sizeof(U)))
                     );
                 }
             }
         } else if constexpr (sizeof(typename TM::dtype) == 2) {
             #pragma unroll
-            for(int i = 0; i < dst.height; i++) {
+            for(int i = 0; i < RT::height; i++) {
                 #pragma unroll
-                for(int j = 0; j < dst.width; j++) {
+                for(int j = 0; j < RT::width; j++) {
                     asm volatile(
                         "tcgen05.ld.sync.aligned.16x128b.x2.pack::16b.b32 {%0, %1, %2, %3}, [%4];\n"
                         : "=r"(*(uint32_t*) &dst.tiles[i][j].data[0]),
                             "=r"(*(uint32_t*) &dst.tiles[i][j].data[1]),
                             "=r"(*(uint32_t*) &dst.tiles[i][j].data[2]),
                             "=r"(*(uint32_t*) &dst.tiles[i][j].data[3])
-                        : "r"(src.addr + ((i * dst.tile_size_row) << 16) + (j * dst.tile_size_col))
+                        : "r"(src.addr + ((i * RT::tile_size_row) << 16) + (j * RT::tile_size_col))
                     );
                 }
             }
         }
         else if constexpr (sizeof(typename TM::dtype) == 4) {
             #pragma unroll
-            for(int i = 0; i < dst.height; i++) {
-                if constexpr (dst.width%4 == 0) {
+            for(int i = 0; i < RT::height; i++) {
+                if constexpr (RT::width%4 == 0) {
                     #pragma unroll
-                    for(int j = 0; j < dst.width; j+=4) {
+                    for(int j = 0; j < RT::width; j+=4) {
                         U2 data[16];
                         asm volatile(
                             "tcgen05.ld.sync.aligned.16x256b.x8.b32 {%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31}, [%32];\n"
@@ -77,7 +77,7 @@ __device__ inline static void load_async(RT &dst, const TM &src) {
                             "=f"(data[13].x), "=f"(data[13].y),
                             "=f"(data[14].x), "=f"(data[14].y),
                             "=f"(data[15].x), "=f"(data[15].y)
-                            : "r"(src.addr + ((i * dst.tile_size_row) << 16) + (j * dst.tile_size_col)/(4/(uint32_t)sizeof(U)))
+                            : "r"(src.addr + ((i * RT::tile_size_row) << 16) + (j * RT::tile_size_col)/(4/(uint32_t)sizeof(U)))
                         );
                         #pragma unroll
                         for(int k = 0; k < 4; k++) {
@@ -88,9 +88,9 @@ __device__ inline static void load_async(RT &dst, const TM &src) {
                         }
                     }
                 }
-                else if constexpr (dst.width%2 == 0) {
+                else if constexpr (RT::width%2 == 0) {
                     #pragma unroll
-                    for(int j = 0; j < dst.width; j+=2) {
+                    for(int j = 0; j < RT::width; j+=2) {
                         U2 data[8];
                         asm volatile(
                             "tcgen05.ld.sync.aligned.16x256b.x4.b32 {%0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15}, [%16];\n"
@@ -102,7 +102,7 @@ __device__ inline static void load_async(RT &dst, const TM &src) {
                             "=f"(data[5].x), "=f"(data[5].y),
                             "=f"(data[6].x), "=f"(data[6].y),
                             "=f"(data[7].x), "=f"(data[7].y)
-                            : "r"(src.addr + ((i * dst.tile_size_row) << 16) + (j * dst.tile_size_col)/(4/(uint32_t)sizeof(U)))
+                            : "r"(src.addr + ((i * RT::tile_size_row) << 16) + (j * RT::tile_size_col)/(4/(uint32_t)sizeof(U)))
                         );
                         #pragma unroll
                         for(int k = 0; k < 4; k++) {
@@ -113,7 +113,7 @@ __device__ inline static void load_async(RT &dst, const TM &src) {
                 }
                 else {
                     #pragma unroll
-                    for(int j = 0; j < dst.width; j++) {
+                    for(int j = 0; j < RT::width; j++) {
                         U2 data[4];
                         asm volatile(
                             "tcgen05.ld.sync.aligned.16x256b.x2.b32 {%0, %1, %2, %3, %4, %5, %6, %7}, [%8];\n"
@@ -121,7 +121,7 @@ __device__ inline static void load_async(RT &dst, const TM &src) {
                             "=f"(data[1].x), "=f"(data[1].y),
                             "=f"(data[2].x), "=f"(data[2].y),
                             "=f"(data[3].x), "=f"(data[3].y)
-                            : "r"(src.addr + ((i * dst.tile_size_row) << 16) + (j * dst.tile_size_col)/(4/(uint32_t)sizeof(U)))
+                            : "r"(src.addr + ((i * RT::tile_size_row) << 16) + (j * RT::tile_size_col)/(4/(uint32_t)sizeof(U)))
                         );
                         #pragma unroll
                         for(int k = 0; k < 4; k++) {
@@ -170,13 +170,13 @@ __device__ inline static void store_async(TM &dst, const RT &src) {
 
         if constexpr (sizeof(typename TM::dtype) == 2) {
             #pragma unroll
-            for(int i = 0; i < src.height; i++) {
-                if constexpr (src.width%4 == 0) {
+            for(int i = 0; i < RT::height; i++) {
+                if constexpr (RT::width%4 == 0) {
                     #pragma unroll
-                    for(int j = 0; j < src.width; j+=4) {
+                    for(int j = 0; j < RT::width; j+=4) {
                         asm volatile(
                             "tcgen05.st.sync.aligned.16x128b.x8.b32 [%0], {%1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16};\n"
-                            :: "r"(dst.addr + ((i * src.tile_size_row) << 16) + (j * src.tile_size_col)/(4/(uint32_t)sizeof(U))),
+                            :: "r"(dst.addr + ((i * RT::tile_size_row) << 16) + (j * RT::tile_size_col)/(4/(uint32_t)sizeof(U))),
                             "r"(*(uint32_t*)&src.tiles[i][j+0].data[0]),
                             "r"(*(uint32_t*)&src.tiles[i][j+0].data[1]),
                             "r"(*(uint32_t*)&src.tiles[i][j+0].data[2]),
@@ -196,12 +196,12 @@ __device__ inline static void store_async(TM &dst, const RT &src) {
                         );
                     }
                 }
-                else if constexpr (src.width%2 == 0) {
+                else if constexpr (RT::width%2 == 0) {
                     #pragma unroll
-                    for(int j = 0; j < src.width; j+=2) {
+                    for(int j = 0; j < RT::width; j+=2) {
                         asm volatile(
                             "tcgen05.st.sync.aligned.16x128b.x4.b32 [%0], {%1, %2, %3, %4, %5, %6, %7, %8};\n"
-                            :: "r"(dst.addr + ((i * src.tile_size_row) << 16) + (j * src.tile_size_col)/(4/(uint32_t)sizeof(U))),
+                            :: "r"(dst.addr + ((i * RT::tile_size_row) << 16) + (j * RT::tile_size_col)/(4/(uint32_t)sizeof(U))),
                             "r"(*(uint32_t*)&src.tiles[i][j+0].data[0]),
                             "r"(*(uint32_t*)&src.tiles[i][j+0].data[1]),
                             "r"(*(uint32_t*)&src.tiles[i][j+0].data[2]),
@@ -215,10 +215,10 @@ __device__ inline static void store_async(TM &dst, const RT &src) {
                 }
                 else {
                     #pragma unroll
-                    for(int j = 0; j < src.width; j++) {
+                    for(int j = 0; j < RT::width; j++) {
                         asm volatile(
                             "tcgen05.st.sync.aligned.16x128b.x2.b32 [%0], {%1, %2, %3, %4};\n"
-                            :: "r"(dst.addr + ((i * src.tile_size_row) << 16) + (j * src.tile_size_col)/(4/(uint32_t)sizeof(U))),
+                            :: "r"(dst.addr + ((i * RT::tile_size_row) << 16) + (j * RT::tile_size_col)/(4/(uint32_t)sizeof(U))),
                             "r"(*(uint32_t*)&src.tiles[i][j].data[0]),
                             "r"(*(uint32_t*)&src.tiles[i][j].data[1]),
                             "r"(*(uint32_t*)&src.tiles[i][j].data[2]),
@@ -230,10 +230,10 @@ __device__ inline static void store_async(TM &dst, const RT &src) {
         }
         else if constexpr (sizeof(typename TM::dtype) == 4) {
             #pragma unroll
-            for(int i = 0; i < src.height; i++) {
-                if constexpr(src.width%4 == 0) {
+            for(int i = 0; i < RT::height; i++) {
+                if constexpr(RT::width%4 == 0) {
                     #pragma unroll
-                    for(int j = 0; j < src.width; j+=4) {
+                    for(int j = 0; j < RT::width; j+=4) {
                         U2 data[16];
                         #pragma unroll
                         for(int k = 0; k < 4; k++) {
@@ -244,7 +244,7 @@ __device__ inline static void store_async(TM &dst, const RT &src) {
                         }
                         asm volatile(
                             "tcgen05.st.sync.aligned.16x256b.x8.b32 [%0], {%1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %23, %24, %25, %26, %27, %28, %29, %30, %31, %32};\n"
-                            :: "r"(dst.addr + ((i * src.tile_size_row) << 16) + (j * src.tile_size_col)/(4/(uint32_t)sizeof(U))),
+                            :: "r"(dst.addr + ((i * RT::tile_size_row) << 16) + (j * RT::tile_size_col)/(4/(uint32_t)sizeof(U))),
                             "f"(data[0].x), "f"(data[0].y),
                             "f"(data[1].x), "f"(data[1].y),
                             "f"(data[2].x), "f"(data[2].y),
@@ -264,9 +264,9 @@ __device__ inline static void store_async(TM &dst, const RT &src) {
                         );
                     }
                 }
-                else if constexpr(src.width%2 == 0) {
+                else if constexpr(RT::width%2 == 0) {
                     #pragma unroll
-                    for(int j = 0; j < src.width; j+=2) {
+                    for(int j = 0; j < RT::width; j+=2) {
                         U2 data[8];
                         #pragma unroll
                         for(int k = 0; k < 4; k++) {
@@ -275,7 +275,7 @@ __device__ inline static void store_async(TM &dst, const RT &src) {
                         }
                         asm volatile(
                             "tcgen05.st.sync.aligned.16x256b.x4.b32 [%0], {%1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %13, %14, %15, %16};\n"
-                            :: "r"(dst.addr + ((i * src.tile_size_row) << 16) + (j * src.tile_size_col)/(4/(uint32_t)sizeof(U))),
+                            :: "r"(dst.addr + ((i * RT::tile_size_row) << 16) + (j * RT::tile_size_col)/(4/(uint32_t)sizeof(U))),
                             "f"(data[0].x), "f"(data[0].y),
                             "f"(data[1].x), "f"(data[1].y),
                             "f"(data[2].x), "f"(data[2].y),
@@ -289,7 +289,7 @@ __device__ inline static void store_async(TM &dst, const RT &src) {
                 }
                 else {
                     #pragma unroll
-                    for(int j = 0; j < src.width; j++) {
+                    for(int j = 0; j < RT::width; j++) {
                         U2 data[4];
                         #pragma unroll
                         for(int k = 0; k < 4; k++) {
@@ -297,7 +297,7 @@ __device__ inline static void store_async(TM &dst, const RT &src) {
                         }
                         asm volatile(
                             "tcgen05.st.sync.aligned.16x256b.x2.b32 [%0], {%1, %2, %3, %4, %5, %6, %7, %8};\n"
-                            :: "r"(dst.addr + ((i * src.tile_size_row) << 16) + (j * src.tile_size_col)/(4/(uint32_t)sizeof(U))),
+                            :: "r"(dst.addr + ((i * RT::tile_size_row) << 16) + (j * RT::tile_size_col)/(4/(uint32_t)sizeof(U))),
                             "f"(data[0].x), "f"(data[0].y),
                             "f"(data[1].x), "f"(data[1].y),
                             "f"(data[2].x), "f"(data[2].y),

@@ -27,7 +27,7 @@ __device__ static inline void mma_fence(D &dst) {
         #pragma unroll
         for(int j = 0; j < D::width; j++) {
             #pragma unroll
-            for(int k = 0; k < dst.packed_per_tile; k++) {
+            for(int k = 0; k < D::packed_per_tile; k++) {
                 if constexpr(std::is_same_v<typename D::T, float>) {
                     asm volatile("" : "+f"(dst.tiles[i][j].data[k].x) :: "memory");
                     asm volatile("" : "+f"(dst.tiles[i][j].data[k].y) :: "memory");

@@ -24,17 +24,17 @@ __device__ inline static void load(RV &dst, const GL &src, const coord<rv<typena
         
         if constexpr (std::is_same_v<typename RV::layout, align_l>) {
             #pragma unroll
-            for(auto w = 0; w < (dst.outer_dim+3)/4; w++) {
+            for(auto w = 0; w < (RV::outer_dim+3)/4; w++) {
                 int idx = w*64 + (laneid/4)*8 + 2*(laneid%4);
                 int o_dim = w*4 + (laneid/4) / 2;
                 int i_dim = (laneid/4) % 2;
                 // this should be a maximally coalesced load.
-                if(idx < dst.outer_dim*16)
+                if(idx < RV::outer_dim*16)
                     dst[o_dim][i_dim] = base_types::convertor<T2, U2>::convert(*(U2*)&src_ptr[idx]);
             }
             // now we need to do a bunch of shuffle_sync's to make sure everyone has everything they need.
             #pragma unroll
-            for(auto w = 0; w < dst.outer_dim; w++) {
+            for(auto w = 0; w < RV::outer_dim; w++) {
                 int leader = 8*(w%4) + (laneid%4); // repeats every 64 columns
                 dst[w][0] = packed_shfl_sync(MASK_ALL, dst[w][0], leader);
                 dst[w][1] = packed_shfl_sync(MASK_ALL, dst[w][1], leader+4);
@@ -44,11 +44,11 @@ __device__ inline static void load(RV &dst, const GL &src, const coord<rv<typena
             // really hoping https://stackoverflow.com/questions/15029765/is-coalescing-triggered-for-accessing-memory-in-reverse-order is still true
             // otherwise there will be some pain :/
             #pragma unroll
-            for(auto w = 0; w < (dst.outer_dim+1)/2; w++) {
+            for(auto w = 0; w < (RV::outer_dim+1)/2; w++) {
                 int idx = w*32 + (laneid%4)*8 + (laneid/4);
                 int o_dim = w*2 + (laneid%4) / 2;
                 // this should be a maximally coalesced load.
-                if(idx < dst.outer_dim*16) {
+                if(idx < RV::outer_dim*16) {
                     T tmp = base_types::convertor<T, U>::convert(src_ptr[idx]);
                     if(laneid%2==0) dst[o_dim][0].x = tmp;
                     else dst[o_dim][0].y = tmp;
@@ -56,7 +56,7 @@ __device__ inline static void load(RV &dst, const GL &src, const coord<rv<typena
             }
             // now we need to do a bunch of shuffle_sync's to make sure everyone has everything they need.
             #pragma unroll
-            for(auto w = 0; w < dst.outer_dim; w++) {
+            for(auto w = 0; w < RV::outer_dim; w++) {
                 int leader = (laneid/4)*4 + 2*(w%2); // repeats every 64 columns
                 dst[w][0].x = __shfl_sync(MASK_ALL, dst[w][0].x, leader);
                 dst[w][0].y = __shfl_sync(MASK_ALL, dst[w][0].y, leader+1);
@@ -64,8 +64,8 @@ __device__ inline static void load(RV &dst, const GL &src, const coord<rv<typena
         }
         else if constexpr (std::is_same_v<typename RV::layout, naive_l>) {
             #pragma unroll
-            for(auto w = 0; w < dst.outer_dim; w++) {
-                if(w < dst.outer_dim-1 || dst.length%32 == 0 || laneid<16) {
+            for(auto w = 0; w < RV::outer_dim; w++) {
+                if(w < RV::outer_dim-1 || RV::length%32 == 0 || laneid<16) {
                     dst[w][0] = base_types::convertor<T, U>::convert(src_ptr[w*32 + laneid]);
                 }
             }
@@ -97,12 +97,12 @@ __device__ inline static void store(GL &dst, const RV &src, const coord<rv<typen
         
         if constexpr (std::is_same_v<typename RV::layout, align_l>) {
             #pragma unroll
-            for(auto w = 0; w < (src.outer_dim+3)/4; w++) {
+            for(auto w = 0; w < (RV::outer_dim+3)/4; w++) {
                 int idx = w*64 + (laneid/4)*8 + 2*(laneid%4);
                 int o_dim = w*4 + (laneid/4) / 2;
                 int i_dim = (laneid/4) % 2;
                 // this should be a maximally coalesced store. I hope!
-                if(idx < src.outer_dim*16)
+                if(idx < RV::outer_dim*16)
                     *(U2*)&dst_ptr[idx] = base_types::convertor<U2, T2>::convert(src[o_dim][i_dim]);
             }
         }
@@ -110,11 +110,11 @@ __device__ inline static void store(GL &dst, const RV &src, const coord<rv<typen
             // really hoping https://stackoverflow.com/questions/15029765/is-coalescing-triggered-for-accessing-memory-in-reverse-order is still true
             // otherwise there will be some pain :/
             #pragma unroll
-            for(auto w = 0; w < (src.outer_dim+1)/2; w++) {
+            for(auto w = 0; w < (RV::outer_dim+1)/2; w++) {
                 int idx = w*32 + (laneid%4)*8 + (laneid/4);
                 int o_dim = w*2 + (laneid%4) / 2;
                 // this should be a maximally coalesced load.
-                if(idx < src.outer_dim*16) {
+                if(idx < RV::outer_dim*16) {
                     U tmp;
                     if(laneid%2==0) tmp = base_types::convertor<U, T>::convert(src[o_dim][0].x);
                     else tmp = base_types::convertor<U, T>::convert(src[o_dim][0].y);
@@ -124,8 +124,8 @@ __device__ inline static void store(GL &dst, const RV &src, const coord<rv<typen
         }
         else if constexpr (std::is_same_v<typename RV::layout, naive_l>) {
             #pragma unroll
-            for(auto w = 0; w < src.outer_dim; w++) {
-                if(w < src.outer_dim-1 || src.length%32 == 0 || laneid<16) {
+            for(auto w = 0; w < RV::outer_dim; w++) {
+                if(w < RV::outer_dim-1 || RV::length%32 == 0 || laneid<16) {
                     dst_ptr[w*32 + laneid] = base_types::convertor<U, T>::convert(src[w][0]);
                 }
             }
