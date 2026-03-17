@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Python.h>
+
 #include <iostream>
 #include <map>
 #include <vector>
@@ -43,9 +45,8 @@ struct TKParallelTensor {
 
     // Build at::Tensor from DLPack capsule (zero-copy) for use in (tensor, ...) ctor
     __host__ static at::Tensor from_dlpack_capsule(pybind11::object capsule) {
-        TORCH_CHECK(PyCapsule_Check(capsule.ptr()), "Object must be a DLPack capsule");
         void* ptr = PyCapsule_GetPointer(capsule.ptr(), "dltensor");
-        TORCH_CHECK(ptr != nullptr, "Invalid DLPack capsule: missing or wrong name");
+        TORCH_CHECK(ptr != nullptr, "Object must be a DLPack capsule (name 'dltensor')");
         return at::fromDLPack(static_cast<DLManagedTensor*>(ptr));
     }
 

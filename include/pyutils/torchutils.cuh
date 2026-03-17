@@ -3,24 +3,10 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/core/Tensor.h>
 
+#include <ATen/dlpack.h>
+
 #include "kittens.cuh"
 #include "parallel_tensor.cuh"
-
-// Minimal DLPack ABI for zero-copy GL construction (TVM FFI style); matches dmlc/dlpack layout
-typedef struct { uint8_t code; uint8_t bits; uint16_t lanes; } DLDataType;
-typedef struct { int device_type; int device_id; } DLContext;
-typedef struct {
-    void* data;
-    DLContext ctx;
-    int ndim;
-    DLDataType dtype;
-    int64_t* shape;
-    int64_t* strides;
-} DLTensor;
-typedef struct DLManagedTensor {
-    DLTensor dl_tensor;
-    void (*deleter)(struct DLManagedTensor*);
-} DLManagedTensor;
 
 #define CHECK_CUDA(x) TORCH_CHECK(x.device().is_cuda(), #x " must be a CUDA tensor")
 #define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
