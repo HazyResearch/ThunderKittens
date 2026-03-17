@@ -5,12 +5,10 @@
  
 #pragma once
 
-#include <type_traits>
-
 #include "../../common/common.cuh"
 #include "../shared/shared.cuh"
 #include "util.cuh"
-#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
+#if (defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)) && !defined(KITTENS_NO_HOST)
 #include "tma.cuh"
 #endif
 
@@ -64,8 +62,10 @@ template<typename _T, int _axis=-9999> struct descriptor {
 namespace detail {
 template<typename... Args>
 struct descriptor_dict {
+#ifndef KITTENS_NO_HOST
     __host__ descriptor_dict() {}
     template<typename T> __host__ descriptor_dict(T _, int b, int d, int r, int c) {}
+#endif
     __host__ __device__ descriptor_dict(const descriptor_dict &other) {}
 #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     template<typename T, int U> __device__ const CUtensorMap* get() const {
@@ -85,10 +85,12 @@ struct descriptor_dict<_T, Args...> {
     using DESC = kittens::tma::descriptor<_T>; // copy or initialize with a default value
     CUtensorMap tma_desc;
     descriptor_dict<Args...> other_descs;
+#ifndef KITTENS_NO_HOST
     __host__ descriptor_dict() {}
     __host__ descriptor_dict(typename DESC::T::dtype *data, int b, int d, int r, int c): other_descs(data, b, d, r, c) {
         kittens::detail::tma::create_tensor_map<typename DESC::T, DESC::axis>(&tma_desc, data, b, d, r, c);
     }
+#endif
     __host__ __device__ inline descriptor_dict(const descriptor_dict &other) :
         tma_desc(other.tma_desc), other_descs(other.other_descs) {}
     template<typename U, int axis> __device__ inline const CUtensorMap* get() const {
@@ -127,6 +129,12 @@ struct gl {
     ducks::gl::make_dim_t<r> rows_internal;
     ducks::gl::make_dim_t<c> cols_internal;
 
+#ifdef KITTENS_NO_HOST
+    __device__ constexpr int batch() const { if constexpr (b > 0) return b; else return batch_internal; }
+    __device__ constexpr int depth() const { if constexpr (d > 0) return d; else return depth_internal; }
+    __device__ constexpr int rows()  const { if constexpr (r > 0) return r; else return rows_internal; }
+    __device__ constexpr int cols()  const { if constexpr (c > 0) return c; else return cols_internal; }
+#else
     template <int B=__b__> __device__ __host__ static constexpr std::enable_if_t<(B > 0), int> batch() { return B; }
     template <int B=__b__> __device__ __host__ std::enable_if_t<(B == -1), int> batch() const { return batch_internal; }
     template <int D=__d__> __device__ __host__ static constexpr std::enable_if_t<(D > 0), int> depth() { return D; }
@@ -135,10 +143,13 @@ struct gl {
     template <int R=__r__> __device__ __host__ std::enable_if_t<(R == -1), int> rows() const { return rows_internal; }
     template <int C=__c__> __device__ __host__ static constexpr std::enable_if_t<(C > 0), int> cols() { return C; }
     template <int C=__c__> __device__ __host__ std::enable_if_t<(C == -1), int> cols() const { return cols_internal; }
+#endif
     __device__ __host__ inline size_t numel() const { return static_cast<size_t>(batch()) * depth() * rows() * cols(); }
 
     detail::descriptor_dict<TMA_Types...> tma_descs;
 
+    __host__ __device__ gl() = delete;
+#ifndef KITTENS_NO_HOST
     __host__ inline gl(T *_data,
                         ducks::gl::make_arg_t<b> _batch,
                         ducks::gl::make_arg_t<d> _depth,
@@ -147,6 +158,7 @@ struct gl {
             raw_ptr(_data), batch_internal(_batch), depth_internal(_depth), rows_internal(_rows), cols_internal(_cols) {
         tma_descs = detail::descriptor_dict<TMA_Types...>(raw_ptr, batch_internal, depth_internal, rows_internal, cols_internal);
     }
+#endif
     __host__ __device__ inline gl(const gl &other) :
             raw_ptr(other.raw_ptr), batch_internal(other.batch_internal), depth_internal(other.depth_internal), rows_internal(other.rows_internal), cols_internal(other.cols_internal), tma_descs(other.tma_descs) {}
 #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
@@ -196,6 +208,8 @@ template<typename T> concept all = requires {
 }
 }
 
+#ifndef KITTENS_NO_HOST
+
 // Structs for initializing global layouts automatically.
 // struct unsafe_gl {
 //     uint64_t data;
@@ -229,5 +243,7 @@ template<ducks::gl::all GL, bool safe=true> __host__ inline GL make_gl(uint64_t 
         make_unsafe_gl_arg<GL::__c__>(c)
     );
 }
+
+#endif // KITTENS_NO_HOST
 
 } // namespace kittens

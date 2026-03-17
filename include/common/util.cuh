@@ -5,48 +5,6 @@
 
 #pragma once
 
-#include <algorithm>
-#include <cstdio>
-#include <cstdlib>
-#include <iostream>
-#include <stdint.h>
-#include <type_traits>
-
-// For checking CUDA driver API calls
-#define CUCHECK(cmd) do {                                     \
-    CUresult err = cmd;                                       \
-    if (err != CUDA_SUCCESS) {                                \
-        const char *errStr;                                   \
-        cuGetErrorString(err, &errStr);                       \
-        fprintf(stderr, "Failed: CUDA error %s:%d '%s'\n",    \
-            __FILE__, __LINE__, errStr);                      \
-        exit(EXIT_FAILURE);                                   \
-    }                                                         \
-} while(0)
-
-// For checking CUDA runtime API calls
-#define CUDACHECK(cmd) do {                                   \
-    cudaError_t err = cmd;                                    \
-    if (err != cudaSuccess) {                                 \
-        fprintf(stderr, "Failed: CUDA error %s:%d '%s'\n",    \
-            __FILE__, __LINE__, cudaGetErrorString(err));     \
-        exit(EXIT_FAILURE);                                   \
-    }                                                         \
-} while(0)
-
-// Convenience utility
-#define CHECK_CUDA_ERROR(val) check((val), #val, __FILE__, __LINE__)
-template <typename T> __host__ void check(
-    T err, char const* const func, char const* const file, int const line
-) {
-    if (err != cudaSuccess) {
-        std::cerr << "CUDA Runtime Error at: " << file << ":" << line
-                  << std::endl;
-        std::cerr << cudaGetErrorString(err) << " " << func << std::endl;
-        std::exit(EXIT_FAILURE);
-    }
-}
-
 /**
  * @namespace kittens
  *
@@ -439,6 +397,43 @@ template<int N> __device__ static inline int ring_retreat(int ring, int distance
 
 /* ----------  HOST-SIDE UTILS  ---------- */
 
+#ifndef KITTENS_NO_HOST
+
+// For checking CUDA driver API calls
+#define CUCHECK(cmd) do {                                  \
+    CUresult err = cmd;                                    \
+    if (err != CUDA_SUCCESS) {                             \
+        const char *errStr;                                \
+        cuGetErrorString(err, &errStr);                    \
+        fprintf(stderr, "Failed: CUDA error %s:%d '%s'\n", \
+            __FILE__, __LINE__, errStr);                   \
+        exit(EXIT_FAILURE);                                \
+    }                                                      \
+} while(0)
+
+// For checking CUDA runtime API calls
+#define CUDACHECK(cmd) do {                                \
+    cudaError_t err = cmd;                                 \
+    if (err != cudaSuccess) {                              \
+        fprintf(stderr, "Failed: CUDA error %s:%d '%s'\n", \
+            __FILE__, __LINE__, cudaGetErrorString(err));  \
+        exit(EXIT_FAILURE);                                \
+    }                                                      \
+} while(0)
+
+// Convenience utility
+#define CHECK_CUDA_ERROR(val) check((val), #val, __FILE__, __LINE__)
+template <typename T> __host__ void check(
+    T err, char const* const func, char const* const file, int const line
+) {
+    if (err != cudaSuccess) {
+        std::cerr << "CUDA Runtime Error at: " << file << ":" << line
+                  << std::endl;
+        std::cerr << cudaGetErrorString(err) << " " << func << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+}
+
 /**
  * @brief Query the number of SMs on a device.
  * @param device_id GPU device ordinal. If negative, uses the current device.
@@ -520,5 +515,7 @@ struct LaunchConfig {
     __host__ inline operator cudaLaunchConfig_t*() noexcept { return &config; }
     __host__ inline operator const cudaLaunchConfig_t*() const noexcept { return &config; }
 };
+
+#endif // KITTENS_NO_HOST
 
 } // namespace kittens

@@ -1,9 +1,5 @@
 #pragma once
 
-#include <type_traits>
-#include <cstddef>
-#include <sstream>
-
 namespace kittens {
 namespace ducks {
 namespace gl {
@@ -30,7 +26,7 @@ namespace detail {
 template<typename T> concept tile = ducks::st::all<T> || ducks::rt::all<T> || ducks::cst::all<T> || ducks::crt::all<T>;
 template<typename T> concept vec  = ducks::sv::all<T> || ducks::rv::all<T> || ducks::csv::all<T> || ducks::crv::all<T>;
 
-#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
+#if (defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)) && !defined(KITTENS_NO_HOST)
 namespace tma {
 
 __host__ static inline std::string format_tma_error(
@@ -55,55 +51,65 @@ __host__ static inline std::string format_tma_error(
     CUtensorMapFloatOOBfill tma_oobFill,
     const std::string& extra_info = ""
 ) {
-    std::ostringstream oss;
-    oss << "Error in " << error_type << " TMA descriptor creation: ";
-    oss << (error_string ? error_string : "Unknown CUDA error");
-    oss << "\nParameters:";
-    oss << "\n  batch: " << batch;
-    oss << "\n  depth: " << depth;
-    oss << "\n  rows: " << rows;
-    oss << "\n  cols: " << cols;
-    if (!extra_info.empty()) oss << "\n  " << extra_info;
-    oss << "\ncuTensorMapEncodeTiled arguments:";
-    oss << "\n  tma_map: " << reinterpret_cast<uintptr_t>(tma_map);
-    oss << "\n  tma_format: " << tma_format;
-    oss << "\n  tma_dim: " << tma_dim;
-    oss << "\n  global_addr: " << reinterpret_cast<uintptr_t>(global_addr);
-
+    std::string msg;
+    msg += std::string("Error in TMA descriptor creation (") +
+               (error_type ? error_type : "Unknown") + "): " +
+               (error_string ? error_string : "Unknown CUDA error") + "\n";
+    msg += "Parameters:\n";
+    msg += "    batch: " + std::to_string(batch) + "\n";
+    msg += "    depth: " + std::to_string(depth) + "\n";
+    msg += "    rows: " + std::to_string(rows) + "\n";
+    msg += "    cols: " + std::to_string(cols) + "\n";
+    if (!extra_info.empty()) msg += "    " + extra_info + "\n";
+    msg += "cuTensorMapEncodeTiled arguments:\n";
+    msg += "    tma_map: " + std::to_string(reinterpret_cast<uintptr_t>(tma_map)) + "\n";
+    msg += "    tma_format: " + std::to_string(tma_format) + "\n";
+    msg += "    tma_dim: " + std::to_string(tma_dim) + "\n";
+    msg += "    global_addr: " + std::to_string(reinterpret_cast<uintptr_t>(global_addr)) + "\n";
     cudaPointerAttributes attributes;
     cudaError_t err = cudaPointerGetAttributes(&attributes, global_addr);
+    msg += "    global_addr memory type: ";
     if (err == cudaSuccess) {
-        oss << "\n  global_addr memory type: ";
-        if (attributes.type == cudaMemoryTypeDevice) oss << "valid device memory";
-        else if (attributes.type == cudaMemoryTypeHost) oss << "host memory (invalid for TMA)";
-        else if (attributes.type == cudaMemoryTypeManaged) oss << "managed memory";
-        else oss << "unknown memory type";
+        if (attributes.type == cudaMemoryTypeDevice)       msg += "valid device memory\n";
+        else if (attributes.type == cudaMemoryTypeHost)    msg += "host memory (invalid for TMA)\n";
+        else if (attributes.type == cudaMemoryTypeManaged) msg += "managed memory\n";
+        else msg += "unknown memory type\n";
     } else {
-        oss << "\n  global_addr memory type: unable to determine (error: " << cudaGetErrorString(err) << ")";
+        msg += "unable to determine (error: " + std::string(cudaGetErrorString(err)) + ")\n";
     }
-
-    oss << "\n  gmem_shape: " << reinterpret_cast<uintptr_t>(gmem_shape) << " [";
-    for (size_t i = 0; i < gmem_shape_size; ++i) oss << gmem_shape[i] << (i < gmem_shape_size - 1 ? ", " : "");
-    oss << "]";
-    oss << "\n  gmem_stride: " << reinterpret_cast<uintptr_t>(gmem_stride) << " [";
-    for (size_t i = 0; i < gmem_stride_size; ++i) oss << gmem_stride[i] << (i < gmem_stride_size - 1 ? ", " : "");
-    oss << "]";
-    oss << "\n  smem_shape: " << reinterpret_cast<uintptr_t>(smem_shape) << " [";
-    for (size_t i = 0; i < smem_shape_size; ++i) oss << smem_shape[i] << (i < smem_shape_size - 1 ? ", " : "");
-    oss << "]";
-    oss << "\n  smem_stride: " << reinterpret_cast<uintptr_t>(smem_stride) << " [";
-    for (size_t i = 0; i < smem_stride_size; ++i) oss << smem_stride[i] << (i < smem_stride_size - 1 ? ", " : "");
-    oss << "]";
-    oss << "\n  tma_interleave: " << tma_interleave;
-    oss << "\n  tma_swizzle: " << tma_swizzle;
-    oss << "\n  tma_l2Promotion: " << tma_l2Promotion;
-    oss << "\n  tma_oobFill: " << tma_oobFill;
-
-    return oss.str();
+    msg += "    gmem_shape: " + std::to_string(reinterpret_cast<uintptr_t>(gmem_shape)) + " [";
+    for (size_t i = 0; i < gmem_shape_size; ++i) {
+        msg += std::to_string(gmem_shape[i]);
+        if (i < gmem_shape_size - 1) msg += ", ";
+    }
+    msg += "]\n";
+    msg += "    gmem_stride: " + std::to_string(reinterpret_cast<uintptr_t>(gmem_stride)) + " [";
+    for (size_t i = 0; i < gmem_stride_size; ++i) {
+        msg += std::to_string(gmem_stride[i]);
+        if (i < gmem_stride_size - 1) msg += ", ";
+    }
+    msg += "]\n";
+    msg += "    smem_shape: " + std::to_string(reinterpret_cast<uintptr_t>(smem_shape)) + " [";
+    for (size_t i = 0; i < smem_shape_size; ++i) {
+        msg += std::to_string(smem_shape[i]);
+        if (i < smem_shape_size - 1) msg += ", ";
+    }
+    msg += "]\n";
+    msg += "    smem_stride: " + std::to_string(reinterpret_cast<uintptr_t>(smem_stride)) + " [";
+    for (size_t i = 0; i < smem_stride_size; ++i) {
+        msg += std::to_string(smem_stride[i]);
+        if (i < smem_stride_size - 1) msg += ", ";
+    }
+    msg += "]\n";
+    msg += "    tma_interleave: " + std::to_string(tma_interleave) + "\n";
+    msg += "    tma_swizzle: " + std::to_string(tma_swizzle) + "\n";
+    msg += "    tma_l2Promotion: " + std::to_string(tma_l2Promotion) + "\n";
+    msg += "    tma_oobFill: " + std::to_string(tma_oobFill) + "\n";
+    return msg;
 }
 
 } // namespace tma
-#endif // defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
+#endif // (defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)) && !defined(KITTENS_NO_HOST)
 } // namespace detail
 
 namespace ducks {

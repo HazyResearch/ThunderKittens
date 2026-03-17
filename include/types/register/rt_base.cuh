@@ -5,8 +5,6 @@
  
 #pragma once
 
-#include <type_traits>
-
 #include "../../common/common.cuh"
 #include "rt_layout.cuh"
 #include "rv_layout.cuh"
