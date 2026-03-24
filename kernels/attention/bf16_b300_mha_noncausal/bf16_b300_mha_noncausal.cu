@@ -1,5 +1,5 @@
 #include "kittens.cuh"
-#include "pyutils/pyutils.cuh"
+#include "pyutils/torchutils.cuh"
 
 using namespace kittens;
 
@@ -495,18 +495,19 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
     }
 }
 
-// pybind11 dispatch
-void dispatch(pybind11::object Q_obj, pybind11::object K_obj, pybind11::object V_obj,
-              pybind11::object O_obj, pybind11::object LSE_obj) {
+void dispatch(at::Tensor Q, at::Tensor K, at::Tensor V,
+              at::Tensor O, at::Tensor LSE) {
+    CHECK_INPUT(Q); CHECK_INPUT(K); CHECK_INPUT(V); CHECK_INPUT(O); CHECK_INPUT(LSE);
+
     using C = config<128, 128, 192, 128>;
     using G = globals<C>;
 
     G g{
-        py::from_object<typename G::q_gl>::make(Q_obj),
-        py::from_object<typename G::k_gl>::make(K_obj),
-        py::from_object<typename G::v_gl>::make(V_obj),
-        py::from_object<typename G::o_gl>::make(O_obj),
-        py::from_object<typename G::lse_gl>::make(LSE_obj)
+        kittens::py::tensor_to_gl<typename G::q_gl>(Q),
+        kittens::py::tensor_to_gl<typename G::k_gl>(K),
+        kittens::py::tensor_to_gl<typename G::v_gl>(V),
+        kittens::py::tensor_to_gl<typename G::o_gl>(O),
+        kittens::py::tensor_to_gl<typename G::lse_gl>(LSE)
     };
 
     CUDACHECK(cudaFuncSetAttribute(kernel<C>, cudaFuncAttributeMaxDynamicSharedMemorySize, g.dynamic_shared_memory()));
@@ -514,6 +515,6 @@ void dispatch(pybind11::object Q_obj, pybind11::object K_obj, pybind11::object V
     CUDACHECK(cudaLaunchKernelEx(launch_config, kernel<C>, g));
 }
 
-PYBIND11_MODULE(_C, m) {
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("forward", &dispatch, "MHA forward (bf16, B300, non-causal)");
 }
