@@ -95,6 +95,20 @@ struct KITTENS_DEFAULT_ALIGN sv {
     }
 };
 
+#if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
+// We need a template system to determine how to divide up a long shared vector into multiple subvectors.
+// We have to do this because the first dimension for TMA is limited to 256 elements.
+// Our goal is to find the largest multiple of 16 that is <= 256 and divides the vector length evenly.
+
+template<typename SV, int D=16> struct find_vector_divider {
+    static constexpr int value = (SV::length % (16*D) == 0 && (SV::length < 256 || ((16*D)*sizeof(typename SV::dtype)) % 128 == 0)) ?
+        16*D : find_vector_divider<SV, D-1>::value;
+};
+template<typename SV> struct find_vector_divider<SV, 1> { static constexpr int value = 16; }; // base case
+template<typename SV> constexpr int sv_tma_dim1 = find_vector_divider<SV>::value; // inner dim
+template<typename SV> constexpr int sv_tma_dim2 = (SV::length / sv_tma_dim1<SV>);
+#endif
+
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
 // vector types
