@@ -978,11 +978,12 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
     }
 }
 
+template <bool persistent>
 void dispatch(at::Tensor Q, at::Tensor K, at::Tensor V,
               at::Tensor O, at::Tensor LSE) {
     CHECK_INPUT(Q); CHECK_INPUT(K); CHECK_INPUT(V); CHECK_INPUT(O); CHECK_INPUT(LSE);
 
-    using C = config<128, 128, 192, 128, false>;
+    using C = config<128, 128, 192, 128, persistent>;
     using G = globals<C>;
 
     G g{
@@ -999,5 +1000,6 @@ void dispatch(at::Tensor Q, at::Tensor K, at::Tensor V,
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("forward", &dispatch, "MHA forward (bf16, B300, causal)");
+    m.def("forward",             &dispatch<false>, "MHA forward (bf16, B300, causal)");
+    m.def("forward_persistent",  &dispatch<true>,  "MHA forward (bf16, B300, causal, persistent)");
 }
