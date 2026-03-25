@@ -205,4 +205,21 @@ __device__ static inline bool elect_leader() {
     }
 }
 
+__device__ static inline bool elect_leader_from_active() {
+    if constexpr (GROUP_WARPS == 1) {
+        uint32_t elected = 0;
+        asm volatile(
+            "{.reg .pred P;\n"
+            " .reg .u32 mask;\n"
+            " activemask.b32 mask;\n"
+            " elect.sync _|P, mask;\n"
+            " selp.u32 %0, 1, 0, P;}\n"
+            : "+r"(elected)
+        );
+        return static_cast<bool>(elected);
+    } else {
+        return (warpid() == 0 && ::kittens::group<1>::elect_leader_from_active());
+    }
+}
+
 #endif
