@@ -52,11 +52,16 @@ def create_inputs(B, S, H, Dqk, Dv, seed):
     return Q, K, V, O, LSE
 
 
+def _fwd(S):
+    """Select persistent kernel for short sequences, non-persistent otherwise."""
+    return _C.forward_persistent if S <= 4096 else _C.forward
+
+
 def check_correctness(B, S, H, Dqk, Dv):
     """Check kernel output against Flash Attention reference."""
     Q, K, V, O, LSE = create_inputs(B, S, H, Dqk, Dv, SEED)
 
-    _C.forward(Q, K, V, O, LSE)
+    _fwd(S)(Q, K, V, O, LSE)
     torch.cuda.synchronize()
 
     # Flash Attention reference - pad V to match Dqk since FA2 needs equal head dims
@@ -93,7 +98,7 @@ def bench_shape(B, S, H, Dqk, Dv, warmup=500, iters=100):
     # Warmup
     for i in range(warmup):
         Q, K, V, O, LSE = groups[i % arg_group_count]
-        _C.forward(Q, K, V, O, LSE)
+        _fwd(S)(Q, K, V, O, LSE)
 
     # Benchmark - single CUDA event pair
     start = torch.cuda.Event(enable_timing=True)
@@ -101,7 +106,7 @@ def bench_shape(B, S, H, Dqk, Dv, warmup=500, iters=100):
     start.record()
     for i in range(iters):
         Q, K, V, O, LSE = groups[i % arg_group_count]
-        _C.forward(Q, K, V, O, LSE)
+        _fwd(S)(Q, K, V, O, LSE)
     end.record()
     end.synchronize()
 
