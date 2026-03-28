@@ -92,7 +92,7 @@ template<> __device__ inline half_2 exp::op<half_2>(const half_2 &x) { return h2
  *
  * @tparam T The data type of the input and output values.
  * @param x[in] The input value.
- * @return The exponential of the input value.
+ * @return The exponential of the input value, in base 2.
  */
 struct exp2 {
     template<typename T> static __device__ inline T op(const T &x) { return exp2f(x); }

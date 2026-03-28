@@ -328,7 +328,7 @@ __device__ static inline int cluster_nctarank() {
  *
  * @param num_rows Number of rows in the 2D domain
  * @param num_cols Number of columns in the 2D domain
- * @param task_idx Linear task index
+ * @param linear_idx Linear task index
  * @tparam SUPERGROUP_SIZE Supergroup extent (columns if row-major, rows if column-major)
  * @tparam ROW_MAJOR Select row-major or column-major swizzle
  * @return int2 {row_idx, col_idx}

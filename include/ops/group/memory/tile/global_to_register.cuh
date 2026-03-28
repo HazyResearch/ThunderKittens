@@ -7,9 +7,9 @@
  * @brief Collaboratively loads data from a source array into row-major layout tiles.
  *
  * @tparam RT The row-major layout tile type.
- * @tparam U The data type of the source array.
  * @param dst[out] The destination tile to load data into.
- * @param src[in] The source array to load data from.
+ * @param src[in] The source global layout to load data from.
+ * @param idx[in] The coordinate of the tile to load.
  */
 template<int axis, ducks::rt::row_layout RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
@@ -49,9 +49,9 @@ __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
  * @brief Collaboratively loads data from a source array into column-major layout tiles.
  *
  * @tparam RT The column-major layout tile type.
- * @tparam U The data type of the source array.
  * @param dst[out] The destination tile to load data into.
- * @param src[in] The source array to load data from.
+ * @param src[in] The source global layout to load data from.
+ * @param idx[in] The coordinate of the tile to load.
  */
 template<int axis, ducks::rt::col_layout RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
@@ -106,9 +106,9 @@ __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
  * @brief Collaboratively stores data from register tiles to a destination array in global memory with a row-major layout.
  *
  * @tparam RT The register tile type with a row-major layout.
- * @tparam U The data type of the destination array.
- * @param[out] dst The destination array in global memory to store data into.
+ * @param[out] dst The destination global layout to store data into.
  * @param[in] src The source register tile to store data from.
+ * @param[in] idx The coordinate of the tile to store.
  */
 template<int axis, ducks::rt::row_layout RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void store(const GL &dst, const RT &src, const COORD &idx) {
@@ -148,9 +148,9 @@ __device__ inline static void store(const GL &dst, const RT &src, const COORD &i
  * @brief Collaboratively stores data from register tiles to a destination array in global memory with a column-major layout.
  *
  * @tparam RT The register tile type with a column-major layout.
- * @tparam U The data type of the destination array.
- * @param[out] dst The destination array in global memory to store data into.
+ * @param[out] dst The destination global layout to store data into.
  * @param[in] src The source register tile to store data from.
+ * @param[in] idx The coordinate of the tile to store.
  */
 template<int axis, ducks::rt::col_layout RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void store(const GL &dst, const RT &src, const COORD &idx) {
