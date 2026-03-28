@@ -102,7 +102,7 @@ struct rt {
 
     rt_base<T, layout> tiles[height][width]; ///< The actual storage for the matrix tile, organized in subtiles.
 
-    using row_vec = rv<T, cols, typename rt_base<T, layout>::row_vec_layout>; ///< A type representing a column vector for this tile.
+    using row_vec = rv<T, cols, typename rt_base<T, layout>::row_vec_layout>; ///< A type representing a row vector for this tile.
     using col_vec = rv<T, rows, typename rt_base<T, layout>::col_vec_layout>; ///< A type representing a column vector for this tile.
 
     __device__ inline void operator=(const T &value) {

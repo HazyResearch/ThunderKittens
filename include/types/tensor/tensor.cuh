@@ -29,7 +29,7 @@ struct identifier {};
 */
 template<typename T> concept all = requires {
     typename T::identifier; // Checks if T::identifier exists
-} && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::tt::identifier
+} && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::tensor_allocator::identifier
 } // namespace tensor_allocator
 } // namespace ducks
 

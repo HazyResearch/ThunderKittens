@@ -15,8 +15,8 @@ namespace crt {
 /**
  * @brief A dummy type used to identify complex register tiles.
  * 
- * For a type to quack like an rt_cmplx, it should define its identifier as ducks::rt::cmplx_identifier.
- * If a type quacks like ducks::rt::cmplx_identifier, it will be treated as an rt_cmplx by compiler checks.
+ * For a type to quack like a crt, it should define its identifier as ducks::crt::identifier.
+ * If a type quacks like ducks::crt::identifier, it will be treated as a crt by compiler checks.
  */
 struct identifier {};
 /**
@@ -48,7 +48,7 @@ concept row_layout = all<T> && std::is_same_v<typename T::layout, ducks::rt_layo
 */
 template<typename T>
 concept col_layout = all<T> && std::is_same_v<typename T::layout, ducks::rt_layout::col>;
-} // namespace rt
+} // namespace crt
 } // namespace ducks
 
 /**
@@ -82,7 +82,7 @@ struct crt {
     component real;
     component imag;
 
-    using row_vec = crv<T, cols, typename rt_base<T, layout>::row_vec_layout>; ///< A type representing a column vector for this tile.
+    using row_vec = crv<T, cols, typename rt_base<T, layout>::row_vec_layout>; ///< A type representing a row vector for this tile.
     using col_vec = crv<T, rows, typename rt_base<T, layout>::col_vec_layout>; ///< A type representing a column vector for this tile.
 };
 

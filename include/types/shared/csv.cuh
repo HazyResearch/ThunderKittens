@@ -12,10 +12,10 @@ namespace kittens {
 namespace ducks {
 namespace csv {
 /**
- * @brief A dummy type used to identify complex register tiles.
- * 
- * For a type to quack like an st_cmplx, it should define its identifier as ducks::st::cmplx_identifier.
- * If a type quacks like ducks::st::cmplx_identifier, it will be treated as an st_cmplx by compiler checks.
+ * @brief A dummy type used to identify complex shared vectors.
+ *
+ * For a type to quack like a csv, it should define its identifier as ducks::csv::identifier.
+ * If a type quacks like ducks::csv::identifier, it will be treated as a csv by compiler checks.
  */
 struct identifier {};
 /**
@@ -23,26 +23,24 @@ struct identifier {};
 * @tparam T The type to check against the concept requirements.
 *
 * Requires:
-* - T is a shared tile.
-* - T has a complex tile identifier.
+* - T is a shared vector.
+* - T has a complex shared vector identifier.
 */
 template <typename T> concept all = requires {
     typename T::identifier;
 } && std::is_same_v<typename T::identifier, identifier> && ducks::sv::all<typename T::component>;
 
-} // namespace st
+} // namespace csv
 } // namespace ducks
 
 /**
- * @brief Complex tile structure
+ * @brief Complex shared vector structure
  *
- * @tparam T2 The packed data type used for the matrix elements.
- * @tparam _height The height of the tile in terms of the number of subtiles.
- * @tparam _width The width of the tile in terms of the number of subtiles.
- * @tparam _layout The layout of the internal register tiles
+ * @tparam _T The data type used for the vector elements.
+ * @tparam _length The length of the vector.
  *
  * This structure is designed to abstract complex number operations internally to the real and imaginary
- * shared tiles, respectively
+ * shared vectors, respectively
  * 
  *
  */

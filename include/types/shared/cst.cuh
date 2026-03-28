@@ -1,6 +1,6 @@
 /**
  * @file
- * @brief Abstraction for a complex register tile composed of real and imaginary tiles
+ * @brief Abstraction for a complex shared tile composed of real and imaginary tiles
  */
  
 #pragma once
@@ -13,10 +13,10 @@ namespace kittens {
 namespace ducks {
 namespace cst {
 /**
- * @brief A dummy type used to identify complex register tiles.
- * 
- * For a type to quack like an st_cmplx, it should define its identifier as ducks::st::cmplx_identifier.
- * If a type quacks like ducks::st::cmplx_identifier, it will be treated as an st_cmplx by compiler checks.
+ * @brief A dummy type used to identify complex shared tiles.
+ *
+ * For a type to quack like a cst, it should define its identifier as ducks::cst::identifier.
+ * If a type quacks like ducks::cst::identifier, it will be treated as a cst by compiler checks.
  */
 struct identifier {};
 
@@ -32,7 +32,7 @@ template <typename T> concept all = requires {
     typename T::identifier;
 } && std::is_same_v<typename T::identifier, identifier> && ducks::st::all<typename T::component>;
 
-} // namespace st
+} // namespace cst
 } // namespace ducks
 
 /**

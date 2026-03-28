@@ -21,23 +21,23 @@ namespace ducks {
  */
 namespace crv {
 /**
- * @brief A dummy type used to identify register vectors.
- * 
- * For a type to quack like an rv, it should define its identifier as ducks::rv::identifier.
- * If a type quacks like ducks::rv::identifier, it will be treated as an rv by compiler checks.
+ * @brief A dummy type used to identify complex register vectors.
+ *
+ * For a type to quack like a crv, it should define its identifier as ducks::crv::identifier.
+ * If a type quacks like ducks::crv::identifier, it will be treated as a crv by compiler checks.
  */
 struct identifier {};
 /**
-* @brief Concept for all register vectors.
+* @brief Concept for all complex register vectors.
 * @tparam T The type to check against the concept requirements.
 *
 * Requires:
-* - T has a nested type identifier that is the same as rv::identifier.
+* - T has a nested type identifier that is the same as crv::identifier.
 */
 template<typename T>
 concept all = requires {
     typename T::identifier; // Checks if T::identifier exists
-} && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::rv::identifier.
+} && std::is_same_v<typename T::identifier, identifier>; // Checks if T::identifier is ducks::crv::identifier.
 
 template<typename T> concept naive_layout = all<T> && std::is_same_v<typename T::layout, ducks::rv_layout::naive>;
 template<typename T> concept align_layout = all<T> && std::is_same_v<typename T::layout, ducks::rv_layout::align>;
@@ -49,8 +49,8 @@ template<typename T> concept tile_layout  = align_layout<T> || ortho_layout<T>; 
  * @brief Register vector structure.
  *
  * @tparam _T The packed data type used for the vector elements.
- * @tparam _outer_dim The size of the tile, in units of TILE_DIM (16).
- * @tparam _inner_dim This controls the layout of the tile in terms of which axis it maps on the register tile layout.
+ * @tparam _length The length of the vector, in units of TILE_DIM (16).
+ * @tparam _layout This controls the layout of the vector in terms of which axis it maps on the register tile layout.
  *
  * Register vectors are used to accumulate and map values across tiles. You can do computation
  * on them directly if you want, but they're not designed to be maximally efficient vectors
