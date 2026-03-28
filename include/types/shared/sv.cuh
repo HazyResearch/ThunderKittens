@@ -42,8 +42,8 @@ concept all = requires {
 /**
  * @brief Shared vector structure.
  *
- * @tparam _T The packed data type used for the vector elements.
- * @tparam _tiles The size of the tile, in units of TILE_ROW_DIM (16 for fp16, bf16, fp32).
+ * @tparam _T The data type used for the vector elements.
+ * @tparam _length The length of the vector, in units of TILE_ROW_DIM (16 for fp16, bf16, fp32).
  *
  * Shared vectors are used to accumulate and map values across shared tiles.
  * Unlike every other structure present in ThunderKittens, these have a simple

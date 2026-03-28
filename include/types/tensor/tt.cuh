@@ -42,15 +42,15 @@ template<typename T> concept full = all<T> && T::rows == MAX_TENSOR_ROWS;
 } // namespace ducks
 
 /**
- * @brief Shared memory tile structure for various data types and layouts.
+ * @brief Tensor memory tile structure for various data types and layouts.
  *
- * @tparam T The data type of the elements in the tile. Not packed!
+ * @tparam _T The data type of the elements in the tile. Not packed!
  * @tparam _rows The height of the tile.
  * @tparam _cols The width of the tile.
  */
 template<typename _T, int _rows, int _cols>
 struct tt {
-    using identifier = ducks::tt::identifier; ///< Type identifier for shared memory tile.
+    using identifier = ducks::tt::identifier; ///< Type identifier for tensor memory tile.
     using T = base_types::packing<_T>::unpacked_type;
     using T2 = base_types::packing<_T>::packed_type;
     using dtype = T; ///< Data type of the elements in the tile.

@@ -51,7 +51,7 @@ struct st_subtile;
 /**
  * @brief Shared memory tile structure for various data types and layouts.
  *
- * @tparam T The data type of the elements in the tile. Not packed!
+ * @tparam _T The data type of the elements in the tile. Not packed!
  * @tparam _rows The height of the tile.
  * @tparam _cols The width of the tile.
  */

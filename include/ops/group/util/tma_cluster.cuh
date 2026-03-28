@@ -57,7 +57,7 @@ __device__ static inline bool try_wait(semaphore &bar, int kPhaseBit) {
 * distributed shared memory can actually be done with a normal tma::expect followed by wait. See
 * the unit tests of dsmem for an example.
 *
-* @param semaphore Reference to the semaphore variable.
+* @param bar Reference to the semaphore variable.
 * @param bytes The number of bytes expected at the semaphore.
 */
 __device__ static inline void expect_bytes(semaphore& bar, uint32_t bytes) {
@@ -95,8 +95,9 @@ __device__ static inline void expect(semaphore& bar, const T& _1, const args&...
 *
 * Marks a thread arrival at an mbarrier
 *
-* @param semaphore Reference to the semaphore variable.
-* @param kPhaseBit The phase bit used for the semaphore.
+* @param bar Reference to the semaphore variable.
+* @param dst_cta The destination CTA index.
+* @param count The count value for the arrival.
 */
 __device__ static inline void arrive(semaphore& bar, int dst_cta, uint32_t count=1) {
     if(laneid() == 0) {

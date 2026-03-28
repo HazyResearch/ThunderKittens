@@ -12,7 +12,7 @@
 * It converts the semaphore pointer to a generic shared memory pointer and uses an inline assembly
 * instruction to set the expected number of bytes.
 *
-* @param semaphore Reference to the semaphore variable.
+* @param bar Reference to the semaphore variable.
 * @param bytes The number of bytes expected at the semaphore.
 */
 __device__ static inline void expect_bytes(semaphore& bar, uint32_t bytes) {
