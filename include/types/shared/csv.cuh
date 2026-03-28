@@ -1,6 +1,6 @@
 /**
  * @file
- * @brief Abstraction for a complex register tile composed of real and imaginary tiles
+ * @brief Abstraction for a complex shared vector composed of real and imaginary vectors
  */
  
 #pragma once

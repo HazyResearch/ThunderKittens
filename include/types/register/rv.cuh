@@ -15,8 +15,8 @@ namespace kittens {
 // helper struct for type inference
 namespace ducks {
 /**
- * @namespace rt
- * 
+ * @namespace rv
+ *
  * @brief The namespace where concepts and abstract types for register vectors live.
  */
 namespace rv {

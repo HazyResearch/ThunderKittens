@@ -19,7 +19,7 @@ namespace ducks {
 /**
  * @namespace tt
  * 
- * @brief The namespace where concepts and abstract types for shared tiles live.
+ * @brief The namespace where concepts and abstract types for tensor tiles live.
  */
 namespace tt {
 /**

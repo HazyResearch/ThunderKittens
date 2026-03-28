@@ -14,8 +14,8 @@
 namespace kittens {
 namespace ducks {
 /**
- * @namespace rt
- * 
+ * @namespace st
+ *
  * @brief The namespace where concepts and abstract types for shared tiles live.
  */
 namespace st {

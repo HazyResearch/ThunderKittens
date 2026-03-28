@@ -373,9 +373,9 @@ template<> __device__ inline float2 fma_AxBtC::op<float2>(const float2 &a, const
  * This is particularly useful for attention mechanisms in neural networks.
  *
  * @tparam T The data type of the input and output values.
- * @param a[in] The first input value.
- * @param b[in] The third input value to be added.
- * @param c[in] The second input value.
+ * @param a[in] The first multiplicand.
+ * @param b[in] The addend.
+ * @param c[in] The second multiplicand.
  * @return The result of the fused multiply-add operation.
  */
 struct fma_AxCtB { // this is the one needed for attention
