@@ -10,7 +10,6 @@
  * @tparam U The data type of the source array.
  * @param dst[out] The destination tile to load data into.
  * @param src[in] The source array to load data from.
- * @param row_stride[in] The stride in elements between rows in the source array.
  */
 template<int axis, ducks::rt::row_layout RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
@@ -53,7 +52,6 @@ __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
  * @tparam U The data type of the source array.
  * @param dst[out] The destination tile to load data into.
  * @param src[in] The source array to load data from.
- * @param row_stride[in] The stride in elements between rows in the source array.
  */
 template<int axis, ducks::rt::col_layout RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
@@ -111,7 +109,6 @@ __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
  * @tparam U The data type of the destination array.
  * @param[out] dst The destination array in global memory to store data into.
  * @param[in] src The source register tile to store data from.
- * @param row_stride[in] The stride in elements between rows in the destination array.
  */
 template<int axis, ducks::rt::row_layout RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void store(const GL &dst, const RT &src, const COORD &idx) {
@@ -154,7 +151,6 @@ __device__ inline static void store(const GL &dst, const RT &src, const COORD &i
  * @tparam U The data type of the destination array.
  * @param[out] dst The destination array in global memory to store data into.
  * @param[in] src The source register tile to store data from.
- * @param row_stride[in] The stride in elements between rows in the destination array.
  */
 template<int axis, ducks::rt::col_layout RT, ducks::gl::all GL, ducks::coord::tile COORD=coord<rt<typename RT::T, GROUP_WARPS*RT::rows, RT::cols, typename RT::layout>>>
 __device__ inline static void store(const GL &dst, const RT &src, const COORD &idx) {

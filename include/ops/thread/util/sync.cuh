@@ -30,8 +30,9 @@ template<int num_warps> struct barrier {
  *
  * Additionally, if it is given a shared tile type, it will also call `set_bytes` to prepare for the memory transaction.
  *
- * @param[out] semaphore The semaphore variable to initialize.
- * @param[in] tc The thread counter for the semaphore.
+ * @param[out] bar The semaphore variable to initialize.
+ * @param[in] thread_count The thread counter for the semaphore.
+ * @param[in] transaction_count The transaction counter for the semaphore.
  */
 __device__ static inline void init_semaphore(semaphore& bar, int thread_count, int transaction_count=0) {
     void const* const ptr = &bar;
@@ -45,8 +46,7 @@ __device__ static inline void init_semaphore(semaphore& bar, int thread_count, i
 /**
  * @brief Invalidate an mbarrier
  *
- * @param[out] semaphore The semaphore variable to initialize.
- * @param[in] tc The thread counter for the semaphore.
+ * @param[out] bar The semaphore variable to invalidate.
  */
 __device__ static inline void invalidate_semaphore(semaphore& bar) {
     void const* const ptr = &bar;
