@@ -99,7 +99,7 @@ __device__ static inline void prefetch(ST &dst, const GL &src, const COORD &idx)
  *
  * @tparam ST A shared tile type with a TMA-compatible layout
  * @param[out] dst The destination tensormap address in global memory
- * @param[in] src_tma_map The source shared memory tile.
+ * @param[in] src The source shared memory tile.
  * @param[in] tile_row_idx The row coord of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the tile destination. This is in units of complete tiles.
  */
@@ -235,7 +235,7 @@ __device__ static inline void store_async(const PGL &dst, const ST &src, const C
  *
  * @tparam ST A shared tile type with a TMA-compatible layout
  * @param[out] dst The destination tensormap address in global memory
- * @param[in] src_tma_map The source shared memory tile.
+ * @param[in] src The source shared memory tile.
  * @param[in] tile_row_idx The row coord of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the tile destination. This is in units of complete tiles.
  */
@@ -379,7 +379,7 @@ __device__ static inline void store_add_async(const PGL &dst, const ST &src, con
  *
  * @tparam ST A shared tile type with a TMA-compatible layout
  * @param[out] dst The destination tensormap address in global memory
- * @param[in] src_tma_map The source shared memory tile.
+ * @param[in] src The source shared memory tile.
  * @param[in] tile_row_idx The row coord of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the tile destination. This is in units of complete tiles.
  */
@@ -525,7 +525,7 @@ __device__ static inline void store_min_async(const PGL &dst, const ST &src, con
  *
  * @tparam ST A shared tile type with a TMA-compatible layout
  * @param[out] dst The destination tensormap address in global memory
- * @param[in] src_tma_map The source shared memory tile.
+ * @param[in] src The source shared memory tile.
  * @param[in] tile_row_idx The row coord of the tile destination. This is in units of complete tiles.
  * @param[in] tile_col_idx The column coord of the tile destination. This is in units of complete tiles.
  */
