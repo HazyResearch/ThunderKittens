@@ -53,6 +53,15 @@ __device__ __forceinline__ int warpgroupid() { return threadIdx.x >> 7; }
  * @return The lane ID.
  */
 __device__ __forceinline__ int laneid() { return threadIdx.x & 0x1f; }
+/**
+ * @brief Get the physical multiprocessor ID (SM index) the current CTA is executing on.
+ * @return SM ID in [0, num_sms-1] (pair with host num_sms() for device counts).
+ */
+__device__ __forceinline__ int smid() {
+    uint32_t r;
+    asm volatile("mov.u32 %0, %%smid;" : "=r"(r));
+    return static_cast<int>(r);
+}
 
 #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
 constexpr int MAX_SHARED_MEMORY = 227 * 1024;
