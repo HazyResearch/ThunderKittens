@@ -6,7 +6,7 @@
 /**
 * @brief Waits for the requested semaphore phase, at cluster scope
 *
-* @param semaphore Reference to the semaphore variable.
+* @param bar Reference to the semaphore variable.
 * @param kPhaseBit The phase bit used for the semaphore.
 */
 __device__ static inline void wait(semaphore& bar, int kPhaseBit) {

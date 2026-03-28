@@ -66,9 +66,9 @@ concept col_layout = all<T> && std::is_same_v<typename T::layout, ducks::rt_layo
 /**
  * @brief Main tile structure for manipulating data in registers.
  *
- * @tparam T2 The packed data type used for the matrix elements.
- * @tparam _height The height of the tile in terms of the number of subtiles.
- * @tparam _width The width of the tile in terms of the number of subtiles.
+ * @tparam _T The data type used for the matrix elements.
+ * @tparam _rows The height of the tile in terms of the number of subtiles.
+ * @tparam _cols The width of the tile in terms of the number of subtiles.
  * @tparam _layout The layout of the internal base tiles, either row-major or column-major.
  *
  * This structure is designed to handle matrix tiles in a flexible manner, allowing

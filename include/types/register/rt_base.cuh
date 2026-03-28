@@ -33,7 +33,7 @@ struct identifier {};
 /**
  * @brief Basic tile structure for computation in registers.
  *
- * @tparam T2 The packed data type used for the matrix elements.
+ * @tparam _T The data type used for the matrix elements.
  * @tparam _layout The layout of the base tile, either row-major or column-major.
  *
  * This type is a primarily utility for building larger inline templates

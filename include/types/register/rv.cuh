@@ -48,9 +48,9 @@ template<typename T> concept tile_layout  = align_layout<T> || ortho_layout<T>; 
 /**
  * @brief Register vector structure.
  *
- * @tparam _T The packed data type used for the vector elements.
- * @tparam _outer_dim The size of the tile, in units of TILE_DIM (16).
- * @tparam _inner_dim This controls the layout of the tile in terms of which axis it maps on the register tile layout.
+ * @tparam _T The data type used for the vector elements.
+ * @tparam _length The length of the vector, in units of TILE_DIM (16).
+ * @tparam _layout The layout of the vector in terms of which axis it maps on the register tile layout.
  *
  * Register vectors are used to accumulate and map values across tiles. You can do computation
  * on them directly if you want, but they're not designed to be maximally efficient vectors
