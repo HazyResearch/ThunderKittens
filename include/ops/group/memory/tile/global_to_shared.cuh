@@ -63,6 +63,7 @@ __device__ static inline void load(ST &dst, const GL &src, const COORD &idx) {
  * @tparam ST The type of the shared tile.
  * @param[out] dst The destination global memory array.
  * @param[in] src The source shared memory tile.
+ * @param[in] idx The coordinate of the tile in the global memory array.
  */
 template<int axis, bool assume_aligned, ducks::st::all ST, ducks::gl::all GL, ducks::coord::tile COORD=coord<ST>>
 __device__ static inline void store(const GL &dst, const ST &src, const COORD &idx) {

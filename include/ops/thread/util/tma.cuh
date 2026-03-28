@@ -24,7 +24,7 @@ namespace tma {
 * It converts the semaphore pointer to a generic shared memory pointer and uses an inline assembly
 * instruction to set the expected number of bytes.
 *
-* @param semaphore Reference to the semaphore variable.
+* @param bar Reference to the semaphore variable.
 * @param bytes The number of bytes expected at the semaphore.
 */
 __device__ static inline void expect_bytes(semaphore& bar, uint32_t bytes) {
@@ -118,7 +118,7 @@ namespace cluster {
 /**
 * @brief Waits for the requested semaphore phase, at cluster scope
 *
-* @param semaphore Reference to the semaphore variable.
+* @param bar Reference to the semaphore variable.
 * @param kPhaseBit The phase bit used for the semaphore.
 */
 __device__ static inline void wait(semaphore& bar, int kPhaseBit) {
@@ -194,7 +194,7 @@ __device__ static inline void careful_wait(semaphore& bar, int kPhaseBit) {
 * distributed shared memory can actually be done with a normal tma::expect followed by wait. See
 * the unit tests of dsmem for an example.
 *
-* @param semaphore Reference to the semaphore variable.
+* @param bar Reference to the semaphore variable.
 * @param bytes The number of bytes expected at the semaphore.
 */
 __device__ static inline void expect_bytes(semaphore& bar, uint32_t bytes) {
@@ -238,8 +238,9 @@ __device__ static inline void expect(semaphore& bar, const T& _1, const args&...
 *
 * Marks a thread arrival at an mbarrier
 *
-* @param semaphore Reference to the semaphore variable.
-* @param kPhaseBit The phase bit used for the semaphore.
+* @param bar Reference to the semaphore variable.
+* @param dst_cta The destination CTA index.
+* @param count The count value for the arrival.
 */
 __device__ static inline void arrive(semaphore& bar, int dst_cta, uint32_t count=1) {
     uint32_t mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar)); 

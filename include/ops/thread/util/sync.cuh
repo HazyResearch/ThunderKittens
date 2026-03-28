@@ -62,8 +62,7 @@ __device__ static inline void invalidate_semaphore(semaphore& bar) {
 *
 * Marks a warp arrival at an mbarrier
 *
-* @param semaphore Reference to the semaphore variable.
-* @param kPhaseBit The phase bit used for the semaphore.
+* @param sem Reference to the semaphore variable.
 */
 __device__ static inline void arrive(semaphore& sem) {
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&sem)); 
@@ -84,8 +83,8 @@ template<int num_warps> __device__ static inline void arrive(barrier<num_warps> 
 *
 * Marks a warp arrival at an mbarrier
 *
-* @param semaphore Reference to the semaphore variable.
-* @param kPhaseBit The phase bit used for the semaphore.
+* @param sem Reference to the semaphore variable.
+* @param count The count value for the mbarrier arrival.
 */
 __device__ static inline void arrive(semaphore& sem, uint32_t count) {
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&sem));
@@ -101,7 +100,7 @@ __device__ static inline void arrive(semaphore& sem, uint32_t count) {
 /**
 * @brief Waits for the requested semaphore phase.
 *
-* @param semaphore Reference to the semaphore variable.
+* @param sem Reference to the semaphore variable.
 * @param kPhaseBit The phase bit used for the semaphore.
 */
 __device__ static inline void wait(semaphore& sem, int kPhaseBit) {
@@ -203,7 +202,7 @@ __device__ static inline void careful_wait(semaphore& sem, int kPhaseBit) {
 /**
 * @brief Checks if the requested semaphore phase is ready.
 *
-* @param semaphore Reference to the semaphore variable.
+* @param sem Reference to the semaphore variable.
 * @param kPhaseBit The phase bit used for the semaphore.
 */
 __device__ static inline int test_wait(semaphore& sem, int kPhaseBit) {
