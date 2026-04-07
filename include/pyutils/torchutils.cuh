@@ -3,6 +3,8 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/core/Tensor.h>
 
+#include <ATen/dlpack.h>
+
 #include "kittens.cuh"
 #include "parallel_tensor.cuh"
 
@@ -136,6 +138,26 @@ __host__ static inline PGL parallel_tensor_to_pgl(TKParallelTensor &t, int B, in
 template <kittens::ducks::gl::all GL>
 __host__ static inline GL make_fake_gl(const int batch, const int depth, const int rows, const int cols) {
     return ::kittens::make_gl<GL>(reinterpret_cast<uint64_t>(nullptr), batch, depth, rows, cols);
+}
+
+// Zero-copy wrap DLPack DLManagedTensor into GL (B,D,R,C); pads leading dims with 1
+template <kittens::ducks::gl::all GL>
+__host__ static inline GL tensor_to_gl_from_dlpack(const DLManagedTensor* dlm) {
+    TORCH_CHECK(dlm != nullptr && dlm->dl_tensor.data != nullptr, "DLPack tensor is null");
+    const int ndim = dlm->dl_tensor.ndim;
+    TORCH_CHECK(ndim >= 0 && ndim <= 4, "DLPack ndim must be in [0, 4]");
+    std::array<int, 4> shape = {1, 1, 1, 1};
+    for (int i = 0; i < ndim && dlm->dl_tensor.shape != nullptr; ++i)
+        shape[4 - ndim + i] = static_cast<int>(dlm->dl_tensor.shape[i]);
+    return ::kittens::make_gl<GL>(
+        reinterpret_cast<uint64_t>(dlm->dl_tensor.data),
+        shape[0], shape[1], shape[2], shape[3]);
+}
+
+// Direct pointer+shape path for C++ or simplified call sites (no DLPack struct)
+template <kittens::ducks::gl::all GL>
+__host__ static inline GL tensor_to_gl_from_dlpack(void* data, int B, int D, int R, int C) {
+    return ::kittens::make_gl<GL>(reinterpret_cast<uint64_t>(data), B, D, R, C);
 }
 
 __host__ static inline void _device_check(const at::Tensor& first, const at::Tensor& second) {
