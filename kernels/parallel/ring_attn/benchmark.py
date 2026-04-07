@@ -1,6 +1,6 @@
 """
 Install FlashAttention 4:
-    pip install flash-attn-4                  # CUDA 12
+    pip install "flash-attn-4==4.0.0b7"       # CUDA 12
     pip install "flash-attn-4[cu13]==4.0.0b7" # CUDA 13
 """
 
