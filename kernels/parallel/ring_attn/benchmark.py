@@ -1,13 +1,7 @@
 """
-Install FlashAttention 3:
-    cd somewhere-outside-repo
-    git clone https://github.com/Dao-AILab/flash-attention/
-    cd flash-attention/hopper
-    git submodule update --init --recursive
-    python -m pip install --upgrade pip wheel setuptools ninja packaging # upgrading these helps faster build
-    MAX_JOBS=64 python setup.py install
-    or
-    MAX_JOBS=64 python setup.py install > build.log 2>&1 &
+Install FlashAttention 4:
+    pip install flash-attn-4                  # CUDA 12
+    pip install "flash-attn-4[cu13]==4.0.0b7" # CUDA 13
 """
 
 import sys, os
@@ -26,7 +20,7 @@ from common import (
     clean_print
 )
 
-import flash_attn_interface
+from flash_attn.cute.interface import _flash_attn_fwd
 from _C import TKParallelTensor, tk_mha_fwd_d128  # type: ignore
 
 
@@ -53,31 +47,17 @@ def flash_attn_fwd(
     V: torch.Tensor,
     O: torch.Tensor
 ) -> None:
-    Q_flash = Q.transpose(1, 2).contiguous() # We do not care about the speed here
+    # We do not care about the speed here
+    Q_flash = Q.transpose(1, 2).contiguous()
     K_flash = K.transpose(1, 2).contiguous()
     V_flash = V.transpose(1, 2).contiguous()
     O_flash = torch.empty_like(O).transpose(1, 2).contiguous()
 
-    # Returns O (B, N, H, D), LSE (B, H, N), *rest
-    flash_attn_interface._flash_attn_forward(
+    _flash_attn_fwd(
         Q_flash, K_flash, V_flash,
-        None, None,  # k_new, v_new
-        None,  # qv
-        O_flash,  # out
-        None, None, None,  # cu_seqlens_q/k/k_new
-        None, None,  # seqused_q/k
-        None, None,  # max_seqlen_q/k
-        None, None, None,  # page_table, kv_batch_idx, leftpad_k,
-        None, None, None,  # rotary_cos/sin, seqlens_rotary
-        None, None, None,  # q_descale, k_descale, v_descale
         softmax_scale=Q_flash.shape[-1] ** (-0.5),
         causal=False,
-        window_size=(-1, -1),
-        attention_chunk=0,
-        softcap=0.0,
-        num_splits=1,
-        pack_gqa=None,
-        sm_margin=0,
+        out=O_flash,
     )
 
     O.copy_(O_flash.transpose(1, 2)) # We do not care about the speed here

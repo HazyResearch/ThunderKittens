@@ -1,16 +1,7 @@
 """
-For B200s, you must install FlashAttention 4:
-    pip install cuda-python==12.8.* nvidia-cutlass-dsl==4.2.* flash_attn==2.8.*
-
-Fot H100s, you must install FlashAttention 3:
-    cd somewhere-outside-repo
-    git clone https://github.com/Dao-AILab/flash-attention/
-    cd flash-attention/hopper
-    git submodule update --init --recursive
-    python -m pip install --upgrade pip wheel setuptools ninja packaging # upgrading these helps faster build
-    MAX_JOBS=64 python setup.py install
-    or
-    MAX_JOBS=64 python setup.py install > build.log 2>&1 &
+Install FlashAttention 4:
+    pip install flash-attn-4                  # CUDA 12
+    pip install "flash-attn-4[cu13]==4.0.0b7" # CUDA 13
 """
 
 import math
@@ -20,6 +11,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 gpu = os.environ.get("GPU", "")
 assert gpu == "B200" or gpu == "H100", "GPU must be set to B200 or H100"
+
+from flash_attn.cute.interface import _flash_attn_fwd
 
 import torch
 import torch.distributed
@@ -84,85 +77,15 @@ def tk_all2all(
     tk_all_to_all(output, input, barrier, scatter_idx, gather_idx)
 
 
-if gpu == "B200":
-    import cuda.bindings.driver as cuda
-    import cutlass
-    from cutlass.cute.runtime import from_dlpack
-    from flash_attn.cute.flash_fwd_sm100 import FlashAttentionForwardSm100
-
-    compile_funcs = {}
-
-    def flash_attn_fwd_raw(
-        Q: torch.Tensor,
-        K: torch.Tensor,
-        V: torch.Tensor,
-        softmax_scale: float,
-        O: torch.Tensor,
-        L: torch.Tensor
-    ) -> None:
-        B, N, H, D_qk = Q.shape
-        _, _, _, D_vo = V.shape
-
-        Q_cute = from_dlpack(Q.detach(), assumed_align=16).mark_layout_dynamic(leading_dim=Q.ndim - 1)
-        K_cute = from_dlpack(K.detach(), assumed_align=16).mark_layout_dynamic(leading_dim=K.ndim - 1)
-        V_cute = from_dlpack(V.detach(), assumed_align=16).mark_layout_dynamic(leading_dim=V.ndim - 1)
-        O_cute = from_dlpack(O.detach(), assumed_align=16).mark_layout_dynamic(leading_dim=O.ndim - 1)
-        L_cute = from_dlpack(L.detach(), assumed_align=4).mark_layout_dynamic(leading_dim=L.ndim - 1)
-
-        current_stream = cuda.CUstream(torch.cuda.current_stream().cuda_stream)
-
-        # Arbitrary key to use the global dict
-        if "FA4" not in compile_funcs:
-            _fa_fwd = FlashAttentionForwardSm100(
-                D_qk,
-                D_vo,
-                qhead_per_kvhead=1,
-                is_causal=True,
-                is_local=False,
-                pack_gqa=False,
-                is_persistent=False # always false if causal
-            )
-            compile_funcs["FA4"] = cutlass.cute.compile(
-                _fa_fwd, Q_cute, K_cute, V_cute, O_cute, L_cute, softmax_scale, current_stream,
-                None, None, None, None, None, None, None, None, None
-            )
-
-        compile_funcs["FA4"](
-            Q_cute, K_cute, V_cute, O_cute, L_cute, softmax_scale, current_stream,
-            None, None, None, None, None, None, None, None, None
-        )
-
-elif gpu == "H100":
-    import flash_attn_interface
-
-    def flash_attn_fwd_raw(
-        Q: torch.Tensor,
-        K: torch.Tensor,
-        V: torch.Tensor,
-        softmax_scale: float,
-        O: torch.Tensor,
-        L: torch.Tensor
-    ) -> None:
-        flash_attn_interface._flash_attn_forward(
-            Q, K, V,
-            None, None,  # k_new, v_new
-            None,  # qv
-            O,  # out
-            None, None, None,   # cu_seqlens_q/k/k_new
-            None, None,   # seqused_q/k
-            None, None,   # max_seqlen_q/k
-            None, None, None,   # page_table, kv_batch_idx, leftpad_k,
-            None, None, None,  # rotary_cos/sin, seqlens_rotary
-            None, None, None, #q_descale, k_descale, v_descale
-            softmax_scale=Q.shape[-1] ** (-0.5),
-            causal=True,
-            window_size=(-1, -1),
-            attention_chunk=0,
-            softcap=0.0,
-            num_splits=1,
-            pack_gqa=None,
-            sm_margin=0,
-        )
+def flash_attn_fwd_raw(
+    Q: torch.Tensor,
+    K: torch.Tensor,
+    V: torch.Tensor,
+    softmax_scale: float,
+    O: torch.Tensor,
+    L: torch.Tensor
+) -> None:
+    _flash_attn_fwd(Q, K, V, softmax_scale=softmax_scale, causal=True, out=O, lse=L)
 
 
 def nccl_ulysses_attn(
@@ -280,7 +203,7 @@ def run(
         multicast=False
     )
     O_tp_tk.data_.zero_()
-    L_tk = torch.zeros(1, H, N, dtype=torch.float32, device=f"cuda:{local_rank}")
+    L_tk = torch.zeros(1, H // local_world_size, N, dtype=torch.float32, device=f"cuda:{local_rank}")
     barrier_tk = TKParallelTensor(
         (1, 1),
         dtype=torch.int,
@@ -346,6 +269,3 @@ if __name__ == "__main__":
         run(N, H, D, local_rank, local_world_size, check_correctness=False, do_profile=False)
 
     destroy_distributed_environment()
-
-    if gpu == "B200":
-        del compile_funcs
