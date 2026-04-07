@@ -255,7 +255,7 @@ def run(
 
     clean_print(f"===============================================================================", print_once=True)
     clean_print(f"<Ulysses Attention | world_size={local_world_size} | {N}x{H}x{D}>", print_once=True)
-    clean_print(f"NCCL: {nccl_avg_ms:.3f} ms | {nccl_tflops:.2f} TFLOP/s")
+    clean_print(f"YunChang: {nccl_avg_ms:.3f} ms | {nccl_tflops:.2f} TFLOP/s")
     clean_print(f"TK: {tk_avg_ms:.3f} ms | {tk_tflops:.2f} TFLOP/s")
 
 
