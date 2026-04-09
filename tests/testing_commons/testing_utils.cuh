@@ -172,6 +172,12 @@ void initialize(T **d_i, T **d_o, std::vector<float> &i_ref, std::vector<float> 
             i_ref[idx] = float(i_t[idx]); 
         }
         #endif
+        #if defined(KITTENS_BLACKWELL)
+        else if constexpr (std::is_same_v<T, fp8e8m0>) {
+            i_t[idx] = __nv_fp8_e8m0(f); 
+            i_ref[idx] = float(i_t[idx]); 
+        }
+        #endif
         else {
             assert(false && "Unsupported data type");
         }
@@ -304,6 +310,12 @@ test_result validate(T *d_i, T *d_o, const std::vector<float> &i_ref, std::vecto
         else if constexpr(std::is_same_v<T, fp8e5m2>) {
             o[idx] = float(o_t[idx]);
             o_ref[idx] = float(__nv_fp8_e5m2(o_ref[idx])); 
+        }
+        #endif
+        #if defined(KITTENS_BLACKWELL)
+        else if constexpr(std::is_same_v<T, fp8e8m0>) {
+            o[idx] = float(o_t[idx]);
+            o_ref[idx] = float(__nv_fp8_e8m0(o_ref[idx])); 
         }
         #endif
         else {
