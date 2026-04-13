@@ -40,13 +40,6 @@ except ImportError:
     ref_mamba3_siso_fwd = None
 
 try:
-    from mamba_ssm.ops.triton.mamba3 import mamba3_mimo_fwd as ref_mamba3_mimo_fwd
-    print("Successfully imported mamba3_mimo_fwd")
-except ImportError:
-    print("Failed to import mamba3_mimo_fwd from mamba repo; Please 'pip install mamba_ssm'.")
-    ref_mamba3_mimo_fwd = None
-
-try:
     from mamba_ssm.ops.modules import mamba3 as ref_mamba3_module
     print("Successfully imported mamba3.py")
 except ImportError:
@@ -138,10 +131,7 @@ class Mamba3Baseline(torch.nn.Module):
     def __init__(self):
         super().__init__()
 
-    def forward(self, x, dt, A, B, C, chunk_size, D=None, use_mimo=False):
-        if use_mimo:
-            raise RuntimeError("Local Mamba-3 baseline MIMO path is not implemented yet")
-
+    def forward(self, x, dt, A, B, C, chunk_size, D=None):
         q, k, v, adt, _dt_ref, trap, _q_bias, _k_bias, angles, _d_ref = build_reference_mamba3_inputs(
             x, dt, A, B, C, D
         )
@@ -164,15 +154,10 @@ class Mamba3Triton(torch.nn.Module):
     def __init__(self):
         super().__init__()
 
-    def forward(self, x, dt, A, B, C, chunk_size, D=None, use_mimo=False):
+    def forward(self, x, dt, A, B, C, chunk_size, D=None):
         q, k, v, adt, dt_ref, trap, q_bias, k_bias, angles, d_ref = build_reference_mamba3_inputs(
             x, dt, A, B, C, D
         )
-
-        if use_mimo:
-            if ref_mamba3_mimo_fwd is None:
-                raise RuntimeError("mamba3_mimo_fwd is not available")
-            raise RuntimeError("Benchmark MIMO reference path needs MIMO-specific tensors and is not wired yet")
 
         if ref_mamba3_siso_fwd is None:
             raise RuntimeError("mamba3_siso_fwd is not available")
@@ -217,7 +202,6 @@ def mamba3_test(
     num_iters=10,
     verbose=True,
     torch_compile=False,
-    use_mimo=False,
     **kwargs,
 ):
     baseline_method = Mamba3Baseline()
@@ -244,35 +228,23 @@ def mamba3_test(
                         raise RuntimeError("thunderkittens extension is not available")
                     torch.cuda.synchronize()
                     start_events[i].record()
-                    y = tk_mamba3(q, k, v, a, b_tk, angle, use_mimo=False)
-                    end_events[i].record()
-                    torch.cuda.synchronize()
-                elif method_str == "mamba3_tk_mimo":
-                    if tk_mamba3 is None:
-                        raise RuntimeError("thunderkittens extension is not available")
-                    torch.cuda.synchronize()
-                    start_events[i].record()
-                    y = tk_mamba3(q, k, v, a, b_tk, angle, use_mimo=True)
+                    y = tk_mamba3(q, k, v, a, b_tk, angle)
                     end_events[i].record()
                     torch.cuda.synchronize()
                 elif method_str == "mamba3_baseline_siso":
                     torch.cuda.synchronize()
                     start_events[i].record()
-                    y = baseline_method(x, dt, A, B, C, chunk_size, D=None, use_mimo=False)
+                    y = baseline_method(x, dt, A, B, C, chunk_size, D=None)
                     end_events[i].record()
                     torch.cuda.synchronize()
-                elif method_str == "mamba3_baseline_mimo":
-                    raise RuntimeError("mamba3_baseline_mimo is not implemented yet")
                 elif method_str == "mamba3_triton_siso":
                     if ref_mamba3_siso_fwd is None:
                         raise RuntimeError("mamba3_siso_fwd is not available")
                     torch.cuda.synchronize()
                     start_events[i].record()
-                    y = triton_method(x, dt, A, B, C, chunk_size, D=None, use_mimo=False)
+                    y = triton_method(x, dt, A, B, C, chunk_size, D=None)
                     end_events[i].record()
                     torch.cuda.synchronize()
-                elif method_str == "mamba3_triton_mimo":
-                    raise RuntimeError("mamba3_triton_mimo is not wired yet")
                 else:
                     raise AssertionError(f"Unknown method: {method_str}")
             except Exception as e:
@@ -303,7 +275,6 @@ if tk_mamba3 is not None:
         causal=True,
         is_forwards=True,
         method_str="mamba3_tk_siso",
-        use_mimo=False,
     )
 
 if ref_mamba3_siso_fwd is not None:

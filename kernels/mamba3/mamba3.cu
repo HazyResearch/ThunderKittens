@@ -321,26 +321,6 @@ struct mamba3_fwd_template {
             __syncwarp();
         }
     };
-    // MIMO is intentionally left out of the current TK kernel. The public API still takes
-    // use_mimo so the Python side can keep a stable call shape while the implementation
-    // remains SISO trap-only.
-#if 0
-    struct mimo_consumer {
-        __device__ static void setup(consumer_setup_args<layout> args) {
-            warpgroup::consumer_registers<NUM_CONSUMER_WARPS/WARPGROUP_WARPS>();
-            warp::zero(args.state.kv);
-        }
-
-        __device__ static void compute() {
-            int warpgroupid = warpgroup::groupid();
-        }
-
-        __device__ static void finish(consumer_finish_args<layout> args) {
-            if(warpgroup::laneid() == 0) arrive(args.finish_finished);
-            __syncwarp();
-        }
-    };
-#endif
 };
 
 #ifdef TK_COMPILE_MAMBA3
@@ -351,13 +331,10 @@ struct mamba3_fwd_template {
 
 void dispatch_mamba3(
     bf16 *d_q, bf16 *d_k, bf16 *d_v,
-    bf16 *d_o, float *d_a, float *d_b, float *d_angle, int B, int H, int N, bool use_mimo
+    bf16 *d_o, float *d_a, float *d_b, float *d_angle, int B, int H, int N
 ) {
     if (!d_q || !d_k || !d_v || !d_o || !d_a || !d_b || !d_angle) {
         throw std::runtime_error("Null pointer passed to dispatch_mamba3");
-    }
-    if (use_mimo) {
-        throw std::runtime_error("Mamba3 MIMO path is not implemented yet");
     }
 
     cudaError_t err = cudaGetLastError();
@@ -409,8 +386,7 @@ at::Tensor mamba3(
     const at::Tensor v,
     const at::Tensor a,
     const at::Tensor b,
-    const at::Tensor angle,
-    const bool use_mimo
+    const at::Tensor angle
 ) {
     CHECK_INPUT(q);
     CHECK_INPUT(k);
@@ -491,7 +467,7 @@ at::Tensor mamba3(
     bf16 *d_o = reinterpret_cast<bf16*>(out_ptr);
 
     cudaStreamSynchronize(at::cuda::getCurrentCUDAStream().stream());
-    dispatch_mamba3(d_q, d_k, d_v, d_o, d_a, d_b, d_angle, B, H, N, use_mimo);
+    dispatch_mamba3(d_q, d_k, d_v, d_o, d_a, d_b, d_angle, B, H, N);
     cudaStreamSynchronize(at::cuda::getCurrentCUDAStream().stream());
     CHECK_CUDA_ERROR(cudaGetLastError());
 
@@ -500,7 +476,7 @@ at::Tensor mamba3(
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("mamba3", mamba3, "Mamba3 TK. Takes tensors (q, k, v, a, b, angle, use_mimo). q, k, v tensors are bf16, and a, b, angle are float.");
+    m.def("mamba3", mamba3, "Mamba3 TK. Takes tensors (q, k, v, a, b, angle). q, k, v tensors are bf16, and a, b, angle are float.");
 }
 
 #else
