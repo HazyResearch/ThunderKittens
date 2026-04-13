@@ -196,12 +196,12 @@ def build_tk_mamba3_inputs(x, dt, A, B, C):
     q = rearrange(C, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
     k = rearrange(B, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
     v = rearrange(x * dt.unsqueeze(-1), "b l h d -> b h l d").to(torch.bfloat16).contiguous()
-    a = rearrange(A * dt, "b h l -> b h l").to(torch.float32).contiguous()
+    a = rearrange(A * dt, "b l h -> b h l").to(torch.float32).contiguous()
 
     # Keep the current TK interface stable while the kernel is trap-only. The angle tensor is
     # still passed through for API compatibility, but the current TK kernel ignores it.
     b = torch.zeros_like(a)
-    angle = torch.cumsum(dt, dim=-1).to(torch.float32).contiguous()
+    angle = torch.zeros_like(a)
     return q, k, v, a, b, angle
 
 

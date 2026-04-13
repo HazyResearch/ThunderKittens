@@ -321,20 +321,26 @@ struct mamba3_fwd_template {
             __syncwarp();
         }
     };
+    // MIMO is intentionally left out of the current TK kernel. The public API still takes
+    // use_mimo so the Python side can keep a stable call shape while the implementation
+    // remains SISO trap-only.
+#if 0
+    struct mimo_consumer {
+        __device__ static void setup(consumer_setup_args<layout> args) {
+            warpgroup::consumer_registers<NUM_CONSUMER_WARPS/WARPGROUP_WARPS>();
+            warp::zero(args.state.kv);
+        }
 
-    // struct mimo_consumer {
-    //     __device__ static void setup() {
+        __device__ static void compute() {
+            int warpgroupid = warpgroup::groupid();
+        }
 
-    //     }
-
-    //     __device__ static void compute() {
-
-    //     }
-
-    //     __device__ static void finish() {
-
-    //     }
-    // }
+        __device__ static void finish(consumer_finish_args<layout> args) {
+            if(warpgroup::laneid() == 0) arrive(args.finish_finished);
+            __syncwarp();
+        }
+    };
+#endif
 };
 
 #ifdef TK_COMPILE_MAMBA3
@@ -368,6 +374,7 @@ void dispatch_mamba3(
     mamba3_fwd_template::layout::o_global Og(d_o, B, H, N, nullptr);
     
     mamba3_fwd_template::layout::globals globals = {Qg, Kg, Vg, Og, Ag, Bg, AngleG};
+
 
     unsigned long mem_size = kittens::prototype::detail::MAX_SHARED_MEMORY_v<mamba3_fwd_template>;
     auto stream = at::cuda::getCurrentCUDAStream().stream();
