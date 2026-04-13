@@ -251,9 +251,8 @@ struct mamba3_fwd_template {
             }
             // A = Q @ K.T
             warpgroup::load(args.state.q_reg, args.input.q);
-            warpgroup::load(args.state.k_reg, args.input.k);
             // Rotary intentionally disabled in the current TK kernel. q/k are consumed as-is.
-            warpgroup::mm_ABt(args.state.att_block, args.state.q_reg, args.state.k_reg);
+            warpgroup::mm_ABt(args.state.att_block, args.state.q_reg, args.input.k);
             warpgroup::mma_async_wait();
             warp::mul(args.state.att_block, args.state.att_block, args.state.local_decay);
             warp::copy(args.state.att_block_mma, args.state.att_block);
