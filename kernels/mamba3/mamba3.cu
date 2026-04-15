@@ -44,6 +44,9 @@ struct mamba3_fwd_layout {
         b_vec b[2];
         b_vec b_padding[6];
         angle_vec angle[2];
+        // need it for out-of-bounds on trap loop below
+        float a_next_chunk[2];
+        float b_next_chunk[2];
     
 
     };
@@ -96,11 +99,14 @@ struct mamba3_fwd_common_template {
     __device__ static inline void build_trapezoidal_scale(consumer_compute_args<layout> args, int warpgroupid) {
         if (warpgroup::warpid() <= 1) {
             int tid = warpgroup::laneid();
-            float s = 1.0f;
+            float s;
             if (tid < 63) {
                 float a_next = args.input.a[warpgroupid][tid + 1];
                 float b_next = args.input.b[warpgroupid][tid + 1];
                 s = trap_scale(a_next, b_next);
+            } else {
+                s = trap_scale(args.input.a_next_chunk[warpgroupid],
+                    args.input.b_next_chunk[warpgroupid]);
             }
             args.scratch.b_scale[warpgroupid][tid] = s;
         }
@@ -192,6 +198,19 @@ struct mamba3_fwd_common_template {
                     warp::tma::load_async(args.input.a[i], args.globals.A, {args.common.batch, args.common.head+i, 0, args.iter}, args.inputs_arrived);
                     warp::tma::load_async(args.input.b[i], args.globals.B, {args.common.batch, args.common.head+i, 0, args.iter}, args.inputs_arrived);
                     // warp::tma::load_async(args.input.angle[i], args.globals.Angles, {args.common.batch, args.common.head+i, 0, args.iter}, args.inputs_arrived);
+                }
+                
+                int next_iter = args.iter + 1;
+                int has_next = next_iter < args.num_iters;
+                #pragma unroll
+                for (int i = 0; i < NUM_CONSUMER_WARPS/4; i) {
+                    if (has_next) {
+                        args.input.a_next_chunk[i] = args.globals.A.data[i];
+                        args.input.b_next_chunk[i] = args.globals.B.data[i];
+                    } else {
+                        args.input.a_next_chunk[i] = 0.0f;  // last chunk, no correction needed
+                        args.input.b_next_chunk[i] = 0.0f;
+                    }
                 }
                 __syncwarp();
             }
