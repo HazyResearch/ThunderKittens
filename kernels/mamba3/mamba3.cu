@@ -8,6 +8,7 @@
 using namespace kittens;
 using namespace kittens::prototype;
 using namespace kittens::prototype::lcsf;
+static constexpr int MIMO_RANK = 4; // appendix D
 struct mamba3_fwd_layout {
     using q_tile = st_bf<64, 64>;
     using k_tile = st_bf<64, 64>;
@@ -43,6 +44,7 @@ struct mamba3_fwd_layout {
         b_vec b[2];
         b_vec b_padding[6];
         angle_vec angle[2];
+    
 
     };
     struct output_block {
@@ -68,9 +70,24 @@ struct mamba3_fwd_layout {
     
 };
 
-struct mamba3_fwd_template {
+using mamba3_siso_layout = mamba3_fwd_layout;
+struct mamba3_mimo_layout : mamba3_fwd_layout {
+    struct input_block {
+        v_tile v[2];
+        a_vec a[2];
+        b_vec b[2];
+        q_tile q[MIMO_RANK]; // mimo expands q & k by R
+        k_tile k[MIMO_RANK];
+        a_vec a_padding[4];
+        b_vec b_padding[6];
+        angle_vec angle[2];
+    };
+};
+
+template<typename Layout>
+struct mamba3_fwd_common_template {
     static constexpr int NUM_CONSUMER_WARPS=8, OUTPUT_PIPE_STAGES=2, INPUT_PIPE_STAGES=2, PRODUCER_BARRIER_ARRIVALS=1, CONSUMER_BARRIER_ARRIVALS=NUM_CONSUMER_WARPS/4;
-    using layout = mamba3_fwd_layout;
+    using layout = Layout;
 
     __device__ static inline float trap_scale(float a_next, float b_next) {
         return 1.0f + b_next * expf(-a_next);
@@ -218,7 +235,7 @@ struct mamba3_fwd_template {
                 }
             }
 
-            // Mamba-3 trapezoidal discretization correction.
+            // trapezoidal discretization correction.
             build_trapezoidal_scale(args, warpgroupid);
       
             warpgroup::sync(warpgroupid);
@@ -323,6 +340,202 @@ struct mamba3_fwd_template {
     };
 };
 
+using mamba3_siso_fwd_template = mamba3_fwd_common_template<mamba3_siso_layout>;
+
+struct mamba3_mimo_fwd_template : mamba3_fwd_common_template<mamba3_mimo_layout> {
+    using base = mamba3_fwd_common_template<mamba3_mimo_layout>;
+    using layout = typename base::layout;
+
+    struct producer {
+        __device__ static void setup(producer_setup_args<layout> args) {
+            warpgroup::producer_registers();
+        }
+
+        __device__ static void load(producer_load_args<layout> args) {
+            if (warpgroup::warpid() == args.iter % 4) {
+                warp::tma::expect(
+                    args.inputs_arrived,
+                    args.input.q[0], args.input.k[0],
+                    args.input.q[1], args.input.k[1],
+                    args.input.q[2], args.input.k[2],
+                    args.input.q[3], args.input.k[3],
+                    args.input.v[0], args.input.a[0], args.input.b[0],
+                    args.input.v[1], args.input.a[1], args.input.b[1]
+                );
+                #pragma unroll
+                for (int r = 0; r < MIMO_RANK; ++r) {
+                    warp::tma::load_async(args.input.q[r], args.globals.Q, {args.common.batch, r, args.iter, 0}, args.inputs_arrived);
+                    warp::tma::load_async(args.input.k[r], args.globals.K, {args.common.batch, r, args.iter, 0}, args.inputs_arrived);
+                }
+                #pragma unroll
+                for (int i = 0; i < NUM_CONSUMER_WARPS / 4; ++i) {
+                    warp::tma::load_async(args.input.v[i], args.globals.V, {args.common.batch, args.common.head + i, args.iter, 0}, args.inputs_arrived);
+                    warp::tma::load_async(args.input.a[i], args.globals.A, {args.common.batch, args.common.head + i, 0, args.iter}, args.inputs_arrived);
+                    warp::tma::load_async(args.input.b[i], args.globals.B, {args.common.batch, args.common.head + i, 0, args.iter}, args.inputs_arrived);
+                }
+                __syncwarp();
+            }
+        }
+
+        __device__ static void store(producer_store_args<layout> args) {
+            if (warpgroup::warpid() == args.iter % 4) {
+                #pragma unroll
+                for (int i = 0; i < NUM_CONSUMER_WARPS / 4; ++i) {
+                    warp::tma::store_async(args.globals.O, args.output.o[i], {args.common.batch, args.common.head + i, args.iter, 0});
+                }
+                warp::tma::store_async_read_wait();
+                __syncwarp();
+                if (laneid() == 0) arrive(args.outputs_finished);
+                __syncwarp();
+            }
+        }
+    };
+
+
+    struct consumer {
+        __device__ static void setup(consumer_setup_args<layout> args) {
+            warpgroup::consumer_registers<base::NUM_CONSUMER_WARPS/WARPGROUP_WARPS>();
+            warp::zero(args.state.kv);
+        }
+
+        __device__ static void compute(consumer_compute_args<layout> args) {
+            int warpgroupid = warpgroup::groupid();
+
+            warpgroup::sync(warpgroupid);
+            warpgroup::copy(args.scratch.a_cumsum[warpgroupid], args.input.a[warpgroupid]);
+            warpgroup::sync(warpgroupid);
+
+            // hillis-steele scan
+            if (warpgroup::warpid() <= 1) {
+                int tid = warpgroup::laneid();
+                for (int offset = 1; offset < 64; offset *= 2) {
+                    float temp = (tid >= offset) ? args.scratch.a_cumsum[warpgroupid][tid - offset] : 0.0f;
+                    group<2>::sync(warpgroupid + 2);
+                    args.scratch.a_cumsum[warpgroupid][tid] += temp;
+                    group<2>::sync(warpgroupid + 2);
+                }
+            }
+
+            // trapezoidal discretization correction
+            base::build_trapezoidal_scale(args, warpgroupid);
+
+            warpgroup::sync(warpgroupid);
+
+            #pragma unroll
+            for (int i = 0; i < 4; i++) {
+                int base_row = warpgroup::warpid() * 16 + laneid() / 4;
+                int base_col = i * 16 + (laneid() % 4) * 2;
+                args.state.local_decay.tiles[0][i].data[0].x = args.scratch.a_cumsum[warpgroupid][base_row + 0] - args.scratch.a_cumsum[warpgroupid][base_col + 0];
+                args.state.local_decay.tiles[0][i].data[0].y = args.scratch.a_cumsum[warpgroupid][base_row + 0] - args.scratch.a_cumsum[warpgroupid][base_col + 1];
+                args.state.local_decay.tiles[0][i].data[1].x = args.scratch.a_cumsum[warpgroupid][base_row + 8] - args.scratch.a_cumsum[warpgroupid][base_col + 0];
+                args.state.local_decay.tiles[0][i].data[1].y = args.scratch.a_cumsum[warpgroupid][base_row + 8] - args.scratch.a_cumsum[warpgroupid][base_col + 1];
+                args.state.local_decay.tiles[0][i].data[2].x = args.scratch.a_cumsum[warpgroupid][base_row + 0] - args.scratch.a_cumsum[warpgroupid][base_col + 8];
+                args.state.local_decay.tiles[0][i].data[2].y = args.scratch.a_cumsum[warpgroupid][base_row + 0] - args.scratch.a_cumsum[warpgroupid][base_col + 9];
+                args.state.local_decay.tiles[0][i].data[3].x = args.scratch.a_cumsum[warpgroupid][base_row + 8] - args.scratch.a_cumsum[warpgroupid][base_col + 8];
+                args.state.local_decay.tiles[0][i].data[3].y = args.scratch.a_cumsum[warpgroupid][base_row + 8] - args.scratch.a_cumsum[warpgroupid][base_col + 9];
+            }
+
+            warp::exp(args.state.local_decay, args.state.local_decay);
+            base::apply_trapezoidal_scale(args, warpgroupid);
+
+            #pragma unroll
+            for (int i = 0; i < 4; i++) {
+                auto &decay_subtile = reinterpret_cast<rt_fl<16, 16>&>(args.state.local_decay.tiles[0][i]);
+                if (i > warpgroup::warpid()) {
+                    warp::zero(decay_subtile);
+                } else if (i == warpgroup::warpid()) {
+                    warp::make_causal(decay_subtile, decay_subtile, kittens::base_types::constants<float>::zero());
+                }
+            }
+
+            warp::zero(args.state.o_reg);
+
+            #pragma unroll
+            for (int r = 0; r < MIMO_RANK; ++r) {
+                warpgroup::load(args.state.q_reg, args.input.q[r]);
+
+                warpgroup::mm_ABt(args.state.att_block, args.state.q_reg, args.input.k[r]);
+                warpgroup::mma_async_wait();
+                warp::mul(args.state.att_block, args.state.att_block, args.state.local_decay);
+                warp::copy(args.state.att_block_mma, args.state.att_block);
+                warpgroup::mma_AB(args.state.o_reg, args.state.att_block_mma, args.input.v[warpgroupid]);
+                warpgroup::mma_async_wait();
+            }
+
+            // recurrent term: o += q_scaled @ kv_state (per rank)
+            #pragma unroll
+            for (int r = 0; r < MIMO_RANK; ++r) {
+                warpgroup::load(args.state.q_reg, args.input.q[r]);
+                {
+                    int base_row = warpgroup::warpid() * 16 + laneid() / 4;
+                    bf16 top = __float2bfloat16(expf(args.scratch.a_cumsum[warpgroupid][base_row + 0]));
+                    bf16 bottom = __float2bfloat16(expf(args.scratch.a_cumsum[warpgroupid][base_row + 8]));
+                    #pragma unroll
+                    for (int i = 0; i < 4; i++) {
+                        args.state.q_reg.tiles[0][i].data[0].x *= top;
+                        args.state.q_reg.tiles[0][i].data[0].y *= top;
+                        args.state.q_reg.tiles[0][i].data[1].x *= bottom;
+                        args.state.q_reg.tiles[0][i].data[1].y *= bottom;
+                        args.state.q_reg.tiles[0][i].data[2].x *= top;
+                        args.state.q_reg.tiles[0][i].data[2].y *= top;
+                        args.state.q_reg.tiles[0][i].data[3].x *= bottom;
+                        args.state.q_reg.tiles[0][i].data[3].y *= bottom;
+                    }
+                }
+                warpgroup::store(args.scratch.kv[warpgroupid], args.state.kv);
+                warpgroup::sync(warpgroupid);
+                warpgroup::mma_AB(args.state.o_reg, args.state.q_reg, args.scratch.kv[warpgroupid]);
+                warpgroup::mma_async_wait();
+            }
+
+            warpgroup::store(args.output.o[warpgroupid], args.state.o_reg);
+            warpgroup::sync(warpgroupid);
+
+            // update kv state: kv = decay * kv + sum_r k_r_scaled^T @ v
+            float last_decay = args.scratch.a_cumsum[warpgroupid][args.scratch.a_cumsum[warpgroupid].length - 1];
+            float total_decay = expf(last_decay);
+            warp::mul(args.state.kv, args.state.kv, total_decay);
+
+            #pragma unroll
+            for (int r = 0; r < MIMO_RANK; ++r) {
+                warpgroup::load(args.state.k_reg, args.input.k[r]);
+                {
+                    int base_row = warpgroup::warpid() * 16 + laneid() / 4;
+                    bf16 top = __float2bfloat16(expf(last_decay - args.scratch.a_cumsum[warpgroupid][base_row + 0]));
+                    bf16 bottom = __float2bfloat16(expf(last_decay - args.scratch.a_cumsum[warpgroupid][base_row + 8]));
+                    #pragma unroll
+                    for (int i = 0; i < 4; i++) {
+                        args.state.k_reg.tiles[0][i].data[0].x *= top;
+                        args.state.k_reg.tiles[0][i].data[0].y *= top;
+                        args.state.k_reg.tiles[0][i].data[1].x *= bottom;
+                        args.state.k_reg.tiles[0][i].data[1].y *= bottom;
+                        args.state.k_reg.tiles[0][i].data[2].x *= top;
+                        args.state.k_reg.tiles[0][i].data[2].y *= top;
+                        args.state.k_reg.tiles[0][i].data[3].x *= bottom;
+                        args.state.k_reg.tiles[0][i].data[3].y *= bottom;
+                    }
+                }
+                warpgroup::store(args.scratch.k[warpgroupid], args.state.k_reg);
+                warpgroup::sync(warpgroupid);
+                warpgroup::mma_AtB(args.state.kv, args.scratch.k[warpgroupid], args.input.v[warpgroupid]);
+                warpgroup::mma_async_wait();
+            }
+
+            if (warpgroup::laneid() == 0) {
+                arrive(args.outputs_arrived);
+                arrive(args.inputs_finished);
+            }
+            __syncwarp();
+
+        }
+
+        __device__ static void finish(consumer_finish_args<layout> args) {
+            if (warpgroup::laneid() == 0) arrive(args.finish_finished);
+            __syncwarp();
+        }
+    };
+};
+
 #ifdef TK_COMPILE_MAMBA3
 #include "pyutils/torchutils.cuh"
 #include <iostream>
@@ -331,50 +544,62 @@ struct mamba3_fwd_template {
 
 void dispatch_mamba3(
     bf16 *d_q, bf16 *d_k, bf16 *d_v,
-    bf16 *d_o, float *d_a, float *d_b, float *d_angle, int B, int H, int N
+    bf16 *d_o, float *d_a, float *d_b, float *d_angle, int B, int H, int N, bool use_mimo
 ) {
     if (!d_q || !d_k || !d_v || !d_o || !d_a || !d_b || !d_angle) {
         throw std::runtime_error("Null pointer passed to dispatch_mamba3");
     }
 
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        printf("CUDA error before dispatch: %s\n", cudaGetErrorString(err));
-    }
-
-    mamba3_fwd_template::layout::q_global Qg(d_q, B, 1, N, nullptr);
-    mamba3_fwd_template::layout::k_global Kg(d_k, B, 1, N, nullptr);
-    mamba3_fwd_template::layout::a_global Ag(d_a, B, H, nullptr, N);
-    mamba3_fwd_template::layout::b_global Bg(d_b, B, H, nullptr, N);
-    mamba3_fwd_template::layout::angle_global AngleG(d_angle, B, H, nullptr, N);
-    mamba3_fwd_template::layout::v_global Vg(d_v, B, H, N, nullptr);
-    mamba3_fwd_template::layout::o_global Og(d_o, B, H, N, nullptr);
-    
-    mamba3_fwd_template::layout::globals globals = {Qg, Kg, Vg, Og, Ag, Bg, AngleG};
-
-
-    unsigned long mem_size = kittens::prototype::detail::MAX_SHARED_MEMORY_v<mamba3_fwd_template>;
     auto stream = at::cuda::getCurrentCUDAStream().stream();
+    dim3 grid(132, 1, 1);
 
-    cudaStreamSynchronize(stream);
-    err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        printf("CUDA error after stream sync: %s\n", cudaGetErrorString(err));
+    if (use_mimo) {
+        using layout = mamba3_mimo_fwd_template::layout;
+
+        layout::q_global Qg(d_q, B, MIMO_RANK, N, nullptr);
+        layout::k_global Kg(d_k, B, MIMO_RANK, N, nullptr);
+        layout::a_global Ag(d_a, B, H, nullptr, N);
+        layout::b_global Bg(d_b, B, H, nullptr, N);
+        layout::angle_global AngleG(d_angle, B, H, nullptr, N);
+        layout::v_global Vg(d_v, B, H, N, nullptr);
+        layout::o_global Og(d_o, B, H, N, nullptr);
+
+        layout::globals globals = {Qg, Kg, Vg, Og, Ag, Bg, AngleG};
+
+        unsigned long mem_size = kittens::prototype::detail::MAX_SHARED_MEMORY_v<mamba3_mimo_fwd_template>;
+        cudaFuncSetAttribute(
+            prototype::lcsf::kernel<mamba3_mimo_fwd_template>,
+            cudaFuncAttributeMaxDynamicSharedMemorySize,
+            mem_size
+        );
+
+        constexpr int BLOCK_SIZE = prototype::detail::NUM_THREADS_v<mamba3_mimo_fwd_template>;
+        prototype::lcsf::kernel<mamba3_mimo_fwd_template><<<grid, BLOCK_SIZE, mem_size, stream>>>(globals);
+    } else {
+        using layout = mamba3_siso_fwd_template::layout;
+
+        layout::q_global Qg(d_q, B, 1, N, nullptr);
+        layout::k_global Kg(d_k, B, 1, N, nullptr);
+        layout::a_global Ag(d_a, B, H, nullptr, N);
+        layout::b_global Bg(d_b, B, H, nullptr, N);
+        layout::angle_global AngleG(d_angle, B, H, nullptr, N);
+        layout::v_global Vg(d_v, B, H, N, nullptr);
+        layout::o_global Og(d_o, B, H, N, nullptr);
+
+        layout::globals globals = {Qg, Kg, Vg, Og, Ag, Bg, AngleG};
+
+        unsigned long mem_size = kittens::prototype::detail::MAX_SHARED_MEMORY_v<mamba3_siso_fwd_template>;
+        cudaFuncSetAttribute(
+            prototype::lcsf::kernel<mamba3_siso_fwd_template>,
+            cudaFuncAttributeMaxDynamicSharedMemorySize,
+            mem_size
+        );
+
+        constexpr int BLOCK_SIZE = prototype::detail::NUM_THREADS_v<mamba3_siso_fwd_template>;
+        prototype::lcsf::kernel<mamba3_siso_fwd_template><<<grid, BLOCK_SIZE, mem_size, stream>>>(globals);
     }
 
-    cudaFuncSetAttribute(
-        prototype::lcsf::kernel<mamba3_fwd_template>,
-        cudaFuncAttributeMaxDynamicSharedMemorySize,
-        mem_size
-    );
-
-    dim3 grid(132, 1, 1);
-    constexpr int BLOCK_SIZE = prototype::detail::NUM_THREADS_v<mamba3_fwd_template>;
-
-    prototype::lcsf::kernel<mamba3_fwd_template><<<grid, BLOCK_SIZE, mem_size, stream>>>(globals);
-
-    cudaStreamSynchronize(stream);
-    err = cudaGetLastError();
+    cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
         printf("CUDA error after kernel: %s\n", cudaGetErrorString(err));
     }
@@ -386,7 +611,8 @@ at::Tensor mamba3(
     const at::Tensor v,
     const at::Tensor a,
     const at::Tensor b,
-    const at::Tensor angle
+    const at::Tensor angle,
+    const bool use_mimo
 ) {
     CHECK_INPUT(q);
     CHECK_INPUT(k);
@@ -407,13 +633,14 @@ at::Tensor mamba3(
     int N = v.size(2);
     int D = v.size(3);
 
+    int expected_qk_heads = use_mimo ? MIMO_RANK : 1;
     TORCH_CHECK(q.size(0) == B, "q has incompatible batch");
-    TORCH_CHECK(q.size(1) == 1, "q has incompatible heads");
+    TORCH_CHECK(q.size(1) == expected_qk_heads, "q has incompatible heads");
     TORCH_CHECK(q.size(2) == N, "q has incompatible sequence shape");
     TORCH_CHECK(q.size(3) == D, "q has incompatible dimension");
 
     TORCH_CHECK(k.size(0) == B, "k has incompatible batch");
-    TORCH_CHECK(k.size(1) == 1, "k has incompatible heads");
+    TORCH_CHECK(k.size(1) == expected_qk_heads, "k has incompatible heads");
     TORCH_CHECK(k.size(2) == N, "k has incompatible sequence");
     TORCH_CHECK(k.size(3) == D, "k has incompatible dimension");
 
@@ -467,7 +694,7 @@ at::Tensor mamba3(
     bf16 *d_o = reinterpret_cast<bf16*>(out_ptr);
 
     cudaStreamSynchronize(at::cuda::getCurrentCUDAStream().stream());
-    dispatch_mamba3(d_q, d_k, d_v, d_o, d_a, d_b, d_angle, B, H, N);
+    dispatch_mamba3(d_q, d_k, d_v, d_o, d_a, d_b, d_angle, B, H, N, use_mimo);
     cudaStreamSynchronize(at::cuda::getCurrentCUDAStream().stream());
     CHECK_CUDA_ERROR(cudaGetLastError());
 
@@ -476,9 +703,9 @@ at::Tensor mamba3(
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("mamba3", mamba3, "Mamba3 TK. Takes tensors (q, k, v, a, b, angle). q, k, v tensors are bf16, and a, b, angle are float.");
+    m.def("mamba3", mamba3, "Mamba3 TK. Takes tensors (q, k, v, a, b, angle, use_mimo). q, k, v tensors are bf16, and a, b, angle are float.");
 }
 
 #else
-#include "m3_harness.impl"
+#include "harness.impl"
 #endif

@@ -150,7 +150,7 @@ def test_correctness(num_iters=10, batch=2, nheads=16, seqlen=1024, chunk_size=6
 
         q, k, v, a, b, angle = build_tk_inputs(x, dt, A, B, C, trap_beta)
         torch.cuda.synchronize()
-        y_tk = mamba3(q, k, v, a, b, angle)
+        y_tk = mamba3(q, k, v, a, b, angle, False)
         torch.cuda.synchronize()
         y_tk = rearrange(y_tk, "b h l d -> b l h d").contiguous().to(torch.float32)
 

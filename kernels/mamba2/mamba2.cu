@@ -168,7 +168,7 @@ struct mamba2_fwd_template {
             float last_decay = args.scratch.a_cumsum[warpgroupid][args.scratch.a_cumsum[warpgroupid].length-1]; // last element
             float total_decay = expf(last_decay);
             warp::mul(args.state.kv, args.state.kv, total_decay); // decay kv
-            warpgroup::load(args.state.k_reg, args.input.k); // multiply k's by decays
+             // multiply k's by decays
             {
                 int base_row = warpgroup::warpid()*16 + laneid()/4;
                 bf16 top = __float2bfloat16(expf(last_decay - args.scratch.a_cumsum[warpgroupid][base_row + 0]));
