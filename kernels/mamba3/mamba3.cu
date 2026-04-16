@@ -84,6 +84,8 @@ struct mamba3_mimo_layout : mamba3_fwd_layout {
         a_vec a_padding[4];
         b_vec b_padding[6];
         angle_vec angle[2];
+        float a_next_chunk[2];
+        float b_next_chunk[2];
     };
 };
 
@@ -201,17 +203,21 @@ struct mamba3_fwd_common_template {
                 }
                 
                 int next_iter = args.iter + 1;
-                int has_next = next_iter < args.num_iters;
+                int total_iters = args.globals.K.rows() / layout::k_tile::rows;
+                bool has_next = next_iter < total_iters;
                 #pragma unroll
-                for (int i = 0; i < NUM_CONSUMER_WARPS/4; i) {
+                for (int i = 0; i < NUM_CONSUMER_WARPS/4; i++) {
                     if (has_next) {
-                        args.input.a_next_chunk[i] = args.globals.A.data[i];
-                        args.input.b_next_chunk[i] = args.globals.B.data[i];
+                        // A is gl<float, B, H, 1, N> — element [0] of next chunk
+                        coord<> idx = {args.common.batch, args.common.head+i, 0, next_iter*64};
+                        args.input.a_next_chunk[i] = args.globals.A[idx];
+                        args.input.b_next_chunk[i] = args.globals.B[idx];
                     } else {
-                        args.input.a_next_chunk[i] = 0.0f;  // last chunk, no correction needed
+                        args.input.a_next_chunk[i] = 0.0f;
                         args.input.b_next_chunk[i] = 0.0f;
                     }
                 }
+                __threadfence_block();
                 __syncwarp();
             }
         }
@@ -364,6 +370,7 @@ using mamba3_siso_fwd_template = mamba3_fwd_common_template<mamba3_siso_layout>;
 struct mamba3_mimo_fwd_template : mamba3_fwd_common_template<mamba3_mimo_layout> {
     using base = mamba3_fwd_common_template<mamba3_mimo_layout>;
     using layout = typename base::layout;
+    static_assert(MIMO_RANK == 4, "Update MIMO producer expect/load wiring if MIMO_RANK changes.");
 
     struct producer {
         __device__ static void setup(producer_setup_args<layout> args) {
@@ -392,6 +399,21 @@ struct mamba3_mimo_fwd_template : mamba3_fwd_common_template<mamba3_mimo_layout>
                     warp::tma::load_async(args.input.a[i], args.globals.A, {args.common.batch, args.common.head + i, 0, args.iter}, args.inputs_arrived);
                     warp::tma::load_async(args.input.b[i], args.globals.B, {args.common.batch, args.common.head + i, 0, args.iter}, args.inputs_arrived);
                 }
+                int next_iter = args.iter + 1;
+                int total_iters = args.globals.K.rows() / layout::k_tile::rows;
+                bool has_next = next_iter < total_iters;
+                #pragma unroll
+                for (int i = 0; i < NUM_CONSUMER_WARPS / 4; ++i) {
+                    if (has_next) {
+                        coord<> idx = {args.common.batch, args.common.head+i, 0, next_iter*64};
+                        args.input.a_next_chunk[i] = args.globals.A[idx];
+                        args.input.b_next_chunk[i] = args.globals.B[idx];
+                    } else {
+                        args.input.a_next_chunk[i] = 0.0f;
+                        args.input.b_next_chunk[i] = 0.0f;
+                    }
+                }
+                __threadfence_block();
                 __syncwarp();
             }
         }
@@ -482,6 +504,8 @@ struct mamba3_mimo_fwd_template : mamba3_fwd_common_template<mamba3_mimo_layout>
             }
 
             // recurrent term: o += q_scaled @ kv_state (per rank)
+            warpgroup::store(args.scratch.kv[warpgroupid], args.state.kv);
+            warpgroup::sync(warpgroupid);
             #pragma unroll
             for (int r = 0; r < MIMO_RANK; ++r) {
                 warpgroup::load(args.state.q_reg, args.input.q[r]);
@@ -501,8 +525,6 @@ struct mamba3_mimo_fwd_template : mamba3_fwd_common_template<mamba3_mimo_layout>
                         args.state.q_reg.tiles[0][i].data[3].y *= bottom;
                     }
                 }
-                warpgroup::store(args.scratch.kv[warpgroupid], args.state.kv);
-                warpgroup::sync(warpgroupid);
                 warpgroup::mma_AB(args.state.o_reg, args.state.q_reg, args.scratch.kv[warpgroupid]);
                 warpgroup::mma_async_wait();
             }
@@ -712,7 +734,6 @@ at::Tensor mamba3(
     float *d_angle = angle_ptr;
     bf16 *d_o = reinterpret_cast<bf16*>(out_ptr);
 
-    cudaStreamSynchronize(at::cuda::getCurrentCUDAStream().stream());
     dispatch_mamba3(d_q, d_k, d_v, d_o, d_a, d_b, d_angle, B, H, N, use_mimo);
     cudaStreamSynchronize(at::cuda::getCurrentCUDAStream().stream());
     CHECK_CUDA_ERROR(cudaGetLastError());
