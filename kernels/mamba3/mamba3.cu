@@ -44,11 +44,6 @@ struct mamba3_fwd_layout {
         b_vec b[2];
         b_vec b_padding[6];
         angle_vec angle[2];
-        // need it for out-of-bounds on trap loop below
-        float a_next_chunk[2];
-        float b_next_chunk[2];
-    
-
     };
     struct output_block {
         o_tile o[2];
@@ -75,17 +70,16 @@ struct mamba3_fwd_layout {
 
 using mamba3_siso_layout = mamba3_fwd_layout;
 struct mamba3_mimo_layout : mamba3_fwd_layout {
+    static constexpr int RANKS_PER_PASS = MIMO_RANK / 2;
     struct input_block {
         v_tile v[2];
         a_vec a[2];
         b_vec b[2];
-        q_tile q[MIMO_RANK]; // mimo expands q & k by R
-        k_tile k[MIMO_RANK];
+        q_tile q[RANKS_PER_PASS];
+        k_tile k[RANKS_PER_PASS];
         a_vec a_padding[4];
         b_vec b_padding[6];
         angle_vec angle[2];
-        float a_next_chunk[2];
-        float b_next_chunk[2];
     };
 };
 
@@ -107,8 +101,7 @@ struct mamba3_fwd_common_template {
                 float b_next = args.input.b[warpgroupid][tid + 1];
                 s = trap_scale(a_next, b_next);
             } else {
-                s = trap_scale(args.input.a_next_chunk[warpgroupid],
-                    args.input.b_next_chunk[warpgroupid]);
+                s = 1.0f;
             }
             args.scratch.b_scale[warpgroupid][tid] = s;
         }
@@ -202,22 +195,6 @@ struct mamba3_fwd_common_template {
                     // warp::tma::load_async(args.input.angle[i], args.globals.Angles, {args.common.batch, args.common.head+i, 0, args.iter}, args.inputs_arrived);
                 }
                 
-                int next_iter = args.iter + 1;
-                int total_iters = args.globals.K.rows() / layout::k_tile::rows;
-                bool has_next = next_iter < total_iters;
-                #pragma unroll
-                for (int i = 0; i < NUM_CONSUMER_WARPS/4; i++) {
-                    if (has_next) {
-                        // A is gl<float, B, H, 1, N> — element [0] of next chunk
-                        coord<> idx = {args.common.batch, args.common.head+i, 0, next_iter*64};
-                        args.input.a_next_chunk[i] = args.globals.A[idx];
-                        args.input.b_next_chunk[i] = args.globals.B[idx];
-                    } else {
-                        args.input.a_next_chunk[i] = 0.0f;
-                        args.input.b_next_chunk[i] = 0.0f;
-                    }
-                }
-                __threadfence_block();
                 __syncwarp();
             }
         }
@@ -370,7 +347,17 @@ using mamba3_siso_fwd_template = mamba3_fwd_common_template<mamba3_siso_layout>;
 struct mamba3_mimo_fwd_template : mamba3_fwd_common_template<mamba3_mimo_layout> {
     using base = mamba3_fwd_common_template<mamba3_mimo_layout>;
     using layout = typename base::layout;
-    static_assert(MIMO_RANK == 4, "Update MIMO producer expect/load wiring if MIMO_RANK changes.");
+    static_assert(MIMO_RANK == 4 && layout::RANKS_PER_PASS == 2,
+                  "MIMO pipeline assumes 4 ranks split into 2 passes of 2.");
+
+    __device__ static inline void common_setup(common_setup_args<layout> args) {
+        int task_id = args.task_iter * gridDim.x + blockIdx.x;
+        args.common.batch = task_id / (args.globals.V.depth()/(NUM_CONSUMER_WARPS/4));
+        task_id -= args.common.batch*(args.globals.V.depth()/(NUM_CONSUMER_WARPS/4));
+        args.common.head = task_id*2;
+        int chunk_iters = args.common.batch < args.globals.Q.batch() ? args.globals.K.rows()/layout::k_tile::rows : -1;
+        args.num_iters = chunk_iters >= 0 ? chunk_iters * 2 : -1;
+    }
 
     struct producer {
         __device__ static void setup(producer_setup_args<layout> args) {
@@ -379,52 +366,43 @@ struct mamba3_mimo_fwd_template : mamba3_fwd_common_template<mamba3_mimo_layout>
 
         __device__ static void load(producer_load_args<layout> args) {
             if (warpgroup::warpid() == args.iter % 4) {
+                int chunk_iter = args.iter / 2;
+                int rank_pass  = args.iter % 2; // 0: ranks 0-1, 1: ranks 2-3
+                int rank_base  = rank_pass * layout::RANKS_PER_PASS;
+
                 warp::tma::expect(
                     args.inputs_arrived,
                     args.input.q[0], args.input.k[0],
                     args.input.q[1], args.input.k[1],
-                    args.input.q[2], args.input.k[2],
-                    args.input.q[3], args.input.k[3],
                     args.input.v[0], args.input.a[0], args.input.b[0],
                     args.input.v[1], args.input.a[1], args.input.b[1]
                 );
                 #pragma unroll
-                for (int r = 0; r < MIMO_RANK; ++r) {
-                    warp::tma::load_async(args.input.q[r], args.globals.Q, {args.common.batch, r, args.iter, 0}, args.inputs_arrived);
-                    warp::tma::load_async(args.input.k[r], args.globals.K, {args.common.batch, r, args.iter, 0}, args.inputs_arrived);
+                for (int r = 0; r < layout::RANKS_PER_PASS; ++r) {
+                    warp::tma::load_async(args.input.q[r], args.globals.Q, {args.common.batch, rank_base + r, chunk_iter, 0}, args.inputs_arrived);
+                    warp::tma::load_async(args.input.k[r], args.globals.K, {args.common.batch, rank_base + r, chunk_iter, 0}, args.inputs_arrived);
                 }
                 #pragma unroll
                 for (int i = 0; i < NUM_CONSUMER_WARPS / 4; ++i) {
-                    warp::tma::load_async(args.input.v[i], args.globals.V, {args.common.batch, args.common.head + i, args.iter, 0}, args.inputs_arrived);
-                    warp::tma::load_async(args.input.a[i], args.globals.A, {args.common.batch, args.common.head + i, 0, args.iter}, args.inputs_arrived);
-                    warp::tma::load_async(args.input.b[i], args.globals.B, {args.common.batch, args.common.head + i, 0, args.iter}, args.inputs_arrived);
+                    warp::tma::load_async(args.input.v[i], args.globals.V, {args.common.batch, args.common.head + i, chunk_iter, 0}, args.inputs_arrived);
+                    warp::tma::load_async(args.input.a[i], args.globals.A, {args.common.batch, args.common.head + i, 0, chunk_iter}, args.inputs_arrived);
+                    warp::tma::load_async(args.input.b[i], args.globals.B, {args.common.batch, args.common.head + i, 0, chunk_iter}, args.inputs_arrived);
                 }
-                int next_iter = args.iter + 1;
-                int total_iters = args.globals.K.rows() / layout::k_tile::rows;
-                bool has_next = next_iter < total_iters;
-                #pragma unroll
-                for (int i = 0; i < NUM_CONSUMER_WARPS / 4; ++i) {
-                    if (has_next) {
-                        coord<> idx = {args.common.batch, args.common.head+i, 0, next_iter*64};
-                        args.input.a_next_chunk[i] = args.globals.A[idx];
-                        args.input.b_next_chunk[i] = args.globals.B[idx];
-                    } else {
-                        args.input.a_next_chunk[i] = 0.0f;
-                        args.input.b_next_chunk[i] = 0.0f;
-                    }
-                }
-                __threadfence_block();
                 __syncwarp();
             }
         }
 
         __device__ static void store(producer_store_args<layout> args) {
             if (warpgroup::warpid() == args.iter % 4) {
-                #pragma unroll
-                for (int i = 0; i < NUM_CONSUMER_WARPS / 4; ++i) {
-                    warp::tma::store_async(args.globals.O, args.output.o[i], {args.common.batch, args.common.head + i, args.iter, 0});
+                int rank_pass = args.iter % 2;
+                if (rank_pass == 1) {
+                    int chunk_iter = args.iter / 2;
+                    #pragma unroll
+                    for (int i = 0; i < NUM_CONSUMER_WARPS / 4; ++i) {
+                        warp::tma::store_async(args.globals.O, args.output.o[i], {args.common.batch, args.common.head + i, chunk_iter, 0});
+                    }
+                    warp::tma::store_async_read_wait();
                 }
-                warp::tma::store_async_read_wait();
                 __syncwarp();
                 if (laneid() == 0) arrive(args.outputs_finished);
                 __syncwarp();
@@ -441,125 +419,184 @@ struct mamba3_mimo_fwd_template : mamba3_fwd_common_template<mamba3_mimo_layout>
 
         __device__ static void compute(consumer_compute_args<layout> args) {
             int warpgroupid = warpgroup::groupid();
+            int rank_pass = args.iter % 2; // 0: first 2 ranks, 1: last 2 ranks
 
-            warpgroup::sync(warpgroupid);
-            warpgroup::copy(args.scratch.a_cumsum[warpgroupid], args.input.a[warpgroupid]);
-            warpgroup::sync(warpgroupid);
-
-            // hillis-steele scan
-            if (warpgroup::warpid() <= 1) {
-                int tid = warpgroup::laneid();
-                for (int offset = 1; offset < 64; offset *= 2) {
-                    float temp = (tid >= offset) ? args.scratch.a_cumsum[warpgroupid][tid - offset] : 0.0f;
-                    group<2>::sync(warpgroupid + 2);
-                    args.scratch.a_cumsum[warpgroupid][tid] += temp;
-                    group<2>::sync(warpgroupid + 2);
-                }
-            }
-
-            // trapezoidal discretization correction
-            base::build_trapezoidal_scale(args, warpgroupid);
-
-            warpgroup::sync(warpgroupid);
-
-            #pragma unroll
-            for (int i = 0; i < 4; i++) {
-                int base_row = warpgroup::warpid() * 16 + laneid() / 4;
-                int base_col = i * 16 + (laneid() % 4) * 2;
-                args.state.local_decay.tiles[0][i].data[0].x = args.scratch.a_cumsum[warpgroupid][base_row + 0] - args.scratch.a_cumsum[warpgroupid][base_col + 0];
-                args.state.local_decay.tiles[0][i].data[0].y = args.scratch.a_cumsum[warpgroupid][base_row + 0] - args.scratch.a_cumsum[warpgroupid][base_col + 1];
-                args.state.local_decay.tiles[0][i].data[1].x = args.scratch.a_cumsum[warpgroupid][base_row + 8] - args.scratch.a_cumsum[warpgroupid][base_col + 0];
-                args.state.local_decay.tiles[0][i].data[1].y = args.scratch.a_cumsum[warpgroupid][base_row + 8] - args.scratch.a_cumsum[warpgroupid][base_col + 1];
-                args.state.local_decay.tiles[0][i].data[2].x = args.scratch.a_cumsum[warpgroupid][base_row + 0] - args.scratch.a_cumsum[warpgroupid][base_col + 8];
-                args.state.local_decay.tiles[0][i].data[2].y = args.scratch.a_cumsum[warpgroupid][base_row + 0] - args.scratch.a_cumsum[warpgroupid][base_col + 9];
-                args.state.local_decay.tiles[0][i].data[3].x = args.scratch.a_cumsum[warpgroupid][base_row + 8] - args.scratch.a_cumsum[warpgroupid][base_col + 8];
-                args.state.local_decay.tiles[0][i].data[3].y = args.scratch.a_cumsum[warpgroupid][base_row + 8] - args.scratch.a_cumsum[warpgroupid][base_col + 9];
-            }
-
-            warp::exp(args.state.local_decay, args.state.local_decay);
-            base::apply_trapezoidal_scale(args, warpgroupid);
-
-            #pragma unroll
-            for (int i = 0; i < 4; i++) {
-                auto &decay_subtile = reinterpret_cast<rt_fl<16, 16>&>(args.state.local_decay.tiles[0][i]);
-                if (i > warpgroup::warpid()) {
-                    warp::zero(decay_subtile);
-                } else if (i == warpgroup::warpid()) {
-                    warp::make_causal(decay_subtile, decay_subtile, kittens::base_types::constants<float>::zero());
-                }
-            }
-
-            warp::zero(args.state.o_reg);
-
-            #pragma unroll
-            for (int r = 0; r < MIMO_RANK; ++r) {
-                warpgroup::load(args.state.q_reg, args.input.q[r]);
-
-                warpgroup::mm_ABt(args.state.att_block, args.state.q_reg, args.input.k[r]);
-                warpgroup::mma_async_wait();
-                warp::mul(args.state.att_block, args.state.att_block, args.state.local_decay);
-                warp::copy(args.state.att_block_mma, args.state.att_block);
-                warpgroup::mma_AB(args.state.o_reg, args.state.att_block_mma, args.input.v[warpgroupid]);
-                warpgroup::mma_async_wait();
-            }
-
-            // recurrent term: o += q_scaled @ kv_state (per rank)
-            warpgroup::store(args.scratch.kv[warpgroupid], args.state.kv);
-            warpgroup::sync(warpgroupid);
-            #pragma unroll
-            for (int r = 0; r < MIMO_RANK; ++r) {
-                warpgroup::load(args.state.q_reg, args.input.q[r]);
-                {
-                    int base_row = warpgroup::warpid() * 16 + laneid() / 4;
-                    bf16 top = __float2bfloat16(expf(args.scratch.a_cumsum[warpgroupid][base_row + 0]));
-                    bf16 bottom = __float2bfloat16(expf(args.scratch.a_cumsum[warpgroupid][base_row + 8]));
-                    #pragma unroll
-                    for (int i = 0; i < 4; i++) {
-                        args.state.q_reg.tiles[0][i].data[0].x *= top;
-                        args.state.q_reg.tiles[0][i].data[0].y *= top;
-                        args.state.q_reg.tiles[0][i].data[1].x *= bottom;
-                        args.state.q_reg.tiles[0][i].data[1].y *= bottom;
-                        args.state.q_reg.tiles[0][i].data[2].x *= top;
-                        args.state.q_reg.tiles[0][i].data[2].y *= top;
-                        args.state.q_reg.tiles[0][i].data[3].x *= bottom;
-                        args.state.q_reg.tiles[0][i].data[3].y *= bottom;
-                    }
-                }
-                warpgroup::mma_AB(args.state.o_reg, args.state.q_reg, args.scratch.kv[warpgroupid]);
-                warpgroup::mma_async_wait();
-            }
-
-            warpgroup::store(args.output.o[warpgroupid], args.state.o_reg);
-            warpgroup::sync(warpgroupid);
-
-            // update kv state: kv = decay * kv + sum_r k_r_scaled^T @ v
-            float last_decay = args.scratch.a_cumsum[warpgroupid][args.scratch.a_cumsum[warpgroupid].length - 1];
-            float total_decay = expf(last_decay);
-            warp::mul(args.state.kv, args.state.kv, total_decay);
-
-            #pragma unroll
-            for (int r = 0; r < MIMO_RANK; ++r) {
-                warpgroup::load(args.state.k_reg, args.input.k[r]);
-                {
-                    int base_row = warpgroup::warpid() * 16 + laneid() / 4;
-                    bf16 top = __float2bfloat16(expf(last_decay - args.scratch.a_cumsum[warpgroupid][base_row + 0]));
-                    bf16 bottom = __float2bfloat16(expf(last_decay - args.scratch.a_cumsum[warpgroupid][base_row + 8]));
-                    #pragma unroll
-                    for (int i = 0; i < 4; i++) {
-                        args.state.k_reg.tiles[0][i].data[0].x *= top;
-                        args.state.k_reg.tiles[0][i].data[0].y *= top;
-                        args.state.k_reg.tiles[0][i].data[1].x *= bottom;
-                        args.state.k_reg.tiles[0][i].data[1].y *= bottom;
-                        args.state.k_reg.tiles[0][i].data[2].x *= top;
-                        args.state.k_reg.tiles[0][i].data[2].y *= top;
-                        args.state.k_reg.tiles[0][i].data[3].x *= bottom;
-                        args.state.k_reg.tiles[0][i].data[3].y *= bottom;
-                    }
-                }
-                warpgroup::store(args.scratch.k[warpgroupid], args.state.k_reg);
+            if (rank_pass == 0) {
                 warpgroup::sync(warpgroupid);
-                warpgroup::mma_AtB(args.state.kv, args.scratch.k[warpgroupid], args.input.v[warpgroupid]);
-                warpgroup::mma_async_wait();
+                warpgroup::copy(args.scratch.a_cumsum[warpgroupid], args.input.a[warpgroupid]);
+                warpgroup::sync(warpgroupid);
+
+                // hillis-steele scan
+                if (warpgroup::warpid() <= 1) {
+                    int tid = warpgroup::laneid();
+                    for (int offset = 1; offset < 64; offset *= 2) {
+                        float temp = (tid >= offset) ? args.scratch.a_cumsum[warpgroupid][tid - offset] : 0.0f;
+                        group<2>::sync(warpgroupid + 2);
+                        args.scratch.a_cumsum[warpgroupid][tid] += temp;
+                        group<2>::sync(warpgroupid + 2);
+                    }
+                }
+
+                base::build_trapezoidal_scale(args, warpgroupid);
+
+                warpgroup::sync(warpgroupid);
+
+                #pragma unroll
+                for (int i = 0; i < 4; i++) {
+                    int base_row = warpgroup::warpid() * 16 + laneid() / 4;
+                    int base_col = i * 16 + (laneid() % 4) * 2;
+                    args.state.local_decay.tiles[0][i].data[0].x = args.scratch.a_cumsum[warpgroupid][base_row + 0] - args.scratch.a_cumsum[warpgroupid][base_col + 0];
+                    args.state.local_decay.tiles[0][i].data[0].y = args.scratch.a_cumsum[warpgroupid][base_row + 0] - args.scratch.a_cumsum[warpgroupid][base_col + 1];
+                    args.state.local_decay.tiles[0][i].data[1].x = args.scratch.a_cumsum[warpgroupid][base_row + 8] - args.scratch.a_cumsum[warpgroupid][base_col + 0];
+                    args.state.local_decay.tiles[0][i].data[1].y = args.scratch.a_cumsum[warpgroupid][base_row + 8] - args.scratch.a_cumsum[warpgroupid][base_col + 1];
+                    args.state.local_decay.tiles[0][i].data[2].x = args.scratch.a_cumsum[warpgroupid][base_row + 0] - args.scratch.a_cumsum[warpgroupid][base_col + 8];
+                    args.state.local_decay.tiles[0][i].data[2].y = args.scratch.a_cumsum[warpgroupid][base_row + 0] - args.scratch.a_cumsum[warpgroupid][base_col + 9];
+                    args.state.local_decay.tiles[0][i].data[3].x = args.scratch.a_cumsum[warpgroupid][base_row + 8] - args.scratch.a_cumsum[warpgroupid][base_col + 8];
+                    args.state.local_decay.tiles[0][i].data[3].y = args.scratch.a_cumsum[warpgroupid][base_row + 8] - args.scratch.a_cumsum[warpgroupid][base_col + 9];
+                }
+
+                warp::exp(args.state.local_decay, args.state.local_decay);
+                base::apply_trapezoidal_scale(args, warpgroupid);
+
+                #pragma unroll
+                for (int i = 0; i < 4; i++) {
+                    auto &decay_subtile = reinterpret_cast<rt_fl<16, 16>&>(args.state.local_decay.tiles[0][i]);
+                    if (i > warpgroup::warpid()) {
+                        warp::zero(decay_subtile);
+                    } else if (i == warpgroup::warpid()) {
+                        warp::make_causal(decay_subtile, decay_subtile, kittens::base_types::constants<float>::zero());
+                    }
+                }
+
+                warp::zero(args.state.o_reg);
+
+                #pragma unroll
+                for (int r = 0; r < layout::RANKS_PER_PASS; ++r) {
+                    warpgroup::load(args.state.q_reg, args.input.q[r]);
+                    warpgroup::mm_ABt(args.state.att_block, args.state.q_reg, args.input.k[r]);
+                    warpgroup::mma_async_wait();
+                    warp::mul(args.state.att_block, args.state.att_block, args.state.local_decay);
+                    warp::copy(args.state.att_block_mma, args.state.att_block);
+                    warpgroup::mma_AB(args.state.o_reg, args.state.att_block_mma, args.input.v[warpgroupid]);
+                    warpgroup::mma_async_wait();
+                }
+                warpgroup::store(args.scratch.kv[warpgroupid], args.state.kv);
+                warpgroup::sync(warpgroupid);
+                #pragma unroll
+                for (int r = 0; r < layout::RANKS_PER_PASS; ++r) {
+                    warpgroup::load(args.state.q_reg, args.input.q[r]);
+                    {
+                        int base_row = warpgroup::warpid() * 16 + laneid() / 4;
+                        bf16 top = __float2bfloat16(expf(args.scratch.a_cumsum[warpgroupid][base_row + 0]));
+                        bf16 bottom = __float2bfloat16(expf(args.scratch.a_cumsum[warpgroupid][base_row + 8]));
+                        #pragma unroll
+                        for (int i = 0; i < 4; i++) {
+                            args.state.q_reg.tiles[0][i].data[0].x *= top;
+                            args.state.q_reg.tiles[0][i].data[0].y *= top;
+                            args.state.q_reg.tiles[0][i].data[1].x *= bottom;
+                            args.state.q_reg.tiles[0][i].data[1].y *= bottom;
+                            args.state.q_reg.tiles[0][i].data[2].x *= top;
+                            args.state.q_reg.tiles[0][i].data[2].y *= top;
+                            args.state.q_reg.tiles[0][i].data[3].x *= bottom;
+                            args.state.q_reg.tiles[0][i].data[3].y *= bottom;
+                        }
+                    }
+                    warpgroup::mma_AB(args.state.o_reg, args.state.q_reg, args.scratch.kv[warpgroupid]);
+                    warpgroup::mma_async_wait();
+                }
+
+                float last_decay = args.scratch.a_cumsum[warpgroupid][args.scratch.a_cumsum[warpgroupid].length - 1];
+                float total_decay = expf(last_decay);
+                warp::mul(args.state.kv, args.state.kv, total_decay);
+
+                #pragma unroll
+                for (int r = 0; r < layout::RANKS_PER_PASS; ++r) {
+                    warpgroup::load(args.state.k_reg, args.input.k[r]);
+                    {
+                        int base_row = warpgroup::warpid() * 16 + laneid() / 4;
+                        bf16 top = __float2bfloat16(expf(last_decay - args.scratch.a_cumsum[warpgroupid][base_row + 0]));
+                        bf16 bottom = __float2bfloat16(expf(last_decay - args.scratch.a_cumsum[warpgroupid][base_row + 8]));
+                        #pragma unroll
+                        for (int i = 0; i < 4; i++) {
+                            args.state.k_reg.tiles[0][i].data[0].x *= top;
+                            args.state.k_reg.tiles[0][i].data[0].y *= top;
+                            args.state.k_reg.tiles[0][i].data[1].x *= bottom;
+                            args.state.k_reg.tiles[0][i].data[1].y *= bottom;
+                            args.state.k_reg.tiles[0][i].data[2].x *= top;
+                            args.state.k_reg.tiles[0][i].data[2].y *= top;
+                            args.state.k_reg.tiles[0][i].data[3].x *= bottom;
+                            args.state.k_reg.tiles[0][i].data[3].y *= bottom;
+                        }
+                    }
+                    warpgroup::store(args.scratch.k[warpgroupid], args.state.k_reg);
+                    warpgroup::sync(warpgroupid);
+                    warpgroup::mma_AtB(args.state.kv, args.scratch.k[warpgroupid], args.input.v[warpgroupid]);
+                    warpgroup::mma_async_wait();
+                }
+
+            } else {
+                #pragma unroll
+                for (int r = 0; r < layout::RANKS_PER_PASS; ++r) {
+                    warpgroup::load(args.state.q_reg, args.input.q[r]);
+                    warpgroup::mm_ABt(args.state.att_block, args.state.q_reg, args.input.k[r]);
+                    warpgroup::mma_async_wait();
+                    warp::mul(args.state.att_block, args.state.att_block, args.state.local_decay);
+                    warp::copy(args.state.att_block_mma, args.state.att_block);
+                    warpgroup::mma_AB(args.state.o_reg, args.state.att_block_mma, args.input.v[warpgroupid]);
+                    warpgroup::mma_async_wait();
+                }
+
+                #pragma unroll
+                for (int r = 0; r < layout::RANKS_PER_PASS; ++r) {
+                    warpgroup::load(args.state.q_reg, args.input.q[r]);
+                    {
+                        int base_row = warpgroup::warpid() * 16 + laneid() / 4;
+                        bf16 top = __float2bfloat16(expf(args.scratch.a_cumsum[warpgroupid][base_row + 0]));
+                        bf16 bottom = __float2bfloat16(expf(args.scratch.a_cumsum[warpgroupid][base_row + 8]));
+                        #pragma unroll
+                        for (int i = 0; i < 4; i++) {
+                            args.state.q_reg.tiles[0][i].data[0].x *= top;
+                            args.state.q_reg.tiles[0][i].data[0].y *= top;
+                            args.state.q_reg.tiles[0][i].data[1].x *= bottom;
+                            args.state.q_reg.tiles[0][i].data[1].y *= bottom;
+                            args.state.q_reg.tiles[0][i].data[2].x *= top;
+                            args.state.q_reg.tiles[0][i].data[2].y *= top;
+                            args.state.q_reg.tiles[0][i].data[3].x *= bottom;
+                            args.state.q_reg.tiles[0][i].data[3].y *= bottom;
+                        }
+                    }
+                    warpgroup::mma_AB(args.state.o_reg, args.state.q_reg, args.scratch.kv[warpgroupid]);
+                    warpgroup::mma_async_wait();
+                }
+
+                warpgroup::store(args.output.o[warpgroupid], args.state.o_reg);
+                warpgroup::sync(warpgroupid);
+
+                float last_decay = args.scratch.a_cumsum[warpgroupid][args.scratch.a_cumsum[warpgroupid].length - 1];
+                #pragma unroll
+                for (int r = 0; r < layout::RANKS_PER_PASS; ++r) {
+                    warpgroup::load(args.state.k_reg, args.input.k[r]);
+                    {
+                        int base_row = warpgroup::warpid() * 16 + laneid() / 4;
+                        bf16 top = __float2bfloat16(expf(last_decay - args.scratch.a_cumsum[warpgroupid][base_row + 0]));
+                        bf16 bottom = __float2bfloat16(expf(last_decay - args.scratch.a_cumsum[warpgroupid][base_row + 8]));
+                        #pragma unroll
+                        for (int i = 0; i < 4; i++) {
+                            args.state.k_reg.tiles[0][i].data[0].x *= top;
+                            args.state.k_reg.tiles[0][i].data[0].y *= top;
+                            args.state.k_reg.tiles[0][i].data[1].x *= bottom;
+                            args.state.k_reg.tiles[0][i].data[1].y *= bottom;
+                            args.state.k_reg.tiles[0][i].data[2].x *= top;
+                            args.state.k_reg.tiles[0][i].data[2].y *= top;
+                            args.state.k_reg.tiles[0][i].data[3].x *= bottom;
+                            args.state.k_reg.tiles[0][i].data[3].y *= bottom;
+                        }
+                    }
+                    warpgroup::store(args.scratch.k[warpgroupid], args.state.k_reg);
+                    warpgroup::sync(warpgroupid);
+                    warpgroup::mma_AtB(args.state.kv, args.scratch.k[warpgroupid], args.input.v[warpgroupid]);
+                    warpgroup::mma_async_wait();
+                }
             }
 
             if (warpgroup::laneid() == 0) {
