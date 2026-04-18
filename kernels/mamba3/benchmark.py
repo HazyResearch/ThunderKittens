@@ -1,3 +1,6 @@
+import os
+import sys
+import types
 import torch
 import torch.nn.functional as F
 from einops import rearrange
@@ -32,26 +35,47 @@ except ImportError:
     print('Failed to import thunderkittens; Please "pip setup.py install".')
     tk_mamba3 = None
 
-try:
-    from mamba_ssm.ops.triton.mamba3 import mamba3_siso_fwd as ref_mamba3_siso_fwd
-    print("Successfully imported mamba3_siso_fwd")
-except ImportError:
-    print("Failed to import mamba3_siso_fwd from mamba repo; Please 'pip install mamba_ssm'.")
-    ref_mamba3_siso_fwd = None
+# Bypass mamba_ssm's __init__.py (which hard-imports compiled CUDA extensions)
+# by pre-populating sys.modules with stub packages that have correct __path__
+# entries. This lets Python resolve submodule files without executing __init__.py.
+_mamba_repo = None
+for _candidate in ["/root/mamba-repo", os.path.expanduser("~/mamba-repo")]:
+    if os.path.isdir(os.path.join(_candidate, "mamba_ssm")):
+        _mamba_repo = _candidate
+        break
 
-try:
-    from mamba_ssm.ops.triton.mamba3 import mamba3_mimo_fwd as ref_mamba3_mimo_fwd
-    print("Successfully imported mamba3_mimo_fwd")
-except ImportError:
-    print("Failed to import mamba3_mimo_fwd from mamba repo; Please 'pip install mamba_ssm'.")
-    ref_mamba3_mimo_fwd = None
+ref_mamba3_siso_fwd = None
+ref_mamba3_siso_combined = None
 
-try:
-    from mamba_ssm.ops.modules import mamba3 as ref_mamba3_module
-    print("Successfully imported mamba3.py")
-except ImportError:
-    print("Failed to import mamba3.py from mamba repo; Please 'pip install mamba_ssm'.")
-    ref_mamba3_module = None
+if _mamba_repo is not None:
+    if _mamba_repo not in sys.path:
+        sys.path.insert(0, _mamba_repo)
+    for _pkg, _subdir in [
+        ("mamba_ssm", "mamba_ssm"),
+        ("mamba_ssm.ops", "mamba_ssm/ops"),
+        ("mamba_ssm.ops.triton", "mamba_ssm/ops/triton"),
+        ("mamba_ssm.ops.triton.mamba3", "mamba_ssm/ops/triton/mamba3"),
+    ]:
+        if _pkg not in sys.modules:
+            _mod = types.ModuleType(_pkg)
+            _mod.__path__ = [os.path.join(_mamba_repo, _subdir)]
+            _mod.__package__ = _pkg
+            sys.modules[_pkg] = _mod
+
+    try:
+        from mamba_ssm.ops.triton.mamba3.mamba3_siso_fwd import mamba3_siso_fwd as ref_mamba3_siso_fwd
+        print("Successfully imported mamba3_siso_fwd")
+    except Exception as e:
+        print(f"Failed to import mamba3_siso_fwd: {type(e).__name__}: {e}")
+
+    if ref_mamba3_siso_fwd is None:
+        try:
+            from mamba_ssm.ops.triton.mamba3.mamba3_siso_combined import mamba3_siso_combined as ref_mamba3_siso_combined
+            print("Successfully imported mamba3_siso_combined")
+        except Exception as e:
+            print(f"Failed to import mamba3_siso_combined: {type(e).__name__}: {e}")
+else:
+    print("mamba repo not found; skipping Triton baseline")
 
 
 ################### Mamba 3 ####################
@@ -168,26 +192,34 @@ class Mamba3Triton(torch.nn.Module):
             x, dt, A, B, C, D
         )
         if use_mimo:
-            if ref_mamba3_mimo_fwd is None:
-                raise RuntimeError("mamba3_mimo_fwd is not available")
-            raise RuntimeError("Benchmark MIMO reference path needs MIMO-specific tensors and is not wired yet")
+            raise RuntimeError("MIMO Triton reference not wired yet")
 
-        if ref_mamba3_siso_fwd is None:
-            raise RuntimeError("mamba3_siso_fwd is not available")
-        return ref_mamba3_siso_fwd(
-            q,
-            k,
-            v,
-            adt,
-            dt_ref,
-            trap,
-            q_bias,
-            k_bias,
-            angles,
-            D=d_ref,
-            Z=None,
-            chunk_size=chunk_size,
-        )
+        # Triton kernel expects ADT/DT/Trap as (batch, nheads, seqlen);
+        # build_reference_mamba3_inputs produces them as (batch, seqlen, nheads).
+        # Q/K/V are cast to bf16 to match the kernel's internal bf16 storage path.
+        q_bf = q.to(torch.bfloat16).contiguous()
+        k_bf = k.to(torch.bfloat16).contiguous()
+        v_bf = v.to(torch.bfloat16).contiguous()
+        q_bias_bf = q_bias.to(torch.bfloat16).contiguous()
+        k_bias_bf = k_bias.to(torch.bfloat16).contiguous()
+        adt_t = adt.transpose(1, 2).contiguous()
+        dt_t = dt_ref.transpose(1, 2).contiguous()
+        trap_t = trap.transpose(1, 2).contiguous()
+
+        if ref_mamba3_siso_fwd is not None:
+            out = ref_mamba3_siso_fwd(
+                q_bf, k_bf, v_bf, adt_t, dt_t, trap_t, q_bias_bf, k_bias_bf, angles,
+                D=d_ref, Z=None, chunk_size=chunk_size,
+            )
+        elif ref_mamba3_siso_combined is not None:
+            out = ref_mamba3_siso_combined(
+                q_bf, k_bf, v_bf, adt_t, dt_t, trap_t, q_bias_bf, k_bias_bf, angles,
+                D=d_ref, Z=None, chunk_size=chunk_size,
+            )
+        else:
+            raise RuntimeError("No mamba3 Triton reference available")
+
+        return out[0] if isinstance(out, tuple) else out
 
 
 def build_tk_mamba3_inputs(x, dt, A, B, C):
@@ -242,7 +274,7 @@ def mamba3_test(
                         raise RuntimeError("thunderkittens extension is not available")
                     torch.cuda.synchronize()
                     start_events[i].record()
-                    y = tk_mamba3(q, k, v, a, b_tk, angle, use_mimo=False)
+                    y = tk_mamba3(q, k, v, a, b_tk, angle, False)
                     end_events[i].record()
                     torch.cuda.synchronize()
                 elif method_str == "mamba3_tk_mimo":
@@ -250,7 +282,7 @@ def mamba3_test(
                         raise RuntimeError("thunderkittens extension is not available")
                     torch.cuda.synchronize()
                     start_events[i].record()
-                    y = tk_mamba3(q, k, v, a, b_tk, angle, use_mimo=True)
+                    y = tk_mamba3(q, k, v, a, b_tk, angle, True)
                     end_events[i].record()
                     torch.cuda.synchronize()
                 elif method_str == "mamba3_baseline_siso":
@@ -275,7 +307,9 @@ def mamba3_test(
                     raise AssertionError(f"Unknown method: {method_str}")
             except Exception as e:
                 if verbose:
-                    print(f"Error: {e}")
+                    import traceback
+                    print(f"Error ({type(e).__name__}): {e}")
+                    print(traceback.format_exc(), flush=True)
                 return None, -1
 
             torch.cuda.empty_cache()
@@ -304,7 +338,7 @@ if tk_mamba3 is not None:
         use_mimo=False,
     )
 
-if ref_mamba3_siso_fwd is not None:
+if ref_mamba3_siso_fwd is not None or ref_mamba3_siso_combined is not None:
     IMPLEMENTATIONS["mamba3_triton_siso"] = partial(
         mamba3_test,
         causal=True,
