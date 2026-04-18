@@ -64,6 +64,7 @@ struct mamba3_fwd_layout {
         rt_fl<16, 64> local_decay;
         rt_bf<16, 64> q_reg, k_reg;
         rt_fl<16, 64> kv;
+        float trap_a_boundary, trap_b_boundary;
     };
     
 };
@@ -92,6 +93,22 @@ struct mamba3_fwd_common_template {
         return 1.0f + b_next * expf(-a_next);
     }
 
+    template<typename Args>
+    __device__ static inline void prefetch_trap_boundary(Args args, int next_chunk) {
+        if (warpgroup::warpid() <= 1 && warpgroup::laneid() == 63) {
+            int warpgroupid = warpgroup::groupid();
+            int total_chunks = args.globals.K.rows() / layout::k_tile::rows;
+            if (next_chunk < total_chunks) {
+                coord<> idx = {args.common.batch, args.common.head + warpgroupid, 0, next_chunk * 64};
+                args.state.trap_a_boundary = args.globals.A[idx];
+                args.state.trap_b_boundary = args.globals.B[idx];
+            } else {
+                args.state.trap_a_boundary = 0.0f;
+                args.state.trap_b_boundary = 0.0f;
+            }
+        }
+    }
+
     __device__ static inline void build_trapezoidal_scale(consumer_compute_args<layout> args, int warpgroupid) {
         if (warpgroup::warpid() <= 1) {
             int tid = warpgroup::laneid();
@@ -101,7 +118,7 @@ struct mamba3_fwd_common_template {
                 float b_next = args.input.b[warpgroupid][tid + 1];
                 s = trap_scale(a_next, b_next);
             } else {
-                s = 1.0f;
+                s = trap_scale(args.state.trap_a_boundary, args.state.trap_b_boundary);
             }
             args.scratch.b_scale[warpgroupid][tid] = s;
         }
@@ -217,11 +234,11 @@ struct mamba3_fwd_common_template {
         __device__ static void setup(consumer_setup_args<layout> args) {
             warpgroup::consumer_registers<NUM_CONSUMER_WARPS/WARPGROUP_WARPS>();
             warp::zero(args.state.kv);
+            prefetch_trap_boundary(args, 1);
         }
 
         __device__ static void compute(consumer_compute_args<layout> args) {
             int warpgroupid = warpgroup::groupid();
-            // cumsum on shared mem
             warpgroup::sync(warpgroupid);
             warpgroup::copy(args.scratch.a_cumsum[warpgroupid], args.input.a[warpgroupid]);
             warpgroup::sync(warpgroupid);
@@ -239,9 +256,9 @@ struct mamba3_fwd_common_template {
 
             // trapezoidal discretization correction.
             build_trapezoidal_scale(args, warpgroupid);
-      
+
             warpgroup::sync(warpgroupid);
-      
+
             #pragma unroll
             for (int i = 0; i < 4; i++) {
                 int base_row = warpgroup::warpid() * 16 + laneid() / 4;
@@ -328,7 +345,9 @@ struct mamba3_fwd_common_template {
             warpgroup::sync(warpgroupid);
             warpgroup::mma_AtB(args.state.kv, args.scratch.k[warpgroupid], args.input.v[warpgroupid]);
             warpgroup::mma_async_wait();
-      
+
+            prefetch_trap_boundary(args, args.iter + 2);
+
             if (warpgroup::laneid() == 0) {
                 arrive(args.outputs_arrived);
                 arrive(args.inputs_finished);
@@ -415,11 +434,12 @@ struct mamba3_mimo_fwd_template : mamba3_fwd_common_template<mamba3_mimo_layout>
         __device__ static void setup(consumer_setup_args<layout> args) {
             warpgroup::consumer_registers<base::NUM_CONSUMER_WARPS/WARPGROUP_WARPS>();
             warp::zero(args.state.kv);
+            base::prefetch_trap_boundary(args, 1);
         }
 
         __device__ static void compute(consumer_compute_args<layout> args) {
             int warpgroupid = warpgroup::groupid();
-            int rank_pass = args.iter % 2; // 0: first 2 ranks, 1: last 2 ranks
+            int rank_pass = args.iter % 2;
 
             if (rank_pass == 0) {
                 warpgroup::sync(warpgroupid);
@@ -597,6 +617,10 @@ struct mamba3_mimo_fwd_template : mamba3_fwd_common_template<mamba3_mimo_layout>
                     warpgroup::mma_AtB(args.state.kv, args.scratch.k[warpgroupid], args.input.v[warpgroupid]);
                     warpgroup::mma_async_wait();
                 }
+            }
+
+            if (rank_pass == 1) {
+                base::prefetch_trap_boundary(args, args.iter / 2 + 2);
             }
 
             if (warpgroup::laneid() == 0) {
