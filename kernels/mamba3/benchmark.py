@@ -46,6 +46,7 @@ for _candidate in ["/root/mamba-repo", os.path.expanduser("~/mamba-repo")]:
 
 ref_mamba3_siso_fwd = None
 ref_mamba3_siso_combined = None
+ref_mamba3_mimo = None
 
 if _mamba_repo is not None:
     if _mamba_repo not in sys.path:
@@ -55,6 +56,8 @@ if _mamba_repo is not None:
         ("mamba_ssm.ops", "mamba_ssm/ops"),
         ("mamba_ssm.ops.triton", "mamba_ssm/ops/triton"),
         ("mamba_ssm.ops.triton.mamba3", "mamba_ssm/ops/triton/mamba3"),
+        ("mamba_ssm.ops.tilelang", "mamba_ssm/ops/tilelang"),
+        ("mamba_ssm.ops.tilelang.mamba3", "mamba_ssm/ops/tilelang/mamba3"),
     ]:
         if _pkg not in sys.modules:
             _mod = types.ModuleType(_pkg)
@@ -74,6 +77,12 @@ if _mamba_repo is not None:
             print("Successfully imported mamba3_siso_combined")
         except Exception as e:
             print(f"Failed to import mamba3_siso_combined: {type(e).__name__}: {e}")
+
+    try:
+        from mamba_ssm.ops.tilelang.mamba3.mamba3_mimo import mamba3_mimo as ref_mamba3_mimo
+        print("Successfully imported mamba3_mimo (TileLang)")
+    except Exception as e:
+        print(f"Failed to import mamba3_mimo (TileLang): {type(e).__name__}: {e}")
 else:
     print("mamba repo not found; skipping Triton baseline")
 
@@ -222,16 +231,81 @@ class Mamba3Triton(torch.nn.Module):
         return out[0] if isinstance(out, tuple) else out
 
 
+MIMO_RANK = 4
+TILELANG_CHUNK_SIZE = 16
+TILELANG_ROTARY_DIV = 2
+
+
+class Mamba3TileLang(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x, dt, A, B_gate, C_gate, chunk_size, D=None, use_mimo=False):
+        if not use_mimo:
+            raise RuntimeError("TileLang reference only wired for MIMO")
+        if ref_mamba3_mimo is None:
+            raise RuntimeError("mamba3_mimo (TileLang) is not available")
+
+        batch, seqlen, nheads, headdim_v = x.shape
+        _, _, ngroups, headdim_qk = C_gate.shape
+
+        q_bf = (
+            rearrange(C_gate.expand(-1, -1, MIMO_RANK * ngroups, -1),
+                      "b l (r g) d -> b l r g d", r=MIMO_RANK)
+            .to(torch.bfloat16)
+            .contiguous()
+        )
+        k_bf = (
+            rearrange(B_gate.expand(-1, -1, MIMO_RANK * ngroups, -1),
+                      "b l (r g) d -> b l r g d", r=MIMO_RANK)
+            .to(torch.bfloat16)
+            .contiguous()
+        )
+        v_bf = x.to(torch.bfloat16).contiguous()
+
+        adt = rearrange(A * dt, "b l h -> b h l").to(torch.float32).contiguous()
+        dt_t = rearrange(dt, "b l h -> b h l").to(torch.float32).contiguous()
+        trap = torch.zeros_like(adt).to(torch.bfloat16).contiguous()
+
+        q_bias = torch.zeros((nheads, MIMO_RANK, headdim_qk), device=x.device, dtype=torch.float32)
+        k_bias = torch.zeros((nheads, MIMO_RANK, headdim_qk), device=x.device, dtype=torch.float32)
+        mimo_v = torch.ones((nheads, MIMO_RANK, headdim_v), device=x.device, dtype=torch.float32)
+        mimo_out = torch.ones((nheads, MIMO_RANK, headdim_v), device=x.device, dtype=torch.float32)
+        mimo_z = torch.zeros((nheads, MIMO_RANK, headdim_v), device=x.device, dtype=torch.float32)
+
+        head_angles = headdim_qk // TILELANG_ROTARY_DIV
+        angles = (
+            torch.cumsum(dt, dim=1)
+            .unsqueeze(-1)
+            .expand(batch, seqlen, nheads, head_angles)
+            .to(torch.float32)
+            .contiguous()
+        )
+
+        d_ref = torch.zeros(nheads, device=x.device, dtype=torch.float32) if D is None else D.to(torch.float32).contiguous()
+        z = torch.zeros_like(v_bf)
+
+        out = ref_mamba3_mimo(
+            q_bf, k_bf, v_bf, adt, dt_t, trap,
+            q_bias, k_bias, mimo_v, mimo_z, mimo_out,
+            angles, d_ref, z,
+            TILELANG_CHUNK_SIZE, TILELANG_ROTARY_DIV,
+            torch.bfloat16,
+            return_state=False,
+        )
+        if isinstance(out, tuple):
+            out = out[0]
+        return out
+
+
 def build_tk_mamba3_inputs(x, dt, A, B, C):
     q = rearrange(C, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
     k = rearrange(B, "b l h d -> b h l d").to(torch.bfloat16).contiguous()
     v = rearrange(x * dt.unsqueeze(-1), "b l h d -> b h l d").to(torch.bfloat16).contiguous()
     a = rearrange(A * dt, "b l h -> b h l").to(torch.float32).contiguous()
 
-    # Keep the current TK interface stable while the kernel is trap-only. The angle tensor is
-    # still passed through for API compatibility, but the current TK kernel ignores it.
     b = torch.zeros_like(a)
-    angle = torch.zeros_like(a)
+    angle = rearrange(torch.cumsum(dt, dim=1), "b l h -> b h l").to(torch.float32).contiguous()
     return q, k, v, a, b, angle
 
 
@@ -303,6 +377,15 @@ def mamba3_test(
                     torch.cuda.synchronize()
                 elif method_str == "mamba3_triton_mimo":
                     raise RuntimeError("mamba3_triton_mimo is not wired yet")
+                elif method_str == "mamba3_tilelang_mimo":
+                    if ref_mamba3_mimo is None:
+                        raise RuntimeError("mamba3_mimo (TileLang) is not available")
+                    tilelang_method = Mamba3TileLang()
+                    torch.cuda.synchronize()
+                    start_events[i].record()
+                    y = tilelang_method(x, dt, A, B, C, chunk_size, D=None, use_mimo=True)
+                    end_events[i].record()
+                    torch.cuda.synchronize()
                 else:
                     raise AssertionError(f"Unknown method: {method_str}")
             except Exception as e:
@@ -337,6 +420,13 @@ if tk_mamba3 is not None:
         method_str="mamba3_tk_siso",
         use_mimo=False,
     )
+    IMPLEMENTATIONS["mamba3_tk_mimo"] = partial(
+        mamba3_test,
+        causal=True,
+        is_forwards=True,
+        method_str="mamba3_tk_mimo",
+        use_mimo=True,
+    )
 
 if ref_mamba3_siso_fwd is not None or ref_mamba3_siso_combined is not None:
     IMPLEMENTATIONS["mamba3_triton_siso"] = partial(
@@ -344,6 +434,14 @@ if ref_mamba3_siso_fwd is not None or ref_mamba3_siso_combined is not None:
         causal=True,
         is_forwards=True,
         method_str="mamba3_triton_siso",
+    )
+
+if ref_mamba3_mimo is not None:
+    IMPLEMENTATIONS["mamba3_tilelang_mimo"] = partial(
+        mamba3_test,
+        causal=True,
+        is_forwards=True,
+        method_str="mamba3_tilelang_mimo",
     )
 
 NAME = "MAMBA 3"

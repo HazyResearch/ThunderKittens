@@ -148,11 +148,6 @@ struct mamba3_fwd_common_template {
             if (r8 > base_col + 9) args.state.local_decay.tiles[0][i].data[3].y *= s09;
         }
     }
-    // applies sin/cos
-#if 0
-    // Rotary is intentionally disabled in the current TK kernel so this stays a trap-only
-    // variant of the Mamba-2 inner scan. The angle argument is still threaded through the API
-    // for now to avoid a wider signature churn.
     __device__ static inline void get_rotary_factors(consumer_compute_args<layout> args, int warpgroupid, int idx, float &s, float &c) {
         float theta = args.input.angle[warpgroupid][idx];
         sincosf(theta, &s, &c);
@@ -183,7 +178,6 @@ struct mamba3_fwd_common_template {
             apply_rotary_to_pair_bf16(reg.tiles[0][i].data[3].x, reg.tiles[0][i].data[3].y, s_bottom, c_bottom);
         }
     }
-#endif
 
     __device__ static inline void common_setup(common_setup_args<layout> args) {
         int task_id = args.task_iter * gridDim.x + blockIdx.x;
@@ -200,16 +194,16 @@ struct mamba3_fwd_common_template {
 
         __device__ static void load(producer_load_args<layout> args) {
             if(warpgroup::warpid() == args.iter%4) {
-                warp::tma::expect(args.inputs_arrived, args.input.q, args.input.k, args.input.v[0], args.input.a[0], args.input.b[0], args.input.v[1], args.input.a[1], args.input.b[1]);
+                warp::tma::expect(args.inputs_arrived, args.input.q, args.input.k, args.input.v[0], args.input.a[0], args.input.b[0], args.input.v[1], args.input.a[1], args.input.b[1], args.input.angle[0], args.input.angle[1]);
                 warp::tma::load_async(args.input.q, args.globals.Q, {args.common.batch, 0, args.iter, 0}, args.inputs_arrived);
                 warp::tma::load_async(args.input.k, args.globals.K, {args.common.batch, 0, args.iter, 0}, args.inputs_arrived);
-                
+
                 #pragma unroll
                 for (int i = 0; i < NUM_CONSUMER_WARPS/4; i++) {
                     warp::tma::load_async(args.input.v[i], args.globals.V, {args.common.batch, args.common.head+i, args.iter, 0}, args.inputs_arrived);
                     warp::tma::load_async(args.input.a[i], args.globals.A, {args.common.batch, args.common.head+i, 0, args.iter}, args.inputs_arrived);
                     warp::tma::load_async(args.input.b[i], args.globals.B, {args.common.batch, args.common.head+i, 0, args.iter}, args.inputs_arrived);
-                    // warp::tma::load_async(args.input.angle[i], args.globals.Angles, {args.common.batch, args.common.head+i, 0, args.iter}, args.inputs_arrived);
+                    warp::tma::load_async(args.input.angle[i], args.globals.Angles, {args.common.batch, args.common.head+i, 0, args.iter}, args.inputs_arrived);
                 }
                 
                 __syncwarp();
@@ -287,8 +281,12 @@ struct mamba3_fwd_common_template {
             }
             // A = Q @ K.T
             warpgroup::load(args.state.q_reg, args.input.q);
-            // Rotary intentionally disabled in the current TK kernel. q/k are consumed as-is.
-            warpgroup::mm_ABt(args.state.att_block, args.state.q_reg, args.input.k);
+            warpgroup::load(args.state.k_reg, args.input.k);
+            apply_rotary_to_reg(args, warpgroupid, args.state.q_reg);
+            apply_rotary_to_reg(args, warpgroupid, args.state.k_reg);
+            warpgroup::store(args.scratch.k[warpgroupid], args.state.k_reg);
+            warpgroup::sync(warpgroupid);
+            warpgroup::mm_ABt(args.state.att_block, args.state.q_reg, args.scratch.k[warpgroupid]);
             warpgroup::mma_async_wait();
             warp::mul(args.state.att_block, args.state.att_block, args.state.local_decay);
             warp::copy(args.state.att_block_mma, args.state.att_block);
@@ -323,7 +321,6 @@ struct mamba3_fwd_common_template {
             float last_decay = args.scratch.a_cumsum[warpgroupid][args.scratch.a_cumsum[warpgroupid].length - 1];
             float total_decay = expf(last_decay);
             warp::mul(args.state.kv, args.state.kv, total_decay); // decay kv
-            warpgroup::load(args.state.k_reg, args.input.k);
             {
                 int base_row = warpgroup::warpid() * 16 + laneid() / 4;
                 bf16 top = __float2bfloat16(expf(last_decay - args.scratch.a_cumsum[warpgroupid][base_row + 0]));
@@ -394,7 +391,8 @@ struct mamba3_mimo_fwd_template : mamba3_fwd_common_template<mamba3_mimo_layout>
                     args.input.q[0], args.input.k[0],
                     args.input.q[1], args.input.k[1],
                     args.input.v[0], args.input.a[0], args.input.b[0],
-                    args.input.v[1], args.input.a[1], args.input.b[1]
+                    args.input.v[1], args.input.a[1], args.input.b[1],
+                    args.input.angle[0], args.input.angle[1]
                 );
                 #pragma unroll
                 for (int r = 0; r < layout::RANKS_PER_PASS; ++r) {
@@ -406,6 +404,7 @@ struct mamba3_mimo_fwd_template : mamba3_fwd_common_template<mamba3_mimo_layout>
                     warp::tma::load_async(args.input.v[i], args.globals.V, {args.common.batch, args.common.head + i, chunk_iter, 0}, args.inputs_arrived);
                     warp::tma::load_async(args.input.a[i], args.globals.A, {args.common.batch, args.common.head + i, 0, chunk_iter}, args.inputs_arrived);
                     warp::tma::load_async(args.input.b[i], args.globals.B, {args.common.batch, args.common.head + i, 0, chunk_iter}, args.inputs_arrived);
+                    warp::tma::load_async(args.input.angle[i], args.globals.Angles, {args.common.batch, args.common.head + i, 0, chunk_iter}, args.inputs_arrived);
                 }
                 __syncwarp();
             }
@@ -493,7 +492,12 @@ struct mamba3_mimo_fwd_template : mamba3_fwd_common_template<mamba3_mimo_layout>
                 #pragma unroll
                 for (int r = 0; r < layout::RANKS_PER_PASS; ++r) {
                     warpgroup::load(args.state.q_reg, args.input.q[r]);
-                    warpgroup::mm_ABt(args.state.att_block, args.state.q_reg, args.input.k[r]);
+                    warpgroup::load(args.state.k_reg, args.input.k[r]);
+                    base::apply_rotary_to_reg(args, warpgroupid, args.state.q_reg);
+                    base::apply_rotary_to_reg(args, warpgroupid, args.state.k_reg);
+                    warpgroup::store(args.scratch.k[warpgroupid], args.state.k_reg);
+                    warpgroup::sync(warpgroupid);
+                    warpgroup::mm_ABt(args.state.att_block, args.state.q_reg, args.scratch.k[warpgroupid]);
                     warpgroup::mma_async_wait();
                     warp::mul(args.state.att_block, args.state.att_block, args.state.local_decay);
                     warp::copy(args.state.att_block_mma, args.state.att_block);
@@ -505,6 +509,7 @@ struct mamba3_mimo_fwd_template : mamba3_fwd_common_template<mamba3_mimo_layout>
                 #pragma unroll
                 for (int r = 0; r < layout::RANKS_PER_PASS; ++r) {
                     warpgroup::load(args.state.q_reg, args.input.q[r]);
+                    base::apply_rotary_to_reg(args, warpgroupid, args.state.q_reg);
                     {
                         int base_row = warpgroup::warpid() * 16 + laneid() / 4;
                         bf16 top = __float2bfloat16(expf(args.scratch.a_cumsum[warpgroupid][base_row + 0]));
@@ -532,6 +537,7 @@ struct mamba3_mimo_fwd_template : mamba3_fwd_common_template<mamba3_mimo_layout>
                 #pragma unroll
                 for (int r = 0; r < layout::RANKS_PER_PASS; ++r) {
                     warpgroup::load(args.state.k_reg, args.input.k[r]);
+                    base::apply_rotary_to_reg(args, warpgroupid, args.state.k_reg);
                     {
                         int base_row = warpgroup::warpid() * 16 + laneid() / 4;
                         bf16 top = __float2bfloat16(expf(last_decay - args.scratch.a_cumsum[warpgroupid][base_row + 0]));
@@ -558,7 +564,12 @@ struct mamba3_mimo_fwd_template : mamba3_fwd_common_template<mamba3_mimo_layout>
                 #pragma unroll
                 for (int r = 0; r < layout::RANKS_PER_PASS; ++r) {
                     warpgroup::load(args.state.q_reg, args.input.q[r]);
-                    warpgroup::mm_ABt(args.state.att_block, args.state.q_reg, args.input.k[r]);
+                    warpgroup::load(args.state.k_reg, args.input.k[r]);
+                    base::apply_rotary_to_reg(args, warpgroupid, args.state.q_reg);
+                    base::apply_rotary_to_reg(args, warpgroupid, args.state.k_reg);
+                    warpgroup::store(args.scratch.k[warpgroupid], args.state.k_reg);
+                    warpgroup::sync(warpgroupid);
+                    warpgroup::mm_ABt(args.state.att_block, args.state.q_reg, args.scratch.k[warpgroupid]);
                     warpgroup::mma_async_wait();
                     warp::mul(args.state.att_block, args.state.att_block, args.state.local_decay);
                     warp::copy(args.state.att_block_mma, args.state.att_block);
@@ -569,6 +580,7 @@ struct mamba3_mimo_fwd_template : mamba3_fwd_common_template<mamba3_mimo_layout>
                 #pragma unroll
                 for (int r = 0; r < layout::RANKS_PER_PASS; ++r) {
                     warpgroup::load(args.state.q_reg, args.input.q[r]);
+                    base::apply_rotary_to_reg(args, warpgroupid, args.state.q_reg);
                     {
                         int base_row = warpgroup::warpid() * 16 + laneid() / 4;
                         bf16 top = __float2bfloat16(expf(args.scratch.a_cumsum[warpgroupid][base_row + 0]));
@@ -596,6 +608,7 @@ struct mamba3_mimo_fwd_template : mamba3_fwd_common_template<mamba3_mimo_layout>
                 #pragma unroll
                 for (int r = 0; r < layout::RANKS_PER_PASS; ++r) {
                     warpgroup::load(args.state.k_reg, args.input.k[r]);
+                    base::apply_rotary_to_reg(args, warpgroupid, args.state.k_reg);
                     {
                         int base_row = warpgroup::warpid() * 16 + laneid() / 4;
                         bf16 top = __float2bfloat16(expf(last_decay - args.scratch.a_cumsum[warpgroupid][base_row + 0]));
