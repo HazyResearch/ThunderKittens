@@ -39,14 +39,22 @@ __host__ static inline void tensor_check(const at::Tensor &t) {
 
     if constexpr (!TypeCheck) {
         return;
-    } else if constexpr (std::is_same_v<typename Layout::dtype, char>) {
+    } else if constexpr (std::is_same_v<typename Layout::dtype, char> || std::is_same_v<typename Layout::dtype, signed char>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Char, "Tensor has invalid dtype (expected int8)");
+    } else if constexpr (std::is_same_v<typename Layout::dtype, unsigned char>) {
+        TORCH_CHECK(t.dtype() == at::ScalarType::Byte, "Tensor has invalid dtype (expected uint8)");
     } else if constexpr (std::is_same_v<typename Layout::dtype, short>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Short, "Tensor has invalid dtype (expected int16)");
+    } else if constexpr (std::is_same_v<typename Layout::dtype, unsigned short>) {
+        TORCH_CHECK(t.dtype() == at::ScalarType::UInt16, "Tensor has invalid dtype (expected uint16)");
     } else if constexpr (std::is_same_v<typename Layout::dtype, int>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Int, "Tensor has invalid dtype (expected int32)");
-    } else if constexpr (std::is_same_v<typename Layout::dtype, long>) {
+    } else if constexpr (std::is_same_v<typename Layout::dtype, unsigned int>) {
+        TORCH_CHECK(t.dtype() == at::ScalarType::UInt32, "Tensor has invalid dtype (expected uint32)");
+    } else if constexpr (std::is_same_v<typename Layout::dtype, int64_t>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Long, "Tensor has invalid dtype (expected int64)");
+    } else if constexpr (std::is_same_v<typename Layout::dtype, uint64_t>) {
+        TORCH_CHECK(t.dtype() == at::ScalarType::UInt64, "Tensor has invalid dtype (expected uint64)");
 #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
     } else if constexpr (std::is_same_v<typename Layout::dtype, ::kittens::fp8e4m3>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Float8_e4m3fn, "Tensor has invalid dtype (expected fp8e4m3)");
