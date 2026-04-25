@@ -158,6 +158,55 @@ void initialize(T **d_i, T **d_o, std::vector<float> &i_ref, std::vector<float> 
             i_t[idx] = f;
             i_ref[idx] = f;
         }
+        else if constexpr (std::is_same_v<T, double>) {
+            i_t[idx] = f;
+            i_ref[idx] = float(i_t[idx]);
+        }
+        else if constexpr (std::is_same_v<T, char>) {
+            if constexpr (initializer == initializers::RANDOM) f *= 64.f;
+            i_t[idx] = static_cast<char>(f);
+            i_ref[idx] = float(i_t[idx]);
+        }
+        else if constexpr (std::is_same_v<T, signed char>) {
+            if constexpr (initializer == initializers::RANDOM) f *= 64.f;
+            i_t[idx] = static_cast<signed char>(f);
+            i_ref[idx] = float(i_t[idx]);
+        }
+        else if constexpr (std::is_same_v<T, unsigned char>) {
+            if constexpr (initializer == initializers::RANDOM) f = (f + 1.f) * 127.f;
+            i_t[idx] = static_cast<unsigned char>(f);
+            i_ref[idx] = float(i_t[idx]);
+        }
+        else if constexpr (std::is_same_v<T, short>) {
+            if constexpr (initializer == initializers::RANDOM) f *= 1024.f;
+            i_t[idx] = static_cast<short>(f);
+            i_ref[idx] = float(i_t[idx]);
+        }
+        else if constexpr (std::is_same_v<T, unsigned short>) {
+            if constexpr (initializer == initializers::RANDOM) f = (f + 1.f) * 1024.f;
+            i_t[idx] = static_cast<unsigned short>(f);
+            i_ref[idx] = float(i_t[idx]);
+        }
+        else if constexpr (std::is_same_v<T, int>) {
+            if constexpr (initializer == initializers::RANDOM) f *= 1024.f;
+            i_t[idx] = static_cast<int>(f);
+            i_ref[idx] = float(i_t[idx]);
+        }
+        else if constexpr (std::is_same_v<T, uint>) {
+            if constexpr (initializer == initializers::RANDOM) f = (f + 1.f) * 1024.f;
+            i_t[idx] = static_cast<uint>(f);
+            i_ref[idx] = float(i_t[idx]);
+        }
+        else if constexpr (std::is_same_v<T, int64_t>) {
+            if constexpr (initializer == initializers::RANDOM) f *= 1024.f;
+            i_t[idx] = static_cast<int64_t>(f);
+            i_ref[idx] = float(i_t[idx]);
+        }
+        else if constexpr (std::is_same_v<T, uint64_t>) {
+            if constexpr (initializer == initializers::RANDOM) f = (f + 1.f) * 1024.f;
+            i_t[idx] = static_cast<uint64_t>(f);
+            i_ref[idx] = float(i_t[idx]);
+        }
         else if constexpr (std::is_same_v<T, half>) {
             i_t[idx] = __float2half(f);
             i_ref[idx] = __half2float(i_t[idx]);
@@ -295,6 +344,46 @@ test_result validate(T *d_i, T *d_o, const std::vector<float> &i_ref, std::vecto
         else if constexpr(std::is_same_v<T, float>) {
             o[idx] = o_t[idx];
             o_ref[idx] = o_ref[idx];
+        }
+        else if constexpr(std::is_same_v<T, double>) {
+            o[idx] = float(o_t[idx]);
+            o_ref[idx] = float(T(o_ref[idx]));
+        }
+        else if constexpr(std::is_same_v<T, char>) {
+            o[idx] = float(o_t[idx]);
+            o_ref[idx] = float(static_cast<char>(o_ref[idx]));
+        }
+        else if constexpr(std::is_same_v<T, signed char>) {
+            o[idx] = float(o_t[idx]);
+            o_ref[idx] = float(static_cast<signed char>(o_ref[idx]));
+        }
+        else if constexpr(std::is_same_v<T, unsigned char>) {
+            o[idx] = float(o_t[idx]);
+            o_ref[idx] = float(static_cast<unsigned char>(o_ref[idx]));
+        }
+        else if constexpr(std::is_same_v<T, short>) {
+            o[idx] = float(o_t[idx]);
+            o_ref[idx] = float(static_cast<short>(o_ref[idx]));
+        }
+        else if constexpr(std::is_same_v<T, unsigned short>) {
+            o[idx] = float(o_t[idx]);
+            o_ref[idx] = float(static_cast<unsigned short>(o_ref[idx]));
+        }
+        else if constexpr(std::is_same_v<T, int>) {
+            o[idx] = float(o_t[idx]);
+            o_ref[idx] = float(static_cast<int>(o_ref[idx]));
+        }
+        else if constexpr(std::is_same_v<T, uint>) {
+            o[idx] = float(o_t[idx]);
+            o_ref[idx] = float(static_cast<uint>(o_ref[idx]));
+        }
+        else if constexpr(std::is_same_v<T, int64_t>) {
+            o[idx] = float(o_t[idx]);
+            o_ref[idx] = float(static_cast<int64_t>(o_ref[idx]));
+        }
+        else if constexpr(std::is_same_v<T, uint64_t>) {
+            o[idx] = float(o_t[idx]);
+            o_ref[idx] = float(static_cast<uint64_t>(o_ref[idx]));
         }
         #if defined(KITTENS_HOPPER) || defined(KITTENS_BLACKWELL)
         else if constexpr(std::is_same_v<T, fp8e4m3>) {
