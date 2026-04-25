@@ -1,9 +1,13 @@
 #pragma once
 
+#include <Python.h>
+
 #include <iostream>
 #include <map>
 #include <vector>
 
+#include <ATen/DLConvertor.h>
+#include <ATen/dlpack.h>
 #include <ATen/ops/from_blob.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <torch/csrc/utils/pybind.h>
@@ -38,6 +42,13 @@ struct TKParallelTensor {
     size_t multicast_allocated_size_;
 
     detail::ipc::flavor ipc_flavor_;
+
+    // Build at::Tensor from DLPack capsule (zero-copy) for use in (tensor, ...) ctor
+    __host__ static at::Tensor from_dlpack_capsule(pybind11::object capsule) {
+        void* ptr = PyCapsule_GetPointer(capsule.ptr(), "dltensor");
+        TORCH_CHECK(ptr != nullptr, "Object must be a DLPack capsule (name 'dltensor')");
+        return at::fromDLPack(static_cast<DLManagedTensor*>(ptr));
+    }
 
     __host__ inline TKParallelTensor(
         const at::Tensor &tensor,
@@ -111,6 +122,14 @@ struct TKParallelTensor {
         if (multicast_)
             initialize_multicast();
     }
+
+    // DLPack capsule -> zero-copy at::Tensor then same path as (at::Tensor, ...)
+    __host__ inline TKParallelTensor(
+        pybind11::object dlpack_capsule,
+        int local_rank,
+        int local_world_size,
+        bool multicast
+    ) : TKParallelTensor(from_dlpack_capsule(dlpack_capsule), local_rank, local_world_size, multicast) {}
 
     __host__ TKParallelTensor(const TKParallelTensor&) = delete;
     __host__ TKParallelTensor& operator=(const TKParallelTensor&) = delete;
@@ -330,6 +349,12 @@ struct TKParallelTensor {
              pybind11::arg("local_rank"), \
              pybind11::arg("local_world_size"), \
              pybind11::arg("multicast") = false) \
+        .def(pybind11::init<pybind11::object, int, int, bool>(), \
+             pybind11::arg("dlpack_capsule"), \
+             pybind11::arg("local_rank"), \
+             pybind11::arg("local_world_size"), \
+             pybind11::arg("multicast") = false, \
+             "Construct from DLPack capsule (e.g. tensor.__dlpack__()); zero-copy, then same as tensor ctor.") \
         .def("data", &kittens::py::TKParallelTensor::data) \
         .def_readonly("data_", &kittens::py::TKParallelTensor::data_) \
         .def_readonly("local_rank_", &kittens::py::TKParallelTensor::local_rank_) \
