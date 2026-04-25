@@ -593,6 +593,26 @@ template<> struct convertor<fp8e8m0_4, bf16_2> {
         return __nv_fp8x4_e8m0(f4);
     }
 };
+template<> struct convertor<bf16, fp8e8m0> {
+    static __host__ __device__ inline bf16 convert(const fp8e8m0 & u) {
+        return __float2bfloat16_rn(float(u));
+    }
+};
+template<> struct convertor<fp8e8m0, bf16> {
+    static __host__ __device__ inline fp8e8m0 convert(const bf16 & u) {
+        return __nv_fp8_e8m0(__bfloat162float(u));
+    }
+};
+template<> struct convertor<half, fp8e8m0> {
+    static __host__ __device__ inline half convert(const fp8e8m0 & u) {
+        return __float2half(float(u));
+    }
+};
+template<> struct convertor<fp8e8m0, half> {
+    static __host__ __device__ inline fp8e8m0 convert(const half & u) {
+        return __nv_fp8_e8m0(__half2float(u));
+    }
+};
 // fp4e2m1
 template<> struct convertor<fp4e2m1, float> {
     static __device__ inline fp4e2m1 convert(const float & u) {
@@ -655,6 +675,26 @@ template<> struct convertor<float, fp8e4m3> {
         return float(u);
     }
 };
+template<> struct convertor<bf16, fp8e4m3> {
+    static __host__ __device__ inline bf16 convert(const fp8e4m3 & u) {
+        return __float2bfloat16_rn(float(u));
+    }
+};
+template<> struct convertor<fp8e4m3, bf16> {
+    static __host__ __device__ inline fp8e4m3 convert(const bf16 & u) {
+        return __nv_fp8_e4m3(__bfloat162float(u));
+    }
+};
+template<> struct convertor<half, fp8e4m3> {
+    static __host__ __device__ inline half convert(const fp8e4m3 & u) {
+        return __float2half(float(u));
+    }
+};
+template<> struct convertor<fp8e4m3, half> {
+    static __host__ __device__ inline fp8e4m3 convert(const half & u) {
+        return __nv_fp8_e4m3(__half2float(u));
+    }
+};
 template<> struct convertor<bf16_2, fp8e4m3_4> {
     static __host__ __device__ inline bf16_2 convert(const fp8e4m3_4 & u) {
         float4 f4 = convertor<float4, fp8e4m3_4>::convert(u);
@@ -700,6 +740,26 @@ template<> struct convertor<fp8e5m2, float> {
 template<> struct convertor<float, fp8e5m2> {
     static __host__ __device__ inline float convert(const fp8e5m2 & u) {
         return float(u);
+    }
+};
+template<> struct convertor<bf16, fp8e5m2> {
+    static __host__ __device__ inline bf16 convert(const fp8e5m2 & u) {
+        return __float2bfloat16_rn(float(u));
+    }
+};
+template<> struct convertor<fp8e5m2, bf16> {
+    static __host__ __device__ inline fp8e5m2 convert(const bf16 & u) {
+        return __nv_fp8_e5m2(__bfloat162float(u));
+    }
+};
+template<> struct convertor<half, fp8e5m2> {
+    static __host__ __device__ inline half convert(const fp8e5m2 & u) {
+        return __float2half(float(u));
+    }
+};
+template<> struct convertor<fp8e5m2, half> {
+    static __host__ __device__ inline fp8e5m2 convert(const half & u) {
+        return __nv_fp8_e5m2(__half2float(u));
     }
 };
 template<> struct convertor<bf16_2, fp8e5m2_4> {
