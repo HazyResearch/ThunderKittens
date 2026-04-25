@@ -300,6 +300,19 @@ template<> struct packing<double2> {
     using packed_type = double2;
     static __device__ inline constexpr double2 pack(const double &i) { return double2{i, i}; } // this replication makes code cleaner later.
 };
+struct bool_2 { bool x, y; };
+template<> struct packing<bool> {
+    static __device__ inline constexpr int num() { return 1; }
+    using unpacked_type = bool;
+    using packed_type = bool_2;
+    static __device__ inline constexpr bool_2 pack(const bool &i) { return bool_2{i, i}; } // this replication makes code cleaner later.
+};
+template<> struct packing<bool_2> {
+    static __device__ inline constexpr int num() { return 2; }
+    using unpacked_type = bool;
+    using packed_type = bool_2;
+    static __device__ inline constexpr bool_2 pack(const bool &i) { return bool_2{i, i}; } // this replication makes code cleaner later.
+};
 template<> struct packing<char> {
     static __device__ inline constexpr int num() { return 1; }
     using unpacked_type = char;

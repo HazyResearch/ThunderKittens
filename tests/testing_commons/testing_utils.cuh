@@ -135,7 +135,9 @@ void initialize(T **d_i, T **d_o, std::vector<float> &i_ref, std::vector<float> 
     const int output_size = o_ref.size();
 
     // Initialize matrices
-    std::vector<T> i_t(input_size);
+    using host_t = std::conditional_t<std::is_same_v<T, bool>, uint8_t, T>;
+    static_assert(sizeof(host_t) == sizeof(T));
+    std::vector<host_t> i_t(input_size);
 
     std::mt19937 gen(SEED); // Standard mersenne_twister_engine
     std::uniform_real_distribution<float> dis(-1.0, 1.0);
@@ -160,6 +162,10 @@ void initialize(T **d_i, T **d_o, std::vector<float> &i_ref, std::vector<float> 
         }
         else if constexpr (std::is_same_v<T, double>) {
             i_t[idx] = f;
+            i_ref[idx] = float(i_t[idx]);
+        }
+        else if constexpr (std::is_same_v<T, bool>) {
+            i_t[idx] = f > 0.f;
             i_ref[idx] = float(i_t[idx]);
         }
         else if constexpr (std::is_same_v<T, char>) {
@@ -348,6 +354,10 @@ test_result validate(T *d_i, T *d_o, const std::vector<float> &i_ref, std::vecto
         else if constexpr(std::is_same_v<T, double>) {
             o[idx] = float(o_t[idx]);
             o_ref[idx] = float(T(o_ref[idx]));
+        }
+        else if constexpr(std::is_same_v<T, bool>) {
+            o[idx] = float(o_t[idx]);
+            o_ref[idx] = float(bool(o_ref[idx]));
         }
         else if constexpr(std::is_same_v<T, char>) {
             o[idx] = float(o_t[idx]);
