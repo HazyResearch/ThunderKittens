@@ -378,7 +378,7 @@ template<> struct packing<char> {
     static __device__ inline constexpr int num() { return 1; }
     using unpacked_type = char; // for compatibility
     using packed_type = int8_4;
-    static __device__ inline constexpr int8_4 pack(const char &i) { return int8_4{i, i, i, i}; } // this replication makes code cleaner later.
+    static __device__ inline constexpr int8_4 pack(const char &i) { const int8_t v = static_cast<int8_t>(i); return int8_4{v, v, v, v}; } // this replication makes code cleaner later.
 };
 template<> struct packing<int8> {
     static __device__ inline constexpr int num() { return 1; }
