@@ -2,8 +2,9 @@
 
 This folder builds up the SM120 GEMM piece-by-piece. It is only for educational purposes. The TFLOPS are measured on RTX 5060Ti.
 
-Change the `LEVEL` field in the `Makefile` to `01` - `09`, then `make clean && make run`.
+Change the `LEVEL` field in the `Makefile` to `00` - `09`, then `make clean && make run`.
 
+- Level 00 (46.44 TFLOPs): cuBLAS baseline
 - Level 01 (1.45 TFLOPs): Simple for loop (float)
 - Level 02 (1.42 TFLOPs): Simple for loop (bf16)
 - Level 03 (1.81 TFLOPs): Use shared memory
