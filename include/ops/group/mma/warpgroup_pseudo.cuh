@@ -16,12 +16,12 @@
 template<ducks::rt::row_layout D>
 __device__ static inline void mma_fence(D &dst) {
     KITTENS_CHECK_WARPGROUP
-    asm volatile("" : : "l"(&dst) : "memory");
+    asm volatile("" ::: "memory");
 }
 template<ducks::crt::row_layout D>
 __device__ static inline void mma_fence(D &dst) {
     KITTENS_CHECK_WARPGROUP
-    asm volatile("" : : "l"(&dst) : "memory");
+    asm volatile("" ::: "memory");
 }
 template<typename T=kittens::ducks::default_type>
 __device__ static inline void mma_fence() {
