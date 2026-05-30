@@ -11,6 +11,11 @@
 #include "fp16_fp16.cuh"
 #include "int32_int8.cuh"
 #include "int32_uint8.cuh"
+#include "pseudo_fp32_bf16.cuh"
+#include "pseudo_fp32_fp16.cuh"
+#include "pseudo_fp16_fp16.cuh"
+#include "pseudo_int32_int8.cuh"
+#include "pseudo_int32_uint8.cuh"
 // #include "mma_fp32_fp32.cuh" TODO
 #include "complex/complex.cuh"
 
