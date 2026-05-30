@@ -11,6 +11,8 @@
 #include "fp16_fp16.cuh"
 #include "int32_int8.cuh"
 #include "int32_uint8.cuh"
+#include "pseudo_fp32_fp8.cuh"
+#include "pseudo_fp16_fp8.cuh"
 #include "pseudo_fp32_bf16.cuh"
 #include "pseudo_fp32_fp16.cuh"
 #include "pseudo_fp16_fp16.cuh"

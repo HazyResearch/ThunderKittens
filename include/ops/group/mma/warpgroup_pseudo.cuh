@@ -46,12 +46,22 @@ template<typename T>
 static constexpr bool pseudo_wgmma_8bit_int_v = std::is_same_v<T, int8> || std::is_same_v<T, uint8>;
 
 template<typename T>
-static constexpr bool pseudo_wgmma_supported_operand_v = pseudo_wgmma_16bit_float_v<T> || pseudo_wgmma_8bit_int_v<T>;
+static constexpr bool pseudo_wgmma_8bit_float_v =
+#if defined(KITTENS_SM90) || defined(KITTENS_SM10X) || defined(KITTENS_SM120)
+    std::is_same_v<T, fp8e4m3> || std::is_same_v<T, fp8e5m2>;
+#else
+    false;
+#endif
+
+template<typename T>
+static constexpr bool pseudo_wgmma_supported_operand_v =
+    pseudo_wgmma_16bit_float_v<T> || pseudo_wgmma_8bit_int_v<T> || pseudo_wgmma_8bit_float_v<T>;
 
 template<typename T_D, typename T_AB>
 static constexpr bool pseudo_wgmma_supported_accum_v =
     (std::is_same_v<T_D, float> && pseudo_wgmma_16bit_float_v<T_AB>) ||
     (std::is_same_v<T_D, half> && std::is_same_v<T_AB, half>) ||
+    ((std::is_same_v<T_D, float> || std::is_same_v<T_D, half>) && pseudo_wgmma_8bit_float_v<T_AB>) ||
     (std::is_same_v<T_D, int> && pseudo_wgmma_8bit_int_v<T_AB>);
 
 template<ducks::rt::row_layout RT, ducks::st::all ST>
@@ -61,7 +71,7 @@ __device__ static inline void pseudo_wgmma_load_16x16(RT &dst, const ST &src, in
     static_assert(RT::cols == kittens::TILE_COL_DIM<typename RT::T>);
     static_assert(std::is_same_v<typename RT::T, typename ST::T>);
     static_assert(pseudo_wgmma_supported_operand_v<typename RT::T>,
-                  "Pseudo warpgroup MMA currently supports bf16/half/int8/uint8 operands only.");
+                  "Pseudo warpgroup MMA currently supports bf16/half/fp8e4m3/fp8e5m2/int8/uint8 operands only.");
 
     using T2 = typename RT::dtype;
     using U  = typename ST::dtype;
@@ -91,7 +101,7 @@ __device__ static inline void pseudo_wgmma_load_16x16(RT &dst, const ST &src, in
     static_assert(RT::cols == kittens::TILE_COL_DIM<typename RT::T>);
     static_assert(std::is_same_v<typename RT::T, typename ST::T>);
     static_assert(pseudo_wgmma_16bit_float_v<typename RT::T>,
-                  "Pseudo warpgroup MMA supports col-layout shared fragment loads for bf16/half only. Integer MMA uses ABt row-layout operands.");
+                  "Pseudo warpgroup MMA supports col-layout shared fragment loads for bf16/half only. 8-bit MMA uses ABt row-layout operands.");
 
     using T2 = typename RT::dtype;
     using U  = typename ST::dtype;
@@ -119,25 +129,174 @@ __device__ static inline void pseudo_wgmma_mma_AB_base(D &d, const A &a, const B
     group<1>::mma_AB_base(d, a, b, d);
 }
 
+#if defined(KITTENS_SM90) || defined(KITTENS_SM10X) || defined(KITTENS_SM120)
+__device__ static inline void pseudo_wgmma_hmma16832(
+    float2 &d0,
+    float2 &d1,
+    const fp8e4m3_4 &a0,
+    const fp8e4m3_4 &a1,
+    const fp8e4m3_4 &a2,
+    const fp8e4m3_4 &a3,
+    const fp8e4m3_4 &b0,
+    const fp8e4m3_4 &b1,
+    const float2 &c0,
+    const float2 &c1
+) {
+    hmma16816(d0, d1, a0, a1, a2, a3, b0, b1, c0, c1);
+}
+
+__device__ static inline void pseudo_wgmma_hmma16832(
+    float2 &d0,
+    float2 &d1,
+    const fp8e5m2_4 &a0,
+    const fp8e5m2_4 &a1,
+    const fp8e5m2_4 &a2,
+    const fp8e5m2_4 &a3,
+    const fp8e5m2_4 &b0,
+    const fp8e5m2_4 &b1,
+    const float2 &c0,
+    const float2 &c1
+) {
+    asm volatile(
+        "mma.sync.aligned.m16n8k32.row.col.f32.e5m2.e5m2.f32 "
+        "{%0, %1, %2, %3}, "
+        "{%4, %5, %6, %7}, "
+        "{%8, %9}, "
+        "{%10, %11, %12, %13};"
+    :   "+f"(d0.x), "+f"(d0.y),
+        "+f"(d1.x), "+f"(d1.y)
+    :   "r"(*(uint32_t*)(&a0)), "r"(*(uint32_t*)(&a1)),
+        "r"(*(uint32_t*)(&a2)), "r"(*(uint32_t*)(&a3)),
+        "r"(*(uint32_t*)(&b0)), "r"(*(uint32_t*)(&b1)),
+        "f"(c0.x), "f"(c0.y),
+        "f"(c1.x), "f"(c1.y)
+    );
+}
+
+__device__ static inline void pseudo_wgmma_hmma16832(
+    half_2 &d0,
+    half_2 &d1,
+    const fp8e4m3_4 &a0,
+    const fp8e4m3_4 &a1,
+    const fp8e4m3_4 &a2,
+    const fp8e4m3_4 &a3,
+    const fp8e4m3_4 &b0,
+    const fp8e4m3_4 &b1,
+    const half_2 &c0,
+    const half_2 &c1
+) {
+    asm volatile(
+        "mma.sync.aligned.m16n8k32.row.col.f16.e4m3.e4m3.f16 "
+        "{%0, %1}, "
+        "{%2, %3, %4, %5}, "
+        "{%6, %7}, "
+        "{%8, %9};"
+    :   "=r"(*(uint32_t*)(&d0)), "=r"(*(uint32_t*)(&d1))
+    :   "r"(*(uint32_t*)(&a0)), "r"(*(uint32_t*)(&a1)),
+        "r"(*(uint32_t*)(&a2)), "r"(*(uint32_t*)(&a3)),
+        "r"(*(uint32_t*)(&b0)), "r"(*(uint32_t*)(&b1)),
+        "r"(*(uint32_t*)(&c0)), "r"(*(uint32_t*)(&c1))
+    );
+}
+
+__device__ static inline void pseudo_wgmma_hmma16832(
+    half_2 &d0,
+    half_2 &d1,
+    const fp8e5m2_4 &a0,
+    const fp8e5m2_4 &a1,
+    const fp8e5m2_4 &a2,
+    const fp8e5m2_4 &a3,
+    const fp8e5m2_4 &b0,
+    const fp8e5m2_4 &b1,
+    const half_2 &c0,
+    const half_2 &c1
+) {
+    asm volatile(
+        "mma.sync.aligned.m16n8k32.row.col.f16.e5m2.e5m2.f16 "
+        "{%0, %1}, "
+        "{%2, %3, %4, %5}, "
+        "{%6, %7}, "
+        "{%8, %9};"
+    :   "=r"(*(uint32_t*)(&d0)), "=r"(*(uint32_t*)(&d1))
+    :   "r"(*(uint32_t*)(&a0)), "r"(*(uint32_t*)(&a1)),
+        "r"(*(uint32_t*)(&a2)), "r"(*(uint32_t*)(&a3)),
+        "r"(*(uint32_t*)(&b0)), "r"(*(uint32_t*)(&b1)),
+        "r"(*(uint32_t*)(&c0)), "r"(*(uint32_t*)(&c1))
+    );
+}
+
+template<ducks::rt_base::all A, ducks::rt_base::all B>
+__device__ static inline void pseudo_wgmma_mma_ABt_fp8_base(
+    rt_base<float, ducks::rt_layout::row> &d,
+    const A &a,
+    const B &b
+) {
+    static_assert(std::is_same_v<typename A::layout, ducks::rt_layout::row>);
+    static_assert(std::is_same_v<typename B::layout, ducks::rt_layout::row>);
+    static_assert(pseudo_wgmma_8bit_float_v<typename A::T>);
+    static_assert(std::is_same_v<typename A::T, typename B::T>);
+    pseudo_wgmma_hmma16832(
+        d.data[0], d.data[1],
+        a.data[0], a.data[1], a.data[2], a.data[3],
+        b.data[0], b.data[2],
+        d.data[0], d.data[1]
+    );
+    pseudo_wgmma_hmma16832(
+        d.data[2], d.data[3],
+        a.data[0], a.data[1], a.data[2], a.data[3],
+        b.data[1], b.data[3],
+        d.data[2], d.data[3]
+    );
+}
+#endif
+
 template<ducks::rt_base::all D, ducks::rt_base::all A, ducks::rt_base::all B>
 __device__ static inline void pseudo_wgmma_mma_ABt_base(D &d, const A &a, const B &b) {
     if constexpr (std::is_same_v<typename D::T, half>) {
-        static_assert(std::is_same_v<typename A::T, half> && std::is_same_v<typename B::T, half>);
-        hmma16816(
-            d.data[0], d.data[1],
-            a.data[0], a.data[1], a.data[2], a.data[3],
-            b.data[0], b.data[2],
-            d.data[0], d.data[1]
-        );
-        hmma16816(
-            d.data[2], d.data[3],
-            a.data[0], a.data[1], a.data[2], a.data[3],
-            b.data[1], b.data[3],
-            d.data[2], d.data[3]
-        );
+        if constexpr (std::is_same_v<typename A::T, half>) {
+            static_assert(std::is_same_v<typename B::T, half>);
+            hmma16816(
+                d.data[0], d.data[1],
+                a.data[0], a.data[1], a.data[2], a.data[3],
+                b.data[0], b.data[2],
+                d.data[0], d.data[1]
+            );
+            hmma16816(
+                d.data[2], d.data[3],
+                a.data[0], a.data[1], a.data[2], a.data[3],
+                b.data[1], b.data[3],
+                d.data[2], d.data[3]
+            );
+        }
+#if defined(KITTENS_SM90) || defined(KITTENS_SM10X) || defined(KITTENS_SM120)
+        else if constexpr (pseudo_wgmma_8bit_float_v<typename A::T>) {
+            static_assert(std::is_same_v<typename A::T, typename B::T>);
+            pseudo_wgmma_hmma16832(
+                d.data[0], d.data[1],
+                a.data[0], a.data[1], a.data[2], a.data[3],
+                b.data[0], b.data[2],
+                d.data[0], d.data[1]
+            );
+            pseudo_wgmma_hmma16832(
+                d.data[2], d.data[3],
+                a.data[0], a.data[1], a.data[2], a.data[3],
+                b.data[1], b.data[3],
+                d.data[2], d.data[3]
+            );
+        }
+#endif
     }
     else {
-        group<1>::mma_ABt_base(d, a, b, d);
+#if defined(KITTENS_SM90) || defined(KITTENS_SM10X) || defined(KITTENS_SM120)
+        if constexpr (std::is_same_v<typename D::T, float> && pseudo_wgmma_8bit_float_v<typename A::T>) {
+            static_assert(std::is_same_v<typename A::T, typename B::T>);
+            pseudo_wgmma_mma_ABt_fp8_base(d, a, b);
+        }
+        else
+#endif
+        {
+            group<1>::mma_ABt_base(d, a, b, d);
+        }
     }
 }
 
@@ -190,11 +349,12 @@ __device__ static inline void pseudo_wgmma_st_st(D &d, const A &a, const B &b) {
     KITTENS_CHECK_WARPGROUP
 
     static_assert(pseudo_wgmma_supported_accum_v<typename D::T, typename A::T>,
-                  "Pseudo warpgroup MMA supports bf16/half operands with fp32 accumulators, half operands with half accumulators, or int8/uint8 operands with int accumulators.");
-    static_assert(pseudo_wgmma_supported_operand_v<typename A::T>, "Pseudo warpgroup MMA currently supports bf16/half/int8/uint8 A operands only.");
+                  "Pseudo warpgroup MMA supports bf16/half/fp8 operands with fp32 accumulators, half/fp8 operands with half accumulators, or int8/uint8 operands with int accumulators.");
+    static_assert(pseudo_wgmma_supported_operand_v<typename A::T>, "Pseudo warpgroup MMA currently supports bf16/half/fp8e4m3/fp8e5m2/int8/uint8 A operands only.");
     static_assert(std::is_same_v<typename A::T, typename B::T>, "Pseudo warpgroup MMA operands must have matching dtype.");
-    static_assert(!pseudo_wgmma_8bit_int_v<typename A::T> || (trans_A == transpose::N && trans_B == transpose::T),
-                  "Pseudo integer warpgroup MMA currently supports ABt only.");
+    static_assert(!(pseudo_wgmma_8bit_int_v<typename A::T> || pseudo_wgmma_8bit_float_v<typename A::T>) ||
+                  (trans_A == transpose::N && trans_B == transpose::T),
+                  "Pseudo 8-bit warpgroup MMA currently supports ABt only.");
 
     constexpr int BM = GROUP_WARPS * D::rows;
     constexpr int BN = D::cols;
@@ -276,11 +436,12 @@ __device__ static inline void pseudo_wgmma_rt_st(D &d, const A &a, const B &b) {
     KITTENS_CHECK_WARPGROUP
 
     static_assert(pseudo_wgmma_supported_accum_v<typename D::T, typename A::T>,
-                  "Pseudo warpgroup MMA supports bf16/half operands with fp32 accumulators, half operands with half accumulators, or int8/uint8 operands with int accumulators.");
-    static_assert(pseudo_wgmma_supported_operand_v<typename A::T>, "Pseudo warpgroup MMA currently supports bf16/half/int8/uint8 A operands only.");
+                  "Pseudo warpgroup MMA supports bf16/half/fp8 operands with fp32 accumulators, half/fp8 operands with half accumulators, or int8/uint8 operands with int accumulators.");
+    static_assert(pseudo_wgmma_supported_operand_v<typename A::T>, "Pseudo warpgroup MMA currently supports bf16/half/fp8e4m3/fp8e5m2/int8/uint8 A operands only.");
     static_assert(std::is_same_v<typename A::T, typename B::T>, "Pseudo warpgroup MMA operands must have matching dtype.");
-    static_assert(!pseudo_wgmma_8bit_int_v<typename A::T> || trans_B == transpose::T,
-                  "Pseudo integer warpgroup register/shared MMA currently supports ABt only.");
+    static_assert(!(pseudo_wgmma_8bit_int_v<typename A::T> || pseudo_wgmma_8bit_float_v<typename A::T>) ||
+                  trans_B == transpose::T,
+                  "Pseudo 8-bit warpgroup register/shared MMA currently supports ABt only.");
     static_assert(D::rows == A::rows, "D rows must match A rows.");
     static_assert(D::cols == (trans_B == transpose::N ? B::cols : B::rows), "D columns must match B's logical N dimension.");
     static_assert(A::cols == (trans_B == transpose::N ? B::rows : B::cols), "A columns must match B's logical K dimension.");

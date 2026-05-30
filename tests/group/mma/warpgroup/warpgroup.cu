@@ -42,6 +42,16 @@ void group::mma::warpgroup::tests(test_data &results) {
 #else
     std::cout << "INFO: Skipping ops/group/mma/warpgroup/mma_int32_uint8 tests!\n" << std::endl;
 #endif
+#ifdef TEST_GROUP_MMA_WARPGROUP_PSEUDO_FP32_FP8
+    group::mma::warpgroup::pseudo_fp32_fp8::tests(results);
+#else
+    std::cout << "INFO: Skipping ops/group/mma/warpgroup/pseudo_fp32_fp8 tests!\n" << std::endl;
+#endif
+#ifdef TEST_GROUP_MMA_WARPGROUP_PSEUDO_FP16_FP8
+    group::mma::warpgroup::pseudo_fp16_fp8::tests(results);
+#else
+    std::cout << "INFO: Skipping ops/group/mma/warpgroup/pseudo_fp16_fp8 tests!\n" << std::endl;
+#endif
 #ifdef TEST_GROUP_MMA_WARPGROUP_PSEUDO_FP32_BF16
     group::mma::warpgroup::pseudo_fp32_bf16::tests(results);
 #else
