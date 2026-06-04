@@ -74,6 +74,21 @@ struct st_descriptor {
         }
     }
     __device__ inline st_descriptor(const st_descriptor<ST, MN_major> &other) : base_desc(other.base_desc) {} // copy constructor
+    __device__ inline uint64_t chunk_descriptor_byte_offset(int byte_offset) {
+        static_assert(!MN_major, "Byte-offset shared descriptors are only supported for K-major tcgen05 operands.");
+        constexpr int row_bytes = (ST::rows / TILE_ROW_DIM<T>) * ST::swizzle_bytes * TILE_ROW_DIM<T>;
+        const int inner_offset = byte_offset % ST::swizzle_bytes;
+        const int outer_offset = byte_offset / ST::swizzle_bytes;
+        return base_desc + detail::matrix_descriptor_encode(inner_offset + outer_offset * row_bytes);
+    }
+    __device__ inline uint64_t chunk_descriptor_k96(int mma_idx) {
+        uint64_t desc = chunk_descriptor_byte_offset(mma_idx * 48);
+        uint64_t next_desc = chunk_descriptor_byte_offset(mma_idx * 48 + 32);
+        desc &= ~(0x3FFFull << 16);
+        desc |= (next_desc & 0x3FFFull) << 16;
+        desc |= 1ull << 52;
+        return desc;
+    }
     __device__ inline uint64_t chunk_descriptor(int chunk_idx) {
         // Return the n-th chunk along the K dimension.
         // In MMA instructions, K per tensor core call is always 32 bytes
