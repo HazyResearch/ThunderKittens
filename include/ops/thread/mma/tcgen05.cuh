@@ -602,13 +602,12 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
     // Matrix dimension calculations
     constexpr int M = (trans_a ? A::cols : A::rows) * ncta;
     constexpr int N = (trans_b ? B::cols : B::rows) * ncta;
-    constexpr int K_PACKED = trans_a ? A::rows : A::cols;
-    constexpr int K = std::is_same_v<typename A::T, fp4e2m1_2> ? K_PACKED * 2 : K_PACKED;
+    constexpr int K = std::is_same_v<typename A::T, fp4e2m1_2> ? (trans_a ? A::rows : A::cols) * 2 : (trans_a ? A::rows : A::cols);
     constexpr bool is_k96 = std::is_same_v<typename A::T, fp4e2m1_2> && mma_k == 96;
-    constexpr int red_dim = std::is_same_v<typename A::T, fp8e4m3> ? 32 : (is_k96 ? 48 : 64);
-    constexpr int num_mma_k = is_k96 ? K_PACKED / red_dim : K / red_dim;
+    constexpr int red_dim = std::is_same_v<typename A::T, fp8e4m3> ? 32 : mma_k;
+    constexpr int num_mma_k = K / red_dim;
     static_assert(
-        (is_k96 && K_PACKED >= red_dim) ||
+        (is_k96 && K >= red_dim) ||
         (!is_k96 && K % red_dim == 0),
         "K dimension must be divisible by the selected tcgen05 MMA K dimension.");
 
