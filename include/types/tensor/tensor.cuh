@@ -68,18 +68,17 @@ template<int _nblocks_per_sm, int _ncta, bool _managed = true> struct tensor_all
         //   1. This function must be called by one entire warp in a CTA
         //   2. `shared_addr` must be on shared memory
         //   3. The caller of this function is responsible for distributing the tensor memory address
-        uint32_t shared_addr_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&shared_addr));
         if constexpr (ncta == 1) {
             asm volatile(
                 "tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32  [%0], %1;\n"
-            ::  "r"(shared_addr_ptr), "n"(cols)
+            ::  "l"(reinterpret_cast<uint64_t>(&shared_addr)), "n"(cols)
             );
             asm volatile("tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned;\n");
         }
         else {
             asm volatile(
                 "tcgen05.alloc.cta_group::2.sync.aligned.shared::cta.b32  [%0], %1;\n"
-            ::  "r"(shared_addr_ptr), "n"(cols)
+            ::  "l"(reinterpret_cast<uint64_t>(&shared_addr)), "n"(cols)
             );
             asm volatile("tcgen05.relinquish_alloc_permit.cta_group::2.sync.aligned;\n");
         }

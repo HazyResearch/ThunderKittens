@@ -680,9 +680,11 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
                 d.addr,
                 a_desc.template chunk_descriptor<mma_k>(i),
                 b_desc.template chunk_descriptor<mma_k>(i),
+                // K64 pairs MMAs on one scale address and alternates SFID 0/2;
+                // K96 uses SFID 0 and advances through packed E8M0 TMEM coords.
                 sa.addr + (mma_k == 96 ? (i * M_offset) / 4 : (i >> 1) * M_offset),
                 sb.addr + (mma_k == 96 ? (i * N_offset) / 4 : (i >> 1) * N_offset),
-                (mma_k == 96 || !(i & 1)) ? idescs[0] : idescs[2] // K64 alternates 0/2
+                (mma_k == 96 || !(i & 1)) ? idescs[0] : idescs[2]
             );
         }
     } else {
