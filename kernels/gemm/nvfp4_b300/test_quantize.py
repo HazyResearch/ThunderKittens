@@ -6,7 +6,7 @@ torch.set_printoptions(sci_mode=False)
 
 from _C import fp32_to_fp4x2, fp4x2_to_fp32  # type: ignore
 
-MMA_PER_TILE = 8
+MMA_PER_TILE = 4
 TILE_K = 96 * MMA_PER_TILE
 
 
