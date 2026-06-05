@@ -645,8 +645,8 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
     constexpr int N_offset = N / 32; // 8 if N=256
     constexpr int M_offset = M / 32 / ncta; // 4 if M=256
     if constexpr (is_k96) {
-        static_assert((((K / red_dim) - 1) * M_offset) / 4 < SA::cols / 4, "A scale tensor tile is too narrow for the K96 MMA count.");
-        static_assert((((K / red_dim) - 1) * N_offset) / 4 < SB::cols / 4, "B scale tensor tile is too narrow for the K96 MMA count.");
+        static_assert(((K / red_dim) - 1) * M_offset < SA::cols / 4, "A scale tensor tile is too narrow for the K96 MMA count.");
+        static_assert(((K / red_dim) - 1) * N_offset < SB::cols / 4, "B scale tensor tile is too narrow for the K96 MMA count.");
     }
 
     if constexpr (std::is_same_v<typename A::T, fp8e4m3>) { // FP8E4M3 + FP8E8M0 scale (MXFP8)
@@ -681,9 +681,9 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
                 a_desc.template chunk_descriptor<mma_k>(i),
                 b_desc.template chunk_descriptor<mma_k>(i),
                 // K64 pairs MMAs on one scale address and alternates SFID 0/2;
-                // K96 uses SFID 0 and advances through packed E8M0 TMEM coords.
-                sa.addr + (mma_k == 96 ? (i * M_offset) / 4 : (i >> 1) * M_offset),
-                sb.addr + (mma_k == 96 ? (i * N_offset) / 4 : (i >> 1) * N_offset),
+                // K96 uses SFID 0 and advances one aligned scale panel per MMA.
+                sa.addr + (mma_k == 96 ? i * M_offset : (i >> 1) * M_offset),
+                sb.addr + (mma_k == 96 ? i * N_offset : (i >> 1) * N_offset),
                 (mma_k == 96 || !(i & 1)) ? idescs[0] : idescs[2]
             );
         }

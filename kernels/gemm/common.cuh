@@ -104,7 +104,7 @@ static inline void reference_gemm(OutputT* D, InputT const* A, InputT const* B, 
 
 __device__ inline int scale_swizzle_idx(int row, int k_block, int K_blocks) {
   int M_block = row / 128;
-  int K_block_groups = K_blocks / 4;
+  int K_block_groups = (K_blocks + 3) / 4;
   int K_block_group = k_block / 4;
   int row_in_32 = row % 32;
   int tile_in_block = (row / 32) % 4;
@@ -169,47 +169,84 @@ static inline void reference_blockscaled_gemm(
 
 #include <cuda_fp4.h>
 
-template <typename OutputT>
+template <typename OutputT, typename ScaleT, int STORAGE_K=128, int MMA_PER_TILE=1>
 __global__ void reference_nvfp4_gemm_kernel(
     OutputT* D,
     __nv_fp4x2_e2m1 const* A_packed,
     __nv_fp4x2_e2m1 const* B_packed,
-    __nv_fp8_e4m3 const* A_scale,
-    __nv_fp8_e4m3 const* B_scale,
+    ScaleT const* A_scale,
+    ScaleT const* B_scale,
     float const* A_scale_global,
     float const* B_scale_global,
     int M, int N, int K) {
 
-  constexpr int BLOCK_SIZE = 16;
+  constexpr int BLOCK_SIZE = std::is_same_v<ScaleT, __nv_fp8_e8m0> ? 32 : 16;
   int row = blockIdx.y * blockDim.y + threadIdx.y;
   int col = blockIdx.x * blockDim.x + threadIdx.x;
 
   if (row < M && col < N) {
     float acc = 0.0f;
-    int K_blocks = K / BLOCK_SIZE;
+    if constexpr (std::is_same_v<ScaleT, __nv_fp8_e8m0>) {
+      constexpr int MMA_K = 96;
+      constexpr int SCALE_BLOCKS_PER_MMA = 4;
+      int K_blocks = (K / STORAGE_K) * MMA_PER_TILE * SCALE_BLOCKS_PER_MMA;
+      for (int k_tile = 0; k_tile < K; k_tile += STORAGE_K) {
+        for (int k_inner = 0; k_inner < MMA_PER_TILE * MMA_K; k_inner += 2) {
+          int k = k_tile + k_inner;
+          int a_idx = row * (K / 2) + k / 2;
+          int b_idx = col * (K / 2) + k / 2;
 
-    for (int k = 0; k < K; k += 2) {
-      int a_idx = row * (K / 2) + k / 2;
-      int b_idx = col * (K / 2) + k / 2;
+          float2 a_vals = static_cast<float2>(A_packed[a_idx]);
+          float2 b_vals = static_cast<float2>(B_packed[b_idx]);
 
-      float2 a_vals = static_cast<float2>(A_packed[a_idx]);
-      float2 b_vals = static_cast<float2>(B_packed[b_idx]);
+          int mma_idx0 = k_inner / MMA_K;
+          int mma_idx1 = (k_inner + 1) / MMA_K;
+          int k_block0 = (k_tile / STORAGE_K) * MMA_PER_TILE * SCALE_BLOCKS_PER_MMA
+                       + mma_idx0 * SCALE_BLOCKS_PER_MMA
+                       + (k_inner % MMA_K) / BLOCK_SIZE;
+          int k_block1 = (k_tile / STORAGE_K) * MMA_PER_TILE * SCALE_BLOCKS_PER_MMA
+                       + mma_idx1 * SCALE_BLOCKS_PER_MMA
+                       + ((k_inner + 1) % MMA_K) / BLOCK_SIZE;
 
-      int k_block0 = k / BLOCK_SIZE;
-      int k_block1 = (k + 1) / BLOCK_SIZE;
+          int a_scale_idx0 = scale_swizzle_idx(row, k_block0, K_blocks);
+          int a_scale_idx1 = scale_swizzle_idx(row, k_block1, K_blocks);
+          int b_scale_idx0 = scale_swizzle_idx(col, k_block0, K_blocks);
+          int b_scale_idx1 = scale_swizzle_idx(col, k_block1, K_blocks);
 
-      int a_scale_idx0 = scale_swizzle_idx(row, k_block0, K_blocks);
-      int a_scale_idx1 = scale_swizzle_idx(row, k_block1, K_blocks);
-      int b_scale_idx0 = scale_swizzle_idx(col, k_block0, K_blocks);
-      int b_scale_idx1 = scale_swizzle_idx(col, k_block1, K_blocks);
+          float a_s0 = kittens::base_types::convertor<float, ScaleT>::convert(A_scale[a_scale_idx0]);
+          float a_s1 = kittens::base_types::convertor<float, ScaleT>::convert(A_scale[a_scale_idx1]);
+          float b_s0 = kittens::base_types::convertor<float, ScaleT>::convert(B_scale[b_scale_idx0]);
+          float b_s1 = kittens::base_types::convertor<float, ScaleT>::convert(B_scale[b_scale_idx1]);
 
-      float a_s0 = kittens::base_types::convertor<float, __nv_fp8_e4m3>::convert(A_scale[a_scale_idx0]);
-      float a_s1 = kittens::base_types::convertor<float, __nv_fp8_e4m3>::convert(A_scale[a_scale_idx1]);
-      float b_s0 = kittens::base_types::convertor<float, __nv_fp8_e4m3>::convert(B_scale[b_scale_idx0]);
-      float b_s1 = kittens::base_types::convertor<float, __nv_fp8_e4m3>::convert(B_scale[b_scale_idx1]);
+          acc += (a_vals.x * a_s0) * (b_vals.x * b_s0);
+          acc += (a_vals.y * a_s1) * (b_vals.y * b_s1);
+        }
+      }
+    } else {
+      int K_blocks = K / BLOCK_SIZE;
+      for (int k = 0; k < K; k += 2) {
+        int a_idx = row * (K / 2) + k / 2;
+        int b_idx = col * (K / 2) + k / 2;
 
-      acc += (a_vals.x * a_s0) * (b_vals.x * b_s0);
-      acc += (a_vals.y * a_s1) * (b_vals.y * b_s1);
+        float2 a_vals = static_cast<float2>(A_packed[a_idx]);
+        float2 b_vals = static_cast<float2>(B_packed[b_idx]);
+
+        int k_block0 = k / BLOCK_SIZE;
+        int k_block1 = (k + 1) / BLOCK_SIZE;
+
+        int a_scale_idx0 = scale_swizzle_idx(row, k_block0, K_blocks);
+        int a_scale_idx1 = scale_swizzle_idx(row, k_block1, K_blocks);
+        int b_scale_idx0 = scale_swizzle_idx(col, k_block0, K_blocks);
+        int b_scale_idx1 = scale_swizzle_idx(col, k_block1, K_blocks);
+
+        float a_s0 = kittens::base_types::convertor<float, ScaleT>::convert(A_scale[a_scale_idx0]);
+        float a_s1 = kittens::base_types::convertor<float, ScaleT>::convert(A_scale[a_scale_idx1]);
+        float b_s0 = kittens::base_types::convertor<float, ScaleT>::convert(B_scale[b_scale_idx0]);
+        float b_s1 = kittens::base_types::convertor<float, ScaleT>::convert(B_scale[b_scale_idx1]);
+
+        acc += (a_vals.x * a_s0) * (b_vals.x * b_s0);
+        acc += (a_vals.y * a_s1) * (b_vals.y * b_s1);
+      }
     }
 
     float global_scale = (*A_scale_global) * (*B_scale_global);
@@ -217,16 +254,16 @@ __global__ void reference_nvfp4_gemm_kernel(
   }
 }
 
-template <typename OutputT>
+template <typename OutputT, typename ScaleT, int STORAGE_K=128, int MMA_PER_TILE=1>
 static inline void reference_nvfp4_gemm(
     OutputT* D,
     __nv_fp4x2_e2m1 const* A, __nv_fp4x2_e2m1 const* B,
-    __nv_fp8_e4m3 const* A_scale, __nv_fp8_e4m3 const* B_scale,
+    ScaleT const* A_scale, ScaleT const* B_scale,
     float const* A_scale_global, float const* B_scale_global,
     int M, int N, int K) {
   dim3 block(16, 16);
   dim3 grid((N + 15) / 16, (M + 15) / 16);
-  reference_nvfp4_gemm_kernel<OutputT>
+  reference_nvfp4_gemm_kernel<OutputT, ScaleT, STORAGE_K, MMA_PER_TILE>
       <<<grid, block>>>(D, A, B, A_scale, B_scale, A_scale_global, B_scale_global, M, N, K);
 }
 
