@@ -605,7 +605,6 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
     constexpr int K = std::is_same_v<typename A::T, fp4e2m1_2> ? (trans_a ? A::rows : A::cols) * 2 : (trans_a ? A::rows : A::cols);
     constexpr bool is_k96 = std::is_same_v<typename A::T, fp4e2m1_2> && mma_k == 96;
     constexpr int red_dim = std::is_same_v<typename A::T, fp8e4m3> ? 32 : mma_k;
-    constexpr int num_mma_k = K / red_dim;
     static_assert(
         (is_k96 && K >= red_dim) ||
         (!is_k96 && K % red_dim == 0),
@@ -648,13 +647,13 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
     constexpr int N_offset = N / 32; // 8 if N=256
     constexpr int M_offset = M / 32 / ncta; // 4 if M=256
     if constexpr (is_k96) {
-        static_assert(((num_mma_k - 1) * M_offset) / 4 < SA::cols / 4, "A scale tensor tile is too narrow for the K96 MMA count.");
-        static_assert(((num_mma_k - 1) * N_offset) / 4 < SB::cols / 4, "B scale tensor tile is too narrow for the K96 MMA count.");
+        static_assert((((K / red_dim) - 1) * M_offset) / 4 < SA::cols / 4, "A scale tensor tile is too narrow for the K96 MMA count.");
+        static_assert((((K / red_dim) - 1) * N_offset) / 4 < SB::cols / 4, "B scale tensor tile is too narrow for the K96 MMA count.");
     }
 
     if constexpr (std::is_same_v<typename A::T, fp8e4m3>) { // FP8E4M3 + FP8E8M0 scale (MXFP8)
         #pragma unroll
-        for (int i = 1; i < num_mma_k; i++) {
+        for (int i = 1; i < K / red_dim; i++) {
             detail::tcgen05::template st_st<T_AB, T_SAB, 1, ncta, block_size>(
                 d.addr,
                 a_desc.chunk_descriptor(i),
@@ -666,7 +665,7 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
         }
     } else if constexpr (std::is_same_v<typename A::T, fp4e2m1_2> && block_size == 16) { // FP4E2M1 + FP8E4M3 scale (NVFP4)
         #pragma unroll
-        for (int i = 1; i < num_mma_k; i++) {
+        for (int i = 1; i < K / red_dim; i++) {
             const uint64_t a_desc_i = (mma_k == 96) ? a_desc.chunk_descriptor_k96(i) : a_desc.chunk_descriptor(i);
             const uint64_t b_desc_i = (mma_k == 96) ? b_desc.chunk_descriptor_k96(i) : b_desc.chunk_descriptor(i);
             detail::tcgen05::template st_st<T_AB, T_SAB, 1, ncta, block_size>(
@@ -680,7 +679,7 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
         }
     } else if constexpr (std::is_same_v<typename A::T, fp4e2m1_2> && block_size == 32) { // FP4E2M1 + FP8E8M0 scale
         #pragma unroll
-        for (int i = 1; i < num_mma_k; i++) {
+        for (int i = 1; i < K / red_dim; i++) {
             const uint64_t a_desc_i = (mma_k == 96) ? a_desc.chunk_descriptor_k96(i) : a_desc.chunk_descriptor(i);
             const uint64_t b_desc_i = (mma_k == 96) ? b_desc.chunk_descriptor_k96(i) : b_desc.chunk_descriptor(i);
             detail::tcgen05::template st_st<T_AB, T_SAB, 1, ncta, block_size>(
