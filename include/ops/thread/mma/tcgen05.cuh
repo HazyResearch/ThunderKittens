@@ -632,12 +632,10 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
         detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 3, mma_k>()
     };
 
-    const uint64_t a_desc0 = (mma_k == 96) ? a_desc.chunk_descriptor_k96(0) : a_desc.chunk_descriptor(0);
-    const uint64_t b_desc0 = (mma_k == 96) ? b_desc.chunk_descriptor_k96(0) : b_desc.chunk_descriptor(0);
     detail::tcgen05::template st_st<T_AB, T_SAB, acc, ncta, block_size>(
         d.addr,
-        a_desc0,
-        b_desc0,
+        a_desc.template chunk_descriptor<mma_k>(0),
+        b_desc.template chunk_descriptor<mma_k>(0),
         sa.addr,
         sb.addr,
         idescs[0]
@@ -666,12 +664,10 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
     } else if constexpr (std::is_same_v<typename A::T, fp4e2m1_2> && block_size == 16) { // FP4E2M1 + FP8E4M3 scale (NVFP4)
         #pragma unroll
         for (int i = 1; i < K / red_dim; i++) {
-            const uint64_t a_desc_i = (mma_k == 96) ? a_desc.chunk_descriptor_k96(i) : a_desc.chunk_descriptor(i);
-            const uint64_t b_desc_i = (mma_k == 96) ? b_desc.chunk_descriptor_k96(i) : b_desc.chunk_descriptor(i);
             detail::tcgen05::template st_st<T_AB, T_SAB, 1, ncta, block_size>(
                 d.addr,
-                a_desc_i,
-                b_desc_i,
+                a_desc.template chunk_descriptor<mma_k>(i),
+                b_desc.template chunk_descriptor<mma_k>(i),
                 sa.addr + i * M_offset,
                 sb.addr + i * N_offset,
                 idescs[0] // SFID is always 0
@@ -680,12 +676,10 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
     } else if constexpr (std::is_same_v<typename A::T, fp4e2m1_2> && block_size == 32) { // FP4E2M1 + FP8E8M0 scale
         #pragma unroll
         for (int i = 1; i < K / red_dim; i++) {
-            const uint64_t a_desc_i = (mma_k == 96) ? a_desc.chunk_descriptor_k96(i) : a_desc.chunk_descriptor(i);
-            const uint64_t b_desc_i = (mma_k == 96) ? b_desc.chunk_descriptor_k96(i) : b_desc.chunk_descriptor(i);
             detail::tcgen05::template st_st<T_AB, T_SAB, 1, ncta, block_size>(
                 d.addr,
-                a_desc_i,
-                b_desc_i,
+                a_desc.template chunk_descriptor<mma_k>(i),
+                b_desc.template chunk_descriptor<mma_k>(i),
                 sa.addr + (mma_k == 96 ? (i * M_offset) / 4 : (i >> 1) * M_offset),
                 sb.addr + (mma_k == 96 ? (i * N_offset) / 4 : (i >> 1) * N_offset),
                 (mma_k == 96 || !(i & 1)) ? idescs[0] : idescs[2] // K64 alternates 0/2

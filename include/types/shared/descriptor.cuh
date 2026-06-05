@@ -81,21 +81,26 @@ struct st_descriptor {
         const int outer_offset = byte_offset / ST::swizzle_bytes;
         return base_desc + detail::matrix_descriptor_encode(inner_offset + outer_offset * row_bytes);
     }
-    __device__ inline uint64_t chunk_descriptor_k96(int mma_idx) {
-        uint64_t desc = chunk_descriptor_byte_offset(mma_idx * 48);
-        uint64_t next_desc = chunk_descriptor_byte_offset(mma_idx * 48 + 32);
-        desc &= ~(0x3FFFull << 16);
-        desc |= (next_desc & 0x3FFFull) << 16;
-        desc |= 1ull << 52;
-        return desc;
-    }
+    template<int mma_k=64>
     __device__ inline uint64_t chunk_descriptor(int chunk_idx) {
         // Return the n-th chunk along the K dimension.
         // In MMA instructions, K per tensor core call is always 32 bytes
         //   ex. Hopper: K=32 for FP8, K=16 for BF16/FP16, K=8 for TF32)
-        //   ex. Blackwell: K=64 for FP4, K=32 for FP8, K=16 for BF16/FP16, K=8 for TF32 (*For FP4, K=96 also possible, but we don't support yet)
+        //   ex. Blackwell: K=64 or K=96 for FP4, K=32 for FP8, K=16 for BF16/FP16, K=8 for TF32)
         // So for MN-major, this is same as asking "how to forward 32 bytes worth of elements (=K elements) in the stride dimension?"
         // And for K-major, "how to forward K elements in the leading dimension?"
+        if constexpr (mma_k == 96) {
+            static_assert(!MN_major, "K96 shared descriptors are only supported for K-major tcgen05 operands.");
+            static_assert(std::is_same_v<T, fp4e2m1_2>, "K96 shared descriptors are only supported for packed NVFP4.");
+            // K96 FP4 spans 48B, so fold the swizzle-correct +32B offset into
+            // the leading-offset field and enable K96 descriptor mode.
+            uint64_t desc = chunk_descriptor_byte_offset(chunk_idx * 48);
+            uint64_t next_desc = chunk_descriptor_byte_offset(chunk_idx * 48 + 32);
+            desc &= ~(0x3FFFull << 16);
+            desc |= (next_desc & 0x3FFFull) << 16;
+            desc |= 1ull << 52;
+            return desc;
+        }
         if constexpr (MN_major) { // MN major mode (i.e., K x M for A matrix, K x N for B matrix)
             if constexpr (ST::swizzle_bytes == 128) { // 128B swizzle: 
                 return base_desc + detail::matrix_descriptor_encode(chunk_idx*2048);
