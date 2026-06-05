@@ -605,7 +605,7 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
     constexpr int K_PACKED = trans_a ? A::rows : A::cols;
     constexpr int K = std::is_same_v<typename A::T, fp4e2m1_2> ? K_PACKED * 2 : K_PACKED;
     constexpr bool is_k96 = std::is_same_v<typename A::T, fp4e2m1_2> && mma_k == 96;
-    constexpr int red_dim = std::is_same_v<typename A::T, fp8e4m3> ? 32 : (is_k96 ? 48 : mma_k);
+    constexpr int red_dim = std::is_same_v<typename A::T, fp8e4m3> ? 32 : (is_k96 ? 48 : 64);
     constexpr int num_mma_k = is_k96 ? K_PACKED / red_dim : K / red_dim;
     static_assert(
         (is_k96 && K_PACKED >= red_dim) ||
