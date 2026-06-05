@@ -313,7 +313,7 @@ __global__ void tcgen05_nvfp4_k96_wrapper(
     G::store(o_gl, d_reg, kittens::coord<D_RT>{cta_id, 0});
 }
 
-template<kittens::ducks::gl::all GL_A, kittens::ducks::gl::all GL_B, kittens::ducks::gl::all GL_O, int K_PACKED = 64, int K96_MMA_COUNT = 1>
+template<kittens::ducks::gl::all GL_A, kittens::ducks::gl::all GL_B, kittens::ducks::gl::all GL_O, int K_PACKED = 64>
 __launch_bounds__(kittens::group<4>::GROUP_THREADS)
 __global__ void tcgen05_nvfp4_k96_1cta_wrapper(
     const __grid_constant__ GL_A a_gl,
@@ -364,7 +364,7 @@ __global__ void tcgen05_nvfp4_k96_1cta_wrapper(
     __syncthreads();
 
     if (kittens::warpid() == 0) {
-        G::mm_ABt_k96<K96_MMA_COUNT>(d_tt, a_smem, b_smem, sa_tt, sb_tt, sem);
+        G::mm_ABt_k96(d_tt, a_smem, b_smem, sa_tt, sb_tt, sem);
     }
     kittens::wait(sem, 0);
 
@@ -508,68 +508,6 @@ static void run_nvfp4_k96(test_data &results) {
     one_cta_result.result = good ? test_result::PASSED : test_result::FAILED;
     results.push_back(one_cta_result);
 
-    constexpr int K_PACKED_PADDED = 128;
-    test_info padded_result;
-    padded_result.label = "tcgen05_st_st_mm_ABt_k96_padded=nvfp4_e8m0";
-
-    std::vector<fp4_packed> h_a_padded(M_1CTA * K_PACKED_PADDED, one);
-    std::vector<fp4_packed> h_b_padded(N * K_PACKED_PADDED, one);
-    std::vector<float> h_o_padded(M_1CTA * N, 0.0f);
-    std::vector<float> h_ref_padded(M_1CTA * N, float(K_LOGICAL * 4));
-
-    fp4_packed *d_a_padded, *d_b_padded;
-    float *d_o_padded;
-    cudaMalloc(&d_a_padded, h_a_padded.size() * sizeof(fp4_packed));
-    cudaMalloc(&d_b_padded, h_b_padded.size() * sizeof(fp4_packed));
-    cudaMalloc(&d_o_padded, h_o_padded.size() * sizeof(float));
-    CudaCheckError();
-    cudaMemcpy(d_a_padded, h_a_padded.data(), h_a_padded.size() * sizeof(fp4_packed), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_b_padded, h_b_padded.data(), h_b_padded.size() * sizeof(fp4_packed), cudaMemcpyHostToDevice);
-    cudaMemset(d_o_padded, 0, h_o_padded.size() * sizeof(float));
-    CudaCheckError();
-
-    using A_ST_PADDED = kittens::st<fp4_packed, M_1CTA, K_PACKED_PADDED>;
-    using B_ST_PADDED = kittens::st<fp4_packed, N, K_PACKED_PADDED>;
-    using GL_A_PADDED = kittens::gl<fp4_packed, 1, 1, M_1CTA, K_PACKED_PADDED, A_ST_PADDED>;
-    using GL_B_PADDED = kittens::gl<fp4_packed, 1, 1, N, K_PACKED_PADDED, B_ST_PADDED>;
-    using GL_O_PADDED = kittens::gl<float, 1, 1, M_1CTA, N>;
-    GL_A_PADDED a_gl_padded(d_a_padded, nullptr, nullptr, nullptr, nullptr);
-    GL_B_PADDED b_gl_padded(d_b_padded, nullptr, nullptr, nullptr, nullptr);
-    GL_O_PADDED o_gl_padded(d_o_padded, nullptr, nullptr, nullptr, nullptr);
-
-    cudaFuncSetAttribute(
-        tcgen05_nvfp4_k96_1cta_wrapper<GL_A_PADDED, GL_B_PADDED, GL_O_PADDED, K_PACKED_PADDED, 1>,
-        cudaFuncAttributeMaxDynamicSharedMemorySize,
-        kittens::MAX_SHARED_MEMORY - 1024
-    );
-    tcgen05_nvfp4_k96_1cta_wrapper<GL_A_PADDED, GL_B_PADDED, GL_O_PADDED, K_PACKED_PADDED, 1><<<
-        dim3(1), dim3(kittens::group<4>::GROUP_THREADS), kittens::MAX_SHARED_MEMORY - 1024
-    >>>(a_gl_padded, b_gl_padded, o_gl_padded);
-    CudaCheckError();
-    cudaMemcpy(h_o_padded.data(), d_o_padded, h_o_padded.size() * sizeof(float), cudaMemcpyDeviceToHost);
-    CudaCheckError();
-
-    good = true;
-    bad_idx = -1;
-    for (int i = 0; i < h_o_padded.size(); i++) {
-        if (std::abs(h_o_padded[i] - h_ref_padded[i]) > kNvfp4K96Tol) {
-            good = false;
-            bad_idx = i;
-            break;
-        }
-    }
-    std::cout << "test `" << padded_result.label << "`";
-    if(good) std::cout << " -- PASSED" << std::endl;
-    else     std::cout << " ----- ALERT! FAILED test `" << padded_result.label
-                       << "` first mismatch got " << h_o_padded[bad_idx]
-                       << " expected " << h_ref_padded[bad_idx] << " -----" << std::endl;
-
-    cudaFree(d_a_padded);
-    cudaFree(d_b_padded);
-    cudaFree(d_o_padded);
-    CudaCheckError();
-    padded_result.result = good ? test_result::PASSED : test_result::FAILED;
-    results.push_back(padded_result);
 }
 #endif
 
