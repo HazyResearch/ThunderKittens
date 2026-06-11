@@ -322,7 +322,7 @@ __device__ static inline void st_st(uint32_t d_tt_addr, uint64_t a_desc, uint64_
                 asm volatile(
                     "{.reg .pred p;\n\t"
                     "setp.eq.u32 p, 1, %6;\n\t"
-#if !defined(KITTENS_SM103) && ((__CUDACC_VER_MAJOR__ > 12) || (__CUDACC_VER_MAJOR__ == 12 && __CUDACC_VER_MINOR__ >= 9))
+#if !defined(KITTENS_SM103) && (__CUDACC_VER_MAJOR__ > 12)
                     "tcgen05.mma.cta_group::1.kind::mxf4nvf4.block_scale.block32 [%0], %1, %2, %3, [%4], [%5], p;}\n"
 #else
                     "tcgen05.mma.cta_group::1.kind::mxf4nvf4.block_scale.scale_vec::2X [%0], %1, %2, %3, [%4], [%5], p;}\n"
@@ -334,7 +334,7 @@ __device__ static inline void st_st(uint32_t d_tt_addr, uint64_t a_desc, uint64_
                 asm volatile( // block_size == 16 is an alias for scale_vec::4X
                 "{.reg .pred p;\n\t"
                     "setp.eq.u32 p, 1, %6;\n\t"
-#if !defined(KITTENS_SM103) && ((__CUDACC_VER_MAJOR__ > 12) || (__CUDACC_VER_MAJOR__ == 12 && __CUDACC_VER_MINOR__ >= 9))
+#if !defined(KITTENS_SM103) && (__CUDACC_VER_MAJOR__ > 12)
                     "tcgen05.mma.cta_group::1.kind::mxf4nvf4.block_scale.block16 [%0], %1, %2, %3, [%4], [%5], p;}\n"
 #else
                     "tcgen05.mma.cta_group::1.kind::mxf4nvf4.block_scale.scale_vec::4X [%0], %1, %2, %3, [%4], [%5], p;}\n"
@@ -359,7 +359,7 @@ __device__ static inline void st_st(uint32_t d_tt_addr, uint64_t a_desc, uint64_
                 asm volatile(
                 "{.reg .pred p;\n\t"
                     "setp.eq.u32 p, 1, %6;\n\t"
-#if !defined(KITTENS_SM103) && ((__CUDACC_VER_MAJOR__ > 12) || (__CUDACC_VER_MAJOR__ == 12 && __CUDACC_VER_MINOR__ >= 9))
+#if !defined(KITTENS_SM103) && (__CUDACC_VER_MAJOR__ > 12)
                     "tcgen05.mma.cta_group::2.kind::mxf4nvf4.block_scale.block32 [%0], %1, %2, %3, [%4], [%5], p;}\n"
 #else
                     "tcgen05.mma.cta_group::2.kind::mxf4nvf4.block_scale.scale_vec::2X [%0], %1, %2, %3, [%4], [%5], p;}\n"
@@ -371,7 +371,7 @@ __device__ static inline void st_st(uint32_t d_tt_addr, uint64_t a_desc, uint64_
                 asm volatile( // block_size == 16 is an alias for scale_vec::4X
                 "{.reg .pred p;\n\t"
                     "setp.eq.u32 p, 1, %6;\n\t"
-#if !defined(KITTENS_SM103) && ((__CUDACC_VER_MAJOR__ > 12) || (__CUDACC_VER_MAJOR__ == 12 && __CUDACC_VER_MINOR__ >= 9))
+#if !defined(KITTENS_SM103) && (__CUDACC_VER_MAJOR__ > 12)
                     "tcgen05.mma.cta_group::2.kind::mxf4nvf4.block_scale.block16 [%0], %1, %2, %3, [%4], [%5], p;}\n"
 #else
                     "tcgen05.mma.cta_group::2.kind::mxf4nvf4.block_scale.scale_vec::4X [%0], %1, %2, %3, [%4], [%5], p;}\n"
