@@ -927,7 +927,7 @@ void nvfp4_gemm_entrypoint(
     const at::Tensor &B_sc_global,
     at::Tensor &D
 ) {
-    using C = nvfp4_gemm::config<256, 4, 8, 8, 2, false, true, 4>;
+    using C = nvfp4_gemm::config<256, 4, 16, 8, 2, false, true, 4>;
     using G = nvfp4_gemm::globals<C>;
 
     G g {
