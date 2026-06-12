@@ -1,5 +1,61 @@
 # NVFP4 B300 GEMM performance handoff
 
+## 2026-06-12 update: CLC work stealing landed; scheduling is now ruled out
+
+Cluster-launch-control work stealing (CUTLASS-equivalent) is implemented and
+correct. The grid covers the full problem (64x32 CTAs for the target shape);
+each cluster processes its blockIdx home chunk and then steals pending cluster
+launches via `clusterlaunchcontrol.try_cancel ... .multicast::cluster::all`.
+The canceled chunk has the requesting cluster's shape, and each CTA covers
+first_ctaid + its own in-cluster offset; tile mapping reuses the
+preferred-cluster-aligned region swizzle, so any mix of preferred and fallback
+chunks tiles the grid bijectively. err=0 for 2x1, 4x1, 2x2, 2x4, 4x2, 4x4
+preferred shapes with 2x1 fallback.
+
+Plumbing notes (hard-won):
+- The response/full/empty ring (CLC_DEPTH=3) is consumed by the tile and scale
+  producer warps, the MMA warp (pair leaders), and the consumer warpgroup;
+  producer warp 1 is the scheduler.
+- CRITICAL: slot reuse must be paced CLUSTER-WIDE. Only cluster rank 0 issues
+  try_cancel and waits clc_empty, and every consumer on every CTA arrives at
+  rank 0's clc_empty via tma::cluster::arrive. Per-CTA pacing deadlocks: the
+  multicast response clobbers a peer CTA's unread slot, the pair's item
+  sequences diverge, and the pair leader's tiles_arrived waits forever
+  (observed as 3 straggler clusters parked in TRYWAIT spins under cuda-gdb).
+- ncu --set full crashes on the CLC handshake (error 719 in the SW-counter
+  SASS-patching replay); targeted hardware-counter passes profile fine.
+- A minimal standalone coverage test of the CLC primitive lives in git history
+  (/tmp/clc_test pattern): grid 64x32, atomicAdd coverage, PASS with mixed
+  4x4/2x1 grants.
+
+Measured (M=N=8192, K=33024, err=0, EPI 8/NDT 1):
+
+```text
+CLC 2x2 along_n SG4:  569.4-570.5us  (new best; persistent 2x2 was 586.9)
+CLC 4x1 along_n SG8:  571.1us        (persistent 4x1: 573.6)
+CLC 2x1:              575.4us        (persistent 2x1: 590.7)
+CLC 4x4 best:         623.7us        (persistent 4x4: 660.3)
+reference same day:   0.527 ms, 8.42 PFLOP/s
+```
+
+NCU verdict (reports under /tmp/ncu_clc/, hardware-counter passes):
+- CLC is tensor-duty NEUTRAL: 55.61% at 2x2 vs 55.4% for the old persistent
+  scheduler. Scheduling was never the gap to CUTLASS's 77.5%.
+- 4x4 vs 2x2 (+9% time, same 609.3k tensor cycles/SM): 63% of the loss is
+  long_scoreboard growth - multicast dedup removes L2-hit refetches (TEX
+  sectors -25.5%, hits -61M) and exposes single-miss DRAM latency to all 16
+  receivers at once, while cross-pair commit coupling shrinks the effective
+  LOAD_PIPE_DEPTH; 37% is steal-granularity tail (SM idle 20k -> 57k cycles,
+  148/16 = 9.25 clusters per steal wave). L2 (33-46% peak) and DRAM (28-31%)
+  are nowhere near saturated: the dedup saved bandwidth that was not scarce
+  and surfaced latency that is.
+- Conclusion: 4x4 only pays off with stage recycling decoupled from the
+  slowest cluster receiver or a deeper effective pipeline. With Kb locked to
+  multiples of 384 (K96 x4-block scales + 64B swizzle floor) and 227KB SMEM,
+  deeper staging is blocked in the current TK tile system (see 2026-06-11
+  notes). That pipeline restructure - not scheduling - is what separates TK
+  (55% duty, 570us) from CUTLASS (77.5% duty, 527-534us).
+
 ## 2026-06-11 update: dynamic preferred/fallback clusters landed, bottleneck isolated
 
 The CUTLASS-style dynamic cluster launch is now implemented and correct. Work

@@ -908,10 +908,7 @@ int main(int argc, char **argv) {
 
     // Template parameters: Nb, LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH, SUPERGROUP_SIZE, NUM_D_TILES,
     //                      OVERLAP_EPI, RASTER_ALONG_N, MMA_PER_TILE, APPLY_GLOBAL_SCALE, PREF_M, PREF_N
-    run_benchmark<nvfp4_gemm::config<256, 4, 8, 4, 1, false, false, 4, false, 2, 1>>(8192, 8192, 33024, ncu);
-    run_benchmark<nvfp4_gemm::config<256, 4, 8, 4, 1, false, false, 4, false, 4, 1>>(8192, 8192, 33024, ncu);
-    run_benchmark<nvfp4_gemm::config<256, 4, 8, 4, 1, false, false, 4, false, 2, 2>>(8192, 8192, 33024, ncu);
-    run_benchmark<nvfp4_gemm::config<256, 4, 8, 4, 1, false, false, 4, false, 4, 4>>(8192, 8192, 33024, ncu);
+    run_benchmark<nvfp4_gemm::config<256, 4, 8, 4, 1, false, true, 4, false, 2, 2>>(8192, 8192, 33024, ncu);
 
     return 0;
 }
