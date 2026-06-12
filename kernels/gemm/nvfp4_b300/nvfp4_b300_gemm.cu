@@ -40,6 +40,10 @@ struct config {
     static_assert(PREFERRED_CLUSTER_M % CLUSTER_SIZE == 0, "preferred cluster M must contain whole 2CTA MMA groups");
     static_assert(PREFERRED_CLUSTER_M % FALLBACK_CLUSTER_M == 0 && PREFERRED_CLUSTER_N % FALLBACK_CLUSTER_N == 0,
                   "fallback cluster must tile the preferred cluster");
+    // Cluster-launch-control work stealing: the grid covers the full problem and resident
+    // clusters cancel pending cluster launches to steal their tiles. The response ring must
+    // cover the consumption stagger between the load producers and the epilogue.
+    static constexpr int CLC_DEPTH = 3;
     static constexpr bool USE_PDL = true;
 
     static constexpr int CONSUMER_WARPGROUPS = 1;
@@ -100,13 +104,9 @@ struct globals {
         D_tile D[C::NUM_D_TILES];
     };
     __host__ inline dim3 grid() const {
-        const int macro_row_blocks = D.rows() / C::Mb / C::REGION_PAIRS_M;
-        const int macro_col_blocks = D.cols() / C::Nb / C::REGION_PAIRS_N;
-        const int macro_blocks = macro_row_blocks * macro_col_blocks;
-        const int max_resident_regions = num_sms() / (C::PREFERRED_CLUSTER_M * C::PREFERRED_CLUSTER_N);
-        const int regions = min(macro_blocks, max_resident_regions > 0 ? max_resident_regions : 1);
-        return dim3(regions * C::PREFERRED_CLUSTER_M,
-                    C::PREFERRED_CLUSTER_N);
+        // Full-problem grid in CTA units; cluster-launch-control steals the non-resident
+        // remainder, so no host-side persistence sizing is needed.
+        return dim3(D.rows() / C::Mb * 2, D.cols() / C::Nb);
     }
     __host__ inline dim3 block() const { return dim3(C::NUM_THREADS); }
     __host__ inline int dynamic_shared_memory() const {
@@ -123,6 +123,38 @@ __device__ static inline int2 cluster_nctaid() {
     asm volatile("mov.u32 %0, %%cluster_nctaid.x;\n" : "=r"(dims.x));
     asm volatile("mov.u32 %0, %%cluster_nctaid.y;\n" : "=r"(dims.y));
     return dims;
+}
+
+// Request cancellation of one pending cluster launch. The 16B response and the mbarrier
+// complete-tx are multicast to the same shared-memory offsets in every CTA of the
+// requesting cluster; the canceled chunk has the requesting cluster's shape.
+__device__ static inline void clc_try_cancel(uint4 &response, semaphore &bar) {
+    const uint32_t response_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&response));
+    const uint32_t bar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
+    asm volatile(
+        "clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.multicast::cluster::all.b128 [%0], [%1];\n"
+        :: "r"(response_addr), "r"(bar_addr));
+}
+
+// Returns false when the grid is drained; otherwise first_ctaid is the canceled cluster's
+// first CTA id and each CTA covers first_ctaid + its own offset within the cluster.
+__device__ static inline bool clc_query_cancel(const uint4 &response, int2 &first_ctaid) {
+    const uint32_t response_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&response));
+    uint32_t x, y, z, valid;
+    asm volatile(
+        "{\n\t"
+        ".reg .pred p;\n\t"
+        ".reg .b128 clc_result;\n\t"
+        "ld.shared.b128 clc_result, [%4];\n\t"
+        "clusterlaunchcontrol.query_cancel.is_canceled.pred.b128 p, clc_result;\n\t"
+        "selp.u32 %3, 1, 0, p;\n\t"
+        "@p clusterlaunchcontrol.query_cancel.get_first_ctaid.v4.b32.b128 {%0, %1, %2, _}, clc_result;\n\t"
+        "}\n"
+        : "=r"(x), "=r"(y), "=r"(z), "=r"(valid)
+        : "r"(response_addr)
+        : "memory");
+    first_ctaid = {static_cast<int>(x), static_cast<int>(y)};
+    return valid != 0;
 }
 
 template <typename C>
@@ -152,15 +184,12 @@ __device__ inline void kernel(const globals<C> &g) {
     const int cta_id = cta_x & 1;
     const int pair_leader_rank = cta_rank - cta_id;
     const uint16_t pair_mask = uint16_t(0b11u << pair_leader_rank);
-    // Work assignment is pure blockIdx math over preferred-cluster-aligned regions so that
-    // preferred and fallback clusters compute identical tiles.
-    const int off_x = blockIdx.x % C::PREFERRED_CLUSTER_M;
-    const int pair_x = off_x / C::CLUSTER_SIZE;
-    const int pair_y = blockIdx.y % C::PREFERRED_CLUSTER_N;
+    // Work items are cluster-shaped CTA-id chunks: the home chunk comes from blockIdx, and
+    // subsequent chunks are stolen via cluster launch control. The effective CTA id maps to
+    // a tile through a supergroup swizzle over preferred-cluster-aligned regions, so any mix
+    // of preferred and fallback chunks covers the grid bijectively.
     const int regions_x = gridDim.x / C::PREFERRED_CLUSTER_M;
-    const int regions_y = gridDim.y / C::PREFERRED_CLUSTER_N;
-    const int region_id = (blockIdx.x / C::PREFERRED_CLUSTER_M) + (blockIdx.y / C::PREFERRED_CLUSTER_N) * regions_x;
-    const int num_regions = regions_x * regions_y;
+    const int2 home_base{static_cast<int>(blockIdx.x) - cta_x, static_cast<int>(blockIdx.y) - cta_y};
     uint16_t a_mcast_mask = 0;
     uint16_t b_mcast_mask = 0;
     for (int y = 0; y < cluster_n; ++y) {
@@ -180,7 +209,6 @@ __device__ inline void kernel(const globals<C> &g) {
     const int inputs_finished_count = cluster_n + cluster_m / C::CLUSTER_SIZE - 1;
     const int macro_row_blocks = g.D.rows() / C::Mb / C::REGION_PAIRS_M;
     const int macro_col_blocks = g.D.cols() / C::Nb / C::REGION_PAIRS_N;
-    const int macro_blocks = macro_row_blocks * macro_col_blocks;
     const int num_red_blocks = 2 * g.A.cols() / C::Kb;
     uint32_t stage = 0;
     uint32_t phasebits = 0xFFFF0000;
@@ -203,6 +231,14 @@ __device__ inline void kernel(const globals<C> &g) {
     __shared__ semaphore inputs_finished[C::LOAD_PIPE_DEPTH];
     __shared__ semaphore outputs_arrived;
     __shared__ semaphore outputs_finished;
+    __shared__ alignas(16) uint4 clc_response[C::CLC_DEPTH];
+    __shared__ semaphore clc_full[C::CLC_DEPTH];
+    __shared__ semaphore clc_empty[C::CLC_DEPTH];
+    // The try_cancel response is multicast to every CTA of the cluster, so slot reuse must be
+    // gated cluster-wide: all consumers arrive at rank 0's clc_empty. Per CTA that is the tile
+    // and scale producer warps plus the four consumer warps, plus the MMA warp on pair leaders.
+    const int cluster_size = cluster_m * cluster_n;
+    const int clc_empty_count = cluster_size * 6 + cluster_size / C::CLUSTER_SIZE;
     if (threadIdx.x == 32) {
         init_semaphore(tmem_provisioned, 0, 1);
         init_semaphore(tmem_finished, 0, 1);
@@ -214,8 +250,31 @@ __device__ inline void kernel(const globals<C> &g) {
         }
         init_semaphore(outputs_arrived, 0, 1);
         init_semaphore(outputs_finished, 0, C::CLUSTER_SIZE);
+        #pragma unroll
+        for (int i = 0; i < C::CLC_DEPTH; ++i) {
+            init_semaphore(clc_full[i], 0, 1);
+            init_semaphore(clc_empty[i], 0, clc_empty_count);
+        }
     }
     everyone::tma::cluster::arrive_aligned();
+
+    // Map an effective CTA id (home or stolen) to this CTA's output pair tile.
+    auto tile_coord = [&](int2 base) -> int2 {
+        const int eff_x = base.x + cta_x;
+        const int eff_y = base.y + cta_y;
+        const int swizzle_region = (eff_x / C::PREFERRED_CLUSTER_M) + (eff_y / C::PREFERRED_CLUSTER_N) * regions_x;
+        const int2 macro_coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE, C::RASTER_ALONG_N>(
+            macro_row_blocks, macro_col_blocks, swizzle_region);
+        return {macro_coord.x * C::REGION_PAIRS_M + (eff_x % C::PREFERRED_CLUSTER_M) / C::CLUSTER_SIZE,
+                macro_coord.y * C::REGION_PAIRS_N + (eff_y % C::PREFERRED_CLUSTER_N)};
+    };
+    // Fetch work item `it` (0-based count of steals); returns false when the grid is drained.
+    // The caller signals clc_empty[it % CLC_DEPTH] after the response has been read.
+    auto clc_next = [&](int it, int2 &base) -> bool {
+        const int slot = it % C::CLC_DEPTH;
+        wait(clc_full[slot], (it / C::CLC_DEPTH) & 1);
+        return clc_query_cancel(clc_response[slot], base);
+    };
 
     // Main divergence
     if (warpgroup_id >= C::CONSUMER_WARPGROUPS && warp::elect_leader()) {
@@ -225,11 +284,9 @@ __device__ inline void kernel(const globals<C> &g) {
             // Load input tiles to shared memory
             pdl::wait();
             everyone::tma::cluster::wait();
-            for (int macro_block_idx = region_id; macro_block_idx < macro_blocks; macro_block_idx += num_regions) {
-                const int2 macro_coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE, C::RASTER_ALONG_N>(
-                    macro_row_blocks, macro_col_blocks, macro_block_idx);
-                const int2 coord{macro_coord.x * C::REGION_PAIRS_M + pair_x,
-                                 macro_coord.y * C::REGION_PAIRS_N + pair_y};
+            int2 work_base = home_base;
+            for (int item = 0; ; ++item) {
+                const int2 coord = tile_coord(work_base);
                 for (int i = 0; i < num_red_blocks; ++i) {
 #ifdef NVFP4_PERF_PROBE_HOT_LOADS
                     // Perf probe only: always reload K block 0 (results are WRONG, loads L2-hot).
@@ -243,16 +300,36 @@ __device__ inline void kernel(const globals<C> &g) {
                     update_phasebit<1>(phasebits, stage);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
+                const bool more = clc_next(item, work_base);
+                tma::cluster::arrive(clc_empty[item % C::CLC_DEPTH], 0, 1);
+                if (!more) break;
+            }
+        } else if (warp_id == 1) {
+            // Cluster-launch-control scheduler: every CTA posts the expected response bytes on
+            // its local barrier; cluster rank 0 issues the cancellation request, whose response
+            // and completion are multicast to all CTAs of the (preferred or fallback) cluster.
+            // Only rank 0 paces on clc_empty, which collects arrivals from the whole cluster,
+            // so a new response never clobbers a slot a peer CTA is still reading.
+            everyone::tma::cluster::wait();
+            for (int item = 0; ; ++item) {
+                const int slot = item % C::CLC_DEPTH;
+                if (cta_rank == 0) {
+                    if (item >= C::CLC_DEPTH) wait(clc_empty[slot], ((item - C::CLC_DEPTH) / C::CLC_DEPTH) & 1);
+                    tma::expect_bytes(clc_full[slot], sizeof(uint4));
+                    clc_try_cancel(clc_response[slot], clc_full[slot]);
+                } else {
+                    tma::expect_bytes(clc_full[slot], sizeof(uint4));
+                }
+                int2 base;
+                if (!clc_next(item, base)) break;
             }
         } else if (warp_id == 2) {
             // Load input scales to shared memory
             pdl::wait();
             everyone::tma::cluster::wait();
-            for (int macro_block_idx = region_id; macro_block_idx < macro_blocks; macro_block_idx += num_regions) {
-                const int2 macro_coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE, C::RASTER_ALONG_N>(
-                    macro_row_blocks, macro_col_blocks, macro_block_idx);
-                const int2 coord{macro_coord.x * C::REGION_PAIRS_M + pair_x,
-                                 macro_coord.y * C::REGION_PAIRS_N + pair_y};
+            int2 work_base = home_base;
+            for (int item = 0; ; ++item) {
+                const int2 coord = tile_coord(work_base);
                 for (int i = 0; i < num_red_blocks; ++i) {
                     wait(inputs_finished[stage], get_phasebit<1>(phasebits, stage));
                     if (cta_y == 0) tma::cluster::load_async(input_scales[stage].A, g.A_sc, {coord.x*2 + cta_id, i, 0, 0}, scales_arrived[stage], a_mcast_mask, pair_leader_rank);
@@ -264,6 +341,9 @@ __device__ inline void kernel(const globals<C> &g) {
                     update_phasebit<1>(phasebits, stage);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
+                const bool more = clc_next(item, work_base);
+                tma::cluster::arrive(clc_empty[item % C::CLC_DEPTH], 0, 1);
+                if (!more) break;
             }
         } else if (cta_id == 0 && warp_id == 0) {
             // Launch tensor core matrix multiplies
@@ -273,7 +353,8 @@ __device__ inline void kernel(const globals<C> &g) {
             auto out_tm  = tm_allocator.template allocate<full_tt_fl<C::Nb>>(0);
             auto A_sc_tm = tm_allocator.template allocate<full_tt_fp8e8m0<16*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(256);
             auto B_sc_tm = tm_allocator.template allocate<full_tt_fp8e8m0<32*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(256+4*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH);
-            for (int macro_block_idx = region_id; macro_block_idx < macro_blocks; macro_block_idx += num_regions) {
+            int2 work_base = home_base;
+            for (int item = 0; ; ++item) {
                 wait(outputs_finished, get_phasebit<1>(phasebits, 0));
                 tensor_after_thread_sync();
                 for (int i = 0; i < num_red_blocks; i++) {
@@ -312,6 +393,9 @@ __device__ inline void kernel(const globals<C> &g) {
                 }
                 tensor_commit<2>(outputs_arrived, pair_mask);
                 update_phasebit<1>(phasebits, 0);
+                const bool more = clc_next(item, work_base);
+                tma::cluster::arrive(clc_empty[item % C::CLC_DEPTH], 0, 1);
+                if (!more) break;
             }
         }
     } else if (warpgroup_id < C::CONSUMER_WARPGROUPS) {
@@ -326,11 +410,9 @@ __device__ inline void kernel(const globals<C> &g) {
         auto out_tm = tm_allocator.template allocate<full_tt_fl<C::Nb>>(0);
         const float global_scale = g.A_sc_global[{0}] * g.B_sc_global[{0}];
 
-        for (int macro_block_idx = region_id; macro_block_idx < macro_blocks; macro_block_idx += num_regions) {
-            const int2 macro_coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE, C::RASTER_ALONG_N>(
-                macro_row_blocks, macro_col_blocks, macro_block_idx);
-            const int2 coord{macro_coord.x * C::REGION_PAIRS_M + pair_x,
-                             macro_coord.y * C::REGION_PAIRS_N + pair_y};
+        int2 work_base = home_base;
+        for (int item = 0; ; ++item) {
+            const int2 coord = tile_coord(work_base);
 
             // Wait for the last matmul to complete.
             wait(outputs_arrived, get_phasebit<0>(phasebits, 0));
@@ -339,9 +421,7 @@ __device__ inline void kernel(const globals<C> &g) {
             // Perf probe only: release the accumulator without draining it (D is WRONG).
             warpgroup::sync(1);
             warpgroup::tma::cluster::arrive(outputs_finished, pair_leader_rank, 1);
-            update_phasebit<0>(phasebits, 0);
-            continue;
-#endif
+#else
             // Load the output from tensor memory into registers and store to HBM.
             if constexpr (C::OVERLAP_EPI) {
                 #pragma unroll
@@ -383,7 +463,11 @@ __device__ inline void kernel(const globals<C> &g) {
                     warpgroup::tma::store_async<dim::ROW, cache_policy::EVICT_FIRST>(g.D, output_tiles.D[i%C::NUM_D_TILES], {coord.x*2 + cta_id, C::EPI_PIPE_DEPTH*coord.y + i});
                 }
             }
+#endif
             update_phasebit<0>(phasebits, 0);
+            const bool more = clc_next(item, work_base);
+            if (laneid() == 0) tma::cluster::arrive(clc_empty[item % C::CLC_DEPTH], 0, 1);
+            if (!more) break;
         }
         warpgroup::sync(1);
         warpgroup::pdl::arrive();
@@ -824,7 +908,10 @@ int main(int argc, char **argv) {
 
     // Template parameters: Nb, LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH, SUPERGROUP_SIZE, NUM_D_TILES,
     //                      OVERLAP_EPI, RASTER_ALONG_N, MMA_PER_TILE, APPLY_GLOBAL_SCALE, PREF_M, PREF_N
+    run_benchmark<nvfp4_gemm::config<256, 4, 8, 4, 1, false, false, 4, false, 2, 1>>(8192, 8192, 33024, ncu);
     run_benchmark<nvfp4_gemm::config<256, 4, 8, 4, 1, false, false, 4, false, 4, 1>>(8192, 8192, 33024, ncu);
+    run_benchmark<nvfp4_gemm::config<256, 4, 8, 4, 1, false, false, 4, false, 2, 2>>(8192, 8192, 33024, ncu);
+    run_benchmark<nvfp4_gemm::config<256, 4, 8, 4, 1, false, false, 4, false, 4, 4>>(8192, 8192, 33024, ncu);
 
     return 0;
 }
