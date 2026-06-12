@@ -12,7 +12,10 @@ template <
     int _NUM_D_TILES,
     bool _OVERLAP_EPI,
     bool _RASTER_ALONG_N=false,
-    int _MMA_PER_TILE=4
+    int _MMA_PER_TILE=4,
+    bool _APPLY_GLOBAL_SCALE=true,
+    int _PREFERRED_CLUSTER_M=4,
+    int _PREFERRED_CLUSTER_N=4
 >
 struct config {
     static_assert(_Nb == 128 || _Nb == 256, "Nb must be 128 or 256");
@@ -21,9 +24,22 @@ struct config {
     static_assert(_SUPERGROUP_SIZE > 0, "SUPERGROUP_SIZE must be greater than 0");
     static_assert(_NUM_D_TILES > 0, "NUM_D_TILES must be greater than 0");
     static_assert(_MMA_PER_TILE % 4 == 0, "MMA_PER_TILE must be a multiple of 4");
-    static_assert(_EPI_PIPE_DEPTH <= 1 || _NUM_D_TILES >= 2, "NUM_D_TILES must be at least 2 if EPI_PIPE_DEPTH > 1");
+    // NUM_D_TILES == 1 with EPI_PIPE_DEPTH > 1 is allowed: store_async_read_wait<0> fully
+    // serializes SMEM reuse against outstanding TMA reads.
 
     static constexpr int CLUSTER_SIZE = 2;
+    // CUTLASS-style dynamic cluster launch: the driver grants the preferred shape where it can
+    // and decomposes the rest into fallback clusters. Work assignment is region-based blockIdx
+    // math so both shapes compute identical tiles; only TMA multicast scope differs.
+    static constexpr int PREFERRED_CLUSTER_M = _PREFERRED_CLUSTER_M;
+    static constexpr int PREFERRED_CLUSTER_N = _PREFERRED_CLUSTER_N;
+    static constexpr int FALLBACK_CLUSTER_M = 2;
+    static constexpr int FALLBACK_CLUSTER_N = 1;
+    static constexpr int REGION_PAIRS_M = PREFERRED_CLUSTER_M / CLUSTER_SIZE;
+    static constexpr int REGION_PAIRS_N = PREFERRED_CLUSTER_N;
+    static_assert(PREFERRED_CLUSTER_M % CLUSTER_SIZE == 0, "preferred cluster M must contain whole 2CTA MMA groups");
+    static_assert(PREFERRED_CLUSTER_M % FALLBACK_CLUSTER_M == 0 && PREFERRED_CLUSTER_N % FALLBACK_CLUSTER_N == 0,
+                  "fallback cluster must tile the preferred cluster");
     static constexpr bool USE_PDL = true;
 
     static constexpr int CONSUMER_WARPGROUPS = 1;
@@ -39,6 +55,7 @@ struct config {
 
     static constexpr int SUPERGROUP_SIZE = _SUPERGROUP_SIZE;
     static constexpr int MMA_PER_TILE = _MMA_PER_TILE;
+    static constexpr bool APPLY_GLOBAL_SCALE = _APPLY_GLOBAL_SCALE;
     static constexpr int Mb = 256;
     static constexpr int Nb = _Nb;
     static constexpr int Kb = 96 * MMA_PER_TILE;
@@ -82,9 +99,14 @@ struct globals {
     struct outputs_t {
         D_tile D[C::NUM_D_TILES];
     };
-
     __host__ inline dim3 grid() const {
-        return dim3(min((D.rows()/(C::Mb/2))*(D.cols()/C::Nb), num_sms()));
+        const int macro_row_blocks = D.rows() / C::Mb / C::REGION_PAIRS_M;
+        const int macro_col_blocks = D.cols() / C::Nb / C::REGION_PAIRS_N;
+        const int macro_blocks = macro_row_blocks * macro_col_blocks;
+        const int max_resident_regions = num_sms() / (C::PREFERRED_CLUSTER_M * C::PREFERRED_CLUSTER_N);
+        const int regions = min(macro_blocks, max_resident_regions > 0 ? max_resident_regions : 1);
+        return dim3(regions * C::PREFERRED_CLUSTER_M,
+                    C::PREFERRED_CLUSTER_N);
     }
     __host__ inline dim3 block() const { return dim3(C::NUM_THREADS); }
     __host__ inline int dynamic_shared_memory() const {
@@ -96,11 +118,21 @@ struct globals {
     }
 };
 
+__device__ static inline int2 cluster_nctaid() {
+    int2 dims;
+    asm volatile("mov.u32 %0, %%cluster_nctaid.x;\n" : "=r"(dims.x));
+    asm volatile("mov.u32 %0, %%cluster_nctaid.y;\n" : "=r"(dims.y));
+    return dims;
+}
+
 template <typename C>
 __device__ inline void kernel(const globals<C> &g) {
     using G = globals<C>;
 
     if (threadIdx.x == 0) {
+#ifdef NVFP4_DEBUG_CLUSTER_SHAPE
+        if (cluster_ctarank() == 0) printf("block (%d,%d): cluster %dx%d\n", blockIdx.x, blockIdx.y, cluster_nctaid().x, cluster_nctaid().y);
+#endif
         g.A.template prefetch_tma<typename G::A_fp4x2_tile>();
         g.A_sc.template prefetch_tma<typename G::A_sc_tile>();
         g.B.template prefetch_tma<typename G::B_fp4x2_tile>();
@@ -109,11 +141,46 @@ __device__ inline void kernel(const globals<C> &g) {
     }
 
     const int warpgroup_id = warpgroup::groupid();
-    const int cta_id = cluster_ctarank();
-    const int cluster_id = clusterIdx().x;
-    const int num_row_blocks = g.D.rows() / C::Mb;
-    const int num_col_blocks = g.D.cols() / C::Nb;
-    const int num_blocks = num_row_blocks * num_col_blocks;
+    // Actual cluster geometry (preferred or fallback), used only for TMA multicast scope,
+    // load-issuer election, and barrier signaling.
+    const int cta_rank = cluster_ctarank();
+    const int2 cluster_dims = cluster_nctaid();
+    const int cluster_m = cluster_dims.x;
+    const int cluster_n = cluster_dims.y;
+    const int cta_x = cta_rank % cluster_m;
+    const int cta_y = cta_rank / cluster_m;
+    const int cta_id = cta_x & 1;
+    const int pair_leader_rank = cta_rank - cta_id;
+    const uint16_t pair_mask = uint16_t(0b11u << pair_leader_rank);
+    // Work assignment is pure blockIdx math over preferred-cluster-aligned regions so that
+    // preferred and fallback clusters compute identical tiles.
+    const int off_x = blockIdx.x % C::PREFERRED_CLUSTER_M;
+    const int pair_x = off_x / C::CLUSTER_SIZE;
+    const int pair_y = blockIdx.y % C::PREFERRED_CLUSTER_N;
+    const int regions_x = gridDim.x / C::PREFERRED_CLUSTER_M;
+    const int regions_y = gridDim.y / C::PREFERRED_CLUSTER_N;
+    const int region_id = (blockIdx.x / C::PREFERRED_CLUSTER_M) + (blockIdx.y / C::PREFERRED_CLUSTER_N) * regions_x;
+    const int num_regions = regions_x * regions_y;
+    uint16_t a_mcast_mask = 0;
+    uint16_t b_mcast_mask = 0;
+    for (int y = 0; y < cluster_n; ++y) {
+        a_mcast_mask |= uint16_t(1u << (y * cluster_m + cta_x));
+    }
+    for (int group_m = 0; group_m < cluster_m / C::CLUSTER_SIZE; ++group_m) {
+        b_mcast_mask |= uint16_t(1u << (cta_y * cluster_m + group_m * C::CLUSTER_SIZE + cta_id));
+    }
+    const uint16_t b_scale_mcast_mask = uint16_t(((1u << cluster_m) - 1u) << (cta_y * cluster_m));
+    // Stage-free commits must reach every CTA that issues loads consumed by this pair: the
+    // pair's cluster column (A and A scales) and the pair's cluster row (B and B scales).
+    // Each CTA then receives cluster_n + cluster_m/2 - 1 commits per stage.
+    uint16_t inputs_finished_mask = b_scale_mcast_mask;
+    for (int y = 0; y < cluster_n; ++y) {
+        inputs_finished_mask |= uint16_t(0b11u << (y * cluster_m + (cta_x & ~1)));
+    }
+    const int inputs_finished_count = cluster_n + cluster_m / C::CLUSTER_SIZE - 1;
+    const int macro_row_blocks = g.D.rows() / C::Mb / C::REGION_PAIRS_M;
+    const int macro_col_blocks = g.D.cols() / C::Nb / C::REGION_PAIRS_N;
+    const int macro_blocks = macro_row_blocks * macro_col_blocks;
     const int num_red_blocks = 2 * g.A.cols() / C::Kb;
     uint32_t stage = 0;
     uint32_t phasebits = 0xFFFF0000;
@@ -143,7 +210,7 @@ __device__ inline void kernel(const globals<C> &g) {
         for (int i = 0; i < C::LOAD_PIPE_DEPTH; ++i) {
             init_semaphore(tiles_arrived[i], 0, 1);
             init_semaphore(scales_arrived[i], 0, 1);
-            init_semaphore(inputs_finished[i], 0, 1);
+            init_semaphore(inputs_finished[i], 0, inputs_finished_count);
         }
         init_semaphore(outputs_arrived, 0, 1);
         init_semaphore(outputs_finished, 0, C::CLUSTER_SIZE);
@@ -158,14 +225,21 @@ __device__ inline void kernel(const globals<C> &g) {
             // Load input tiles to shared memory
             pdl::wait();
             everyone::tma::cluster::wait();
-            for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
-                const int2 coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE, C::RASTER_ALONG_N>(
-                    num_row_blocks, num_col_blocks, block_idx);
-
+            for (int macro_block_idx = region_id; macro_block_idx < macro_blocks; macro_block_idx += num_regions) {
+                const int2 macro_coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE, C::RASTER_ALONG_N>(
+                    macro_row_blocks, macro_col_blocks, macro_block_idx);
+                const int2 coord{macro_coord.x * C::REGION_PAIRS_M + pair_x,
+                                 macro_coord.y * C::REGION_PAIRS_N + pair_y};
                 for (int i = 0; i < num_red_blocks; ++i) {
+#ifdef NVFP4_PERF_PROBE_HOT_LOADS
+                    // Perf probe only: always reload K block 0 (results are WRONG, loads L2-hot).
+                    const int kb = 0;
+#else
+                    const int kb = i;
+#endif
                     wait(inputs_finished[stage], get_phasebit<1>(phasebits, stage));
-                    tma::cluster::load_async(input_tiles[stage].A, g.A, {coord.x*2 + cta_id, i}, tiles_arrived[stage], (uint16_t)(1<<cta_id), 0);
-                    tma::cluster::load_async(input_tiles[stage].B, g.B, {coord.y*2 + cta_id, i}, tiles_arrived[stage], (uint16_t)(1<<cta_id), 0);
+                    if (cta_y == 0) tma::cluster::load_async(input_tiles[stage].A, g.A, {coord.x*2 + cta_id, kb}, tiles_arrived[stage], a_mcast_mask, pair_leader_rank);
+                    if (cta_x < C::CLUSTER_SIZE) tma::cluster::load_async(input_tiles[stage].B, g.B, {coord.y*2 + cta_id, kb}, tiles_arrived[stage], b_mcast_mask, pair_leader_rank);
                     update_phasebit<1>(phasebits, stage);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
@@ -174,15 +248,19 @@ __device__ inline void kernel(const globals<C> &g) {
             // Load input scales to shared memory
             pdl::wait();
             everyone::tma::cluster::wait();
-            for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
-                const int2 coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE, C::RASTER_ALONG_N>(
-                    num_row_blocks, num_col_blocks, block_idx);
-
+            for (int macro_block_idx = region_id; macro_block_idx < macro_blocks; macro_block_idx += num_regions) {
+                const int2 macro_coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE, C::RASTER_ALONG_N>(
+                    macro_row_blocks, macro_col_blocks, macro_block_idx);
+                const int2 coord{macro_coord.x * C::REGION_PAIRS_M + pair_x,
+                                 macro_coord.y * C::REGION_PAIRS_N + pair_y};
                 for (int i = 0; i < num_red_blocks; ++i) {
                     wait(inputs_finished[stage], get_phasebit<1>(phasebits, stage));
-                    tma::cluster::load_async(input_scales[stage].A, g.A_sc, {coord.x*2 + cta_id, i, 0, 0}, scales_arrived[stage], (uint16_t)(1<<cta_id), 0);
-                    if constexpr (C::B_SC_SIZE == 2) tma::cluster::load_async(input_scales[stage].B[cta_id], g.B_sc, {coord.y*2 + cta_id, i, 0, 0}, scales_arrived[stage], (uint16_t)(0b11), 0);
-                    else if (cta_id == 0)            tma::cluster::load_async(input_scales[stage].B[0], g.B_sc, {coord.y, i, 0, 0}, scales_arrived[stage], (uint16_t)(0b11), 0);
+                    if (cta_y == 0) tma::cluster::load_async(input_scales[stage].A, g.A_sc, {coord.x*2 + cta_id, i, 0, 0}, scales_arrived[stage], a_mcast_mask, pair_leader_rank);
+                    if constexpr (C::B_SC_SIZE == 2) {
+                        if (cta_x < C::CLUSTER_SIZE) tma::cluster::load_async(input_scales[stage].B[cta_id], g.B_sc, {coord.y*2 + cta_id, i, 0, 0}, scales_arrived[stage], b_scale_mcast_mask, pair_leader_rank);
+                    } else if (cta_id == 0 && cta_x < C::CLUSTER_SIZE) {
+                        tma::cluster::load_async(input_scales[stage].B[0], g.B_sc, {coord.y, i, 0, 0}, scales_arrived[stage], b_scale_mcast_mask, pair_leader_rank);
+                    }
                     update_phasebit<1>(phasebits, stage);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
@@ -195,12 +273,16 @@ __device__ inline void kernel(const globals<C> &g) {
             auto out_tm  = tm_allocator.template allocate<full_tt_fl<C::Nb>>(0);
             auto A_sc_tm = tm_allocator.template allocate<full_tt_fp8e8m0<16*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(256);
             auto B_sc_tm = tm_allocator.template allocate<full_tt_fp8e8m0<32*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(256+4*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH);
-            for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
+            for (int macro_block_idx = region_id; macro_block_idx < macro_blocks; macro_block_idx += num_regions) {
                 wait(outputs_finished, get_phasebit<1>(phasebits, 0));
                 tensor_after_thread_sync();
                 for (int i = 0; i < num_red_blocks; i++) {
                     tma::expect_bytes(scales_arrived[stage], 2*sizeof(G::input_scales_t));
                     wait(scales_arrived[stage], get_phasebit<0>(phasebits, stage));
+#ifdef NVFP4_PERF_PROBE_NO_SCALE_CP
+                    // Perf probe only: skip steady-state scale TMEM copies (results are WRONG).
+                    if (i < C::LOAD_PIPE_DEPTH)
+#endif
                     #pragma unroll
                     for (int ii = 0; ii < C::MMA_PER_TILE; ii++) {
                         auto A_sc_tm_subtile = A_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage*C::MMA_PER_TILE*16+ii*16);
@@ -220,15 +302,15 @@ __device__ inline void kernel(const globals<C> &g) {
                     if (i == 0) mm2_ABt_k96(out_tm, input_tiles[stage].A, input_tiles[stage].B,
                                         A_sc_tm.template subtile<full_tt_fp8e8m0<C::MMA_PER_TILE*16>>(stage*C::MMA_PER_TILE*16),
                                         B_sc_tm.template subtile<full_tt_fp8e8m0<C::MMA_PER_TILE*32>>(stage*C::MMA_PER_TILE*32),
-                                        inputs_finished[stage]);
+                                        inputs_finished[stage], inputs_finished_mask);
                     else       mma2_ABt_k96(out_tm, input_tiles[stage].A, input_tiles[stage].B,
                                         A_sc_tm.template subtile<full_tt_fp8e8m0<C::MMA_PER_TILE*16>>(stage*C::MMA_PER_TILE*16),
                                         B_sc_tm.template subtile<full_tt_fp8e8m0<C::MMA_PER_TILE*32>>(stage*C::MMA_PER_TILE*32),
-                                        inputs_finished[stage]);
+                                        inputs_finished[stage], inputs_finished_mask);
                     update_phasebit<0>(phasebits, stage);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
-                tensor_commit<2>(outputs_arrived);
+                tensor_commit<2>(outputs_arrived, pair_mask);
                 update_phasebit<1>(phasebits, 0);
             }
         }
@@ -244,14 +326,23 @@ __device__ inline void kernel(const globals<C> &g) {
         auto out_tm = tm_allocator.template allocate<full_tt_fl<C::Nb>>(0);
         const float global_scale = g.A_sc_global[{0}] * g.B_sc_global[{0}];
 
-        for (int block_idx = cluster_id; block_idx < num_blocks; block_idx += gridDim.x / C::CLUSTER_SIZE) {
-            const int2 coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE, C::RASTER_ALONG_N>(
-                num_row_blocks, num_col_blocks, block_idx);
+        for (int macro_block_idx = region_id; macro_block_idx < macro_blocks; macro_block_idx += num_regions) {
+            const int2 macro_coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE, C::RASTER_ALONG_N>(
+                macro_row_blocks, macro_col_blocks, macro_block_idx);
+            const int2 coord{macro_coord.x * C::REGION_PAIRS_M + pair_x,
+                             macro_coord.y * C::REGION_PAIRS_N + pair_y};
 
-            // Wait for the last matmul to complete
+            // Wait for the last matmul to complete.
             wait(outputs_arrived, get_phasebit<0>(phasebits, 0));
 
-            // Load the output from tensor memory into registers and store to HBM
+#ifdef NVFP4_PERF_PROBE_NO_EPI
+            // Perf probe only: release the accumulator without draining it (D is WRONG).
+            warpgroup::sync(1);
+            warpgroup::tma::cluster::arrive(outputs_finished, pair_leader_rank, 1);
+            update_phasebit<0>(phasebits, 0);
+            continue;
+#endif
+            // Load the output from tensor memory into registers and store to HBM.
             if constexpr (C::OVERLAP_EPI) {
                 #pragma unroll
                 for (int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
@@ -261,9 +352,9 @@ __device__ inline void kernel(const globals<C> &g) {
                         tensor_load_wait();
                         tensor_before_thread_sync();
                         warpgroup::sync(1);
-                        warpgroup::tma::cluster::arrive(outputs_finished, 0, 1); // signal CTA 0
+                        warpgroup::tma::cluster::arrive(outputs_finished, pair_leader_rank, 1);
                     }
-                    warp::mul(D_reg, D_reg, global_scale);
+                    if constexpr (C::APPLY_GLOBAL_SCALE) warp::mul(D_reg, D_reg, global_scale);
                     warpgroup::tma::store_async_read_wait<C::NUM_D_TILES-1>();
                     warpgroup::sync(1);
                     warpgroup::store(output_tiles.D[i%C::NUM_D_TILES], D_reg);
@@ -276,13 +367,13 @@ __device__ inline void kernel(const globals<C> &g) {
                 for (int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
                     rt_fl<C::Mb / 8, C::Nb/C::EPI_PIPE_DEPTH> D_reg_fl;
                     warpgroup::load_async(D_reg_fl, out_tm.template subtile<full_tt_fl<C::Nb/C::EPI_PIPE_DEPTH>>(0, C::Nb/C::EPI_PIPE_DEPTH*i));
-                    warp::mul(D_reg_fl, D_reg_fl, global_scale);
+                    if constexpr (C::APPLY_GLOBAL_SCALE) warp::mul(D_reg_fl, D_reg_fl, global_scale);
                     warp::copy(D_reg[i], D_reg_fl);
                 }
                 tensor_load_wait();
                 tensor_before_thread_sync();
                 warpgroup::sync(1);
-                warpgroup::tma::cluster::arrive(outputs_finished, 0, 1); // signal CTA 0
+                warpgroup::tma::cluster::arrive(outputs_finished, pair_leader_rank, 1);
                 #pragma unroll
                 for (int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
                     warpgroup::tma::store_async_read_wait<C::NUM_D_TILES-1>();
@@ -297,7 +388,7 @@ __device__ inline void kernel(const globals<C> &g) {
         warpgroup::sync(1);
         warpgroup::pdl::arrive();
         if (warpgroup::warpid() == 0) {
-            if (warp::elect_leader()) tma::cluster::arrive(tmem_finished, 1-cta_id);
+            if (warp::elect_leader()) tma::cluster::arrive(tmem_finished, cta_rank ^ 1);
             wait(tmem_finished, 0);
             tm_allocator.deprovision();
         }
@@ -586,8 +677,9 @@ __device__ inline void fp4x2_to_fp32_kernel(const globals &G) {
 
 #include "../common.cuh"
 
+// No static __cluster_dims__: cluster shape is chosen at launch (preferred with fallback).
 template <typename C>
-__cluster_dims__(C::CLUSTER_SIZE) __launch_bounds__(C::NUM_THREADS)
+__launch_bounds__(C::NUM_THREADS)
 __global__ void kernel_entrypoint(const __grid_constant__ nvfp4_gemm::globals<C> g) {
     nvfp4_gemm::kernel<C>(g);
 }
@@ -598,6 +690,7 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
 
     std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
     std::cout << "Template: Mb=" << C::Mb << " Nb=" << C::Nb << " Kb=" << C::Kb
+              << " PREF_CLUSTER=" << C::PREFERRED_CLUSTER_M << "x" << C::PREFERRED_CLUSTER_N
               << " RASTER=" << (C::RASTER_ALONG_N ? "along_n" : "along_m")
               << " MMA_PER_TILE=" << C::MMA_PER_TILE
               << " SUPERGROUP_SIZE=" << C::SUPERGROUP_SIZE << " LOAD_PIPE_DEPTH=" << C::LOAD_PIPE_DEPTH
@@ -637,12 +730,12 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     cudaMalloc(&d_D_ref, M * N * sizeof(__nv_bfloat16));
 
     // Initialize matrices with random values on device
-    uint64_t seed = 2024;
+    uint64_t seed = 2026;
     for (int i = 0; i < arg_group_count; i++) {
         fill<uint8_t, FillMode::CONSTANT>(reinterpret_cast<uint8_t*>(d_A[i]), M*K/2, 0x22);
+        fill<__nv_fp8_e8m0, FillMode::RANDOM>(d_A_sc[i], A_scale_elems, seed + i*100 + 1, 1.0f, 4.0f);
+        fill<__nv_fp8_e8m0, FillMode::RANDOM>(d_B_sc[i], B_scale_elems, seed + i*100 + 2, 1.0f, 4.0f);
         fill<uint8_t, FillMode::CONSTANT>(reinterpret_cast<uint8_t*>(d_B[i]), N*K/2, 0x22);
-        fill<__nv_fp8_e8m0, FillMode::RANDOM>(d_A_sc[i], A_scale_elems, seed + i*100 + 2, 0.5f, 2.0f);
-        fill<__nv_fp8_e8m0, FillMode::RANDOM>(d_B_sc[i], B_scale_elems, seed + i*100 + 3, 0.5f, 2.0f);
         fill<float, FillMode::CONSTANT>(d_A_sc_global[i], 1, 1.0f);
         fill<float, FillMode::CONSTANT>(d_B_sc_global[i], 1, 1.0f);
         fill<__nv_bfloat16, FillMode::CONSTANT>(d_D[i], M*N, 0.0f);
@@ -669,11 +762,14 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
 
     // Set kernel attributes
     CUDACHECK(cudaFuncSetAttribute(kernel_entrypoint<C>, cudaFuncAttributeMaxDynamicSharedMemorySize, g[0].dynamic_shared_memory()));
-    LaunchConfig<true, true> launch_config(g[0].grid(), g[0].block(), g[0].dynamic_shared_memory(), 0, C::CLUSTER_SIZE);
+    CUDACHECK(cudaFuncSetAttribute(kernel_entrypoint<C>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
+    dim3 preferred_cluster(C::PREFERRED_CLUSTER_M, C::PREFERRED_CLUSTER_N, 1);
+    dim3 fallback_cluster(C::FALLBACK_CLUSTER_M, C::FALLBACK_CLUSTER_N, 1);
+    LaunchConfig<true, true> launch_config(g[0].grid(), g[0].block(), g[0].dynamic_shared_memory(), 0, preferred_cluster, fallback_cluster);
 
     // Number of iterations
-    int num_warmups = ncu ? 0 : 5;
-    int num_iters = ncu ? 1 : 10;
+    int num_warmups = ncu ? 0 : 10;
+    int num_iters = ncu ? 1 : 50;
 
     // Warmup
     for (int i = 0; i < num_warmups; i++) {
@@ -723,22 +819,12 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     return tflops;
 }
 
-int main() {
-    int N;
-    bool ncu = false;
+int main(int argc, char **argv) {
+    bool ncu = argc > 1 && std::string(argv[1]) == "--ncu";
 
-    // Template parameters: Nb, LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH, SUPERGROUP_SIZE, NUM_D_TILES, OVERLAP_EPI, RASTER_ALONG_N, MMA_PER_TILE
-    N = 1024;
-    run_benchmark<nvfp4_gemm::config<128, 1, 4, 8, 2, true, true, 4>>(N, N, 3072, ncu);
-    N = 2048;
-    run_benchmark<nvfp4_gemm::config<256, 1, 8, 8, 2, true, true, 4>>(N, N, 3072, ncu);
-    N = 4096;
-    run_benchmark<nvfp4_gemm::config<256, 1, 8, 8, 2, false, true, 4>>(N, N, 6144, ncu);
-    N = 8192;
-    run_benchmark<nvfp4_gemm::config<256, 1, 16, 8, 2, false, true, 4>>(N, N, 12288, ncu);
-    N = 16384;
-    run_benchmark<nvfp4_gemm::config<256, 1, 16, 8, 2, false, true, 4>>(N, N, 12288, ncu);
-    run_benchmark<nvfp4_gemm::config<256, 4, 16, 8, 2, false, true, 4>>(8192, 8192, 43008, ncu);
+    // Template parameters: Nb, LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH, SUPERGROUP_SIZE, NUM_D_TILES,
+    //                      OVERLAP_EPI, RASTER_ALONG_N, MMA_PER_TILE, APPLY_GLOBAL_SCALE, PREF_M, PREF_N
+    run_benchmark<nvfp4_gemm::config<256, 4, 8, 4, 1, false, false, 4, false, 4, 1>>(8192, 8192, 33024, ncu);
 
     return 0;
 }

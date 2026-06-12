@@ -692,9 +692,9 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
     }
 }
 template<int trans_a, int n_trans_b, ducks::tt::all D, ducks::st_descriptor::input A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB, int acc=1, int ncta=1, int mma_k=64>
-__device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, const SB &sb, semaphore &sem) {
+__device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, const SB &sb, semaphore &sem, uint16_t dst_cta_mask = 0b11) {
     mma<trans_a, n_trans_b, D, A, B, SA, SB, acc, ncta, mma_k>(d, a, b, sa, sb);
-    detail::tcgen05::commit<ncta>(sem);
+    detail::tcgen05::commit<ncta>(sem, dst_cta_mask);
 }
 
 // Accumulator / numcta wrappers
@@ -803,16 +803,16 @@ __device__ static inline void mma2_ABt(D &d, const A &a, const B &b, const SA &s
     mma2<transpose::N, transpose::T, D, A, B, SA, SB, 1>(d, a, b, sa, sb);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
-__device__ static inline void mma_ABt_k96(D &d, const A &a, const B &b, const SA &sa, const SB &sb, semaphore &sem) {
-    mma<transpose::N, transpose::T, D, A, B, SA, SB, 1, 1, 96>(d, a, b, sa, sb, sem);
+__device__ static inline void mma_ABt_k96(D &d, const A &a, const B &b, const SA &sa, const SB &sb, semaphore &sem, uint16_t dst_cta_mask = 0b11) {
+    mma<transpose::N, transpose::T, D, A, B, SA, SB, 1, 1, 96>(d, a, b, sa, sb, sem, dst_cta_mask);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
 __device__ static inline void mma_ABt_k96(D &d, const A &a, const B &b, const SA &sa, const SB &sb) {
     mma<transpose::N, transpose::T, D, A, B, SA, SB, 1, 1, 96>(d, a, b, sa, sb);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
-__device__ static inline void mma2_ABt_k96(D &d, const A &a, const B &b, const SA &sa, const SB &sb, semaphore &sem) {
-    mma<transpose::N, transpose::T, D, A, B, SA, SB, 1, 2, 96>(d, a, b, sa, sb, sem);
+__device__ static inline void mma2_ABt_k96(D &d, const A &a, const B &b, const SA &sa, const SB &sb, semaphore &sem, uint16_t dst_cta_mask = 0b11) {
+    mma<transpose::N, transpose::T, D, A, B, SA, SB, 1, 2, 96>(d, a, b, sa, sb, sem, dst_cta_mask);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
 __device__ static inline void mma2_ABt_k96(D &d, const A &a, const B &b, const SA &sa, const SB &sb) {
@@ -900,16 +900,16 @@ __device__ static inline void mm2_ABt(D &d, const A &a, const B &b, const SA &sa
     mma2<transpose::N, transpose::T, D, A, B, SA, SB, 0>(d, a, b, sa, sb);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
-__device__ static inline void mm_ABt_k96(D &d, const A &a, const B &b, const SA &sa, const SB &sb, semaphore &sem) {
-    mma<transpose::N, transpose::T, D, A, B, SA, SB, 0, 1, 96>(d, a, b, sa, sb, sem);
+__device__ static inline void mm_ABt_k96(D &d, const A &a, const B &b, const SA &sa, const SB &sb, semaphore &sem, uint16_t dst_cta_mask = 0b11) {
+    mma<transpose::N, transpose::T, D, A, B, SA, SB, 0, 1, 96>(d, a, b, sa, sb, sem, dst_cta_mask);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
 __device__ static inline void mm_ABt_k96(D &d, const A &a, const B &b, const SA &sa, const SB &sb) {
     mma<transpose::N, transpose::T, D, A, B, SA, SB, 0, 1, 96>(d, a, b, sa, sb);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
-__device__ static inline void mm2_ABt_k96(D &d, const A &a, const B &b, const SA &sa, const SB &sb, semaphore &sem) {
-    mma<transpose::N, transpose::T, D, A, B, SA, SB, 0, 2, 96>(d, a, b, sa, sb, sem);
+__device__ static inline void mm2_ABt_k96(D &d, const A &a, const B &b, const SA &sa, const SB &sb, semaphore &sem, uint16_t dst_cta_mask = 0b11) {
+    mma<transpose::N, transpose::T, D, A, B, SA, SB, 0, 2, 96>(d, a, b, sa, sb, sem, dst_cta_mask);
 }
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
 __device__ static inline void mm2_ABt_k96(D &d, const A &a, const B &b, const SA &sa, const SB &sb) {
