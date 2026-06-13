@@ -927,7 +927,10 @@ void nvfp4_gemm_entrypoint(
     const at::Tensor &B_sc_global,
     at::Tensor &D
 ) {
-    using C = nvfp4_gemm::config<256, 4, 16, 8, 2, false, true, 4>;
+    // PyTorch path launches a static CLUSTER_SIZE (2x1) cluster via py::launch_kernel, so the
+    // preferred-cluster region geometry must also be 2x1; otherwise tile mapping truncates for
+    // any N/Nb (or M/Mb*2) not divisible by the preferred cluster dim (illegal instruction).
+    using C = nvfp4_gemm::config<256, 4, 16, 8, 2, false, true, 4, true, 2, 1>;
     using G = nvfp4_gemm::globals<C>;
 
     G g {
