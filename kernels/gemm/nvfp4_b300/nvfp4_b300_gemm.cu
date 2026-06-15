@@ -55,10 +55,24 @@ struct globals {
     using B_sc_tile    = st_fp8e8m0<32, 16*C::MMA_PER_TILE, false>;
     using D_tile       = st_bf<C::Mb/2, C::Nb/C::EPI_PIPE_DEPTH>;
 
+    // Fine-grained sub-tile staging of A/B along K. Each sub-load
+    // fills exactly one swizzle period (one L2-line-aligned K-slice) of the K-tile,
+    // signalling its own mbarrier, so the MMA consumer can begin issuing K96 chunks
+    // as soon as the slices they touch have landed -- without waiting for the whole
+    // K-tile. fp4e2m1_2 is 1 byte/col, so swizzle_bytes == cols-per-period.
+    static constexpr int SUBCOL       = A_fp4x2_tile::swizzle_bytes;
+    static constexpr int NUM_SUBLOADS = (C::Kb/2) / SUBCOL;
+    static_assert((C::Kb/2) % SUBCOL == 0, "K-tile must be a whole number of swizzle periods.");
+    // Explicit swizzle_bytes so the type matches A_fp4x2_tile::subtile<SUBCOL>(s).
+    using A_fp4x2_sub_tile = st_fp4e2m1_2<C::Mb/2, SUBCOL, true, SUBCOL>;
+    using B_fp4x2_sub_tile = st_fp4e2m1_2<C::Nb/2, SUBCOL, true, SUBCOL>;
+
     using A_fp4x2_gl     = gl<fp4e2m1_2,  1,  1, -1, -1, A_fp4x2_tile>;
+    using A_fp4x2_sub_gl = gl<fp4e2m1_2,  1,  1, -1, -1, A_fp4x2_sub_tile>;
     using A_sc_gl        = gl<fp8e8m0,   -1, -1, 32, 16*C::MMA_PER_TILE, A_sc_tile>;
     using A_sc_global_gl = gl<float,      1,  1,  1,  1>;
     using B_fp4x2_gl     = gl<fp4e2m1_2,  1,  1, -1, -1, B_fp4x2_tile>;
+    using B_fp4x2_sub_gl = gl<fp4e2m1_2,  1,  1, -1, -1, B_fp4x2_sub_tile>;
     using B_sc_gl        = gl<fp8e8m0,   -1, -1, 32, 16*C::MMA_PER_TILE, B_sc_tile>;
     using B_sc_global_gl = gl<float,      1,  1,  1,  1>;
     using D_gl           = gl<bf16,       1,  1, -1, -1, D_tile>;
@@ -70,6 +84,8 @@ struct globals {
     B_sc_gl        B_sc;        // (N // 128) x (K // Kb) x 32 x (16*MMA_PER_TILE)
     B_sc_global_gl B_sc_global; // (1,)
     D_gl           D;           // M x N
+    A_fp4x2_sub_gl A_sub;       // alias of A with a per-swizzle-period TMA box
+    B_fp4x2_sub_gl B_sub;       // alias of B with a per-swizzle-period TMA box
 
     struct input_tiles_t {
         A_fp4x2_tile A;
@@ -102,8 +118,10 @@ __device__ inline void kernel(const globals<C> &g) {
 
     if (threadIdx.x == 0) {
         g.A.template prefetch_tma<typename G::A_fp4x2_tile>();
+        g.A_sub.template prefetch_tma<typename G::A_fp4x2_sub_tile>();
         g.A_sc.template prefetch_tma<typename G::A_sc_tile>();
         g.B.template prefetch_tma<typename G::B_fp4x2_tile>();
+        g.B_sub.template prefetch_tma<typename G::B_fp4x2_sub_tile>();
         g.B_sc.template prefetch_tma<typename G::B_sc_tile>();
         g.D.template prefetch_tma<typename G::D_tile>();
     }
@@ -131,7 +149,7 @@ __device__ inline void kernel(const globals<C> &g) {
     // Set up mbarriers
     __shared__ uint32_t tmem_addr;
     __shared__ semaphore tmem_provisioned, tmem_finished;
-    __shared__ semaphore tiles_arrived[C::LOAD_PIPE_DEPTH];
+    __shared__ semaphore tiles_arrived[C::LOAD_PIPE_DEPTH][G::NUM_SUBLOADS];
     __shared__ semaphore scales_arrived[C::LOAD_PIPE_DEPTH];
     __shared__ semaphore inputs_finished[C::LOAD_PIPE_DEPTH];
     __shared__ semaphore outputs_arrived;
@@ -141,7 +159,9 @@ __device__ inline void kernel(const globals<C> &g) {
         init_semaphore(tmem_finished, 0, 1);
         #pragma unroll
         for (int i = 0; i < C::LOAD_PIPE_DEPTH; ++i) {
-            init_semaphore(tiles_arrived[i], 0, 1);
+            #pragma unroll
+            for (int s = 0; s < G::NUM_SUBLOADS; ++s)
+                init_semaphore(tiles_arrived[i][s], 0, 1);
             init_semaphore(scales_arrived[i], 0, 1);
             init_semaphore(inputs_finished[i], 0, 1);
         }
@@ -164,8 +184,13 @@ __device__ inline void kernel(const globals<C> &g) {
 
                 for (int i = 0; i < num_red_blocks; ++i) {
                     wait(inputs_finished[stage], get_phasebit<1>(phasebits, stage));
-                    tma::cluster::load_async(input_tiles[stage].A, g.A, {coord.x*2 + cta_id, i}, tiles_arrived[stage], (uint16_t)(1<<cta_id), 0);
-                    tma::cluster::load_async(input_tiles[stage].B, g.B, {coord.y*2 + cta_id, i}, tiles_arrived[stage], (uint16_t)(1<<cta_id), 0);
+                    #pragma unroll
+                    for (int s = 0; s < G::NUM_SUBLOADS; ++s) {
+                        tma::cluster::load_async(input_tiles[stage].A.template subtile<G::SUBCOL>(s), g.A_sub,
+                            {coord.x*2 + cta_id, i*G::NUM_SUBLOADS + s}, tiles_arrived[stage][s], (uint16_t)(1<<cta_id), 0);
+                        tma::cluster::load_async(input_tiles[stage].B.template subtile<G::SUBCOL>(s), g.B_sub,
+                            {coord.y*2 + cta_id, i*G::NUM_SUBLOADS + s}, tiles_arrived[stage][s], (uint16_t)(1<<cta_id), 0);
+                    }
                     update_phasebit<1>(phasebits, stage);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
@@ -215,16 +240,26 @@ __device__ inline void kernel(const globals<C> &g) {
                             load_mxnv_scale_async2(B_sc_tm_subtile_1, B_sc_sm_subtile_1);
                         }
                     }
-                    tma::expect_bytes(tiles_arrived[stage], 2*sizeof(G::input_tiles_t));
-                    wait(tiles_arrived[stage], get_phasebit<0>(phasebits, stage));
-                    if (i == 0) mm2_ABt_k96(out_tm, input_tiles[stage].A, input_tiles[stage].B,
-                                        A_sc_tm.template subtile<full_tt_fp8e8m0<C::MMA_PER_TILE*16>>(stage*C::MMA_PER_TILE*16),
-                                        B_sc_tm.template subtile<full_tt_fp8e8m0<C::MMA_PER_TILE*32>>(stage*C::MMA_PER_TILE*32),
-                                        inputs_finished[stage]);
-                    else       mma2_ABt_k96(out_tm, input_tiles[stage].A, input_tiles[stage].B,
-                                        A_sc_tm.template subtile<full_tt_fp8e8m0<C::MMA_PER_TILE*16>>(stage*C::MMA_PER_TILE*16),
-                                        B_sc_tm.template subtile<full_tt_fp8e8m0<C::MMA_PER_TILE*32>>(stage*C::MMA_PER_TILE*32),
-                                        inputs_finished[stage]);
+                    #pragma unroll
+                    for (int s = 0; s < G::NUM_SUBLOADS; ++s)
+                        tma::expect_bytes(tiles_arrived[stage][s],
+                            2*(sizeof(typename G::A_fp4x2_sub_tile) + sizeof(typename G::B_fp4x2_sub_tile)));
+                    {
+                        auto A_sc_sub = A_sc_tm.template subtile<full_tt_fp8e8m0<C::MMA_PER_TILE*16>>(stage*C::MMA_PER_TILE*16);
+                        auto B_sc_sub = B_sc_tm.template subtile<full_tt_fp8e8m0<C::MMA_PER_TILE*32>>(stage*C::MMA_PER_TILE*32);
+                        const uint32_t tphase = get_phasebit<0>(phasebits, stage);
+                        int waited = -1;
+                        #pragma unroll
+                        for (int ii = 0; ii < C::MMA_PER_TILE; ii++) {
+                            // K96 chunk ii reads bytes [ii*48, ii*48+48) of the K-tile;
+                            // wait until every sub-load slice it touches has landed.
+                            const int need = (ii*48 + 47) / G::SUBCOL;
+                            while (waited < need) { ++waited; wait(tiles_arrived[stage][waited], tphase); }
+                            mma2_ABt_k96_chunk(out_tm, input_tiles[stage].A, input_tiles[stage].B,
+                                               A_sc_sub, B_sc_sub, ii, (i == 0 && ii == 0));
+                        }
+                        mma_k96_commit<2>(inputs_finished[stage]);
+                    }
                     update_phasebit<0>(phasebits, stage);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
@@ -664,7 +699,9 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
         typename G::B_sc_gl Bsg{d_B_sc[i], N/128, K/C::Kb, nullptr, nullptr};
         typename G::B_sc_global_gl Bsgg{d_B_sc_global[i], nullptr, nullptr, nullptr, nullptr};
         typename G::D_gl Dg{d_D[i], nullptr, nullptr, M, N};
-        g.push_back(G{Ag, Asg, Asgg, Bg, Bsg, Bsgg, Dg});
+        typename G::A_fp4x2_sub_gl Asub{d_A[i], nullptr, nullptr, M, K/2};
+        typename G::B_fp4x2_sub_gl Bsub{d_B[i], nullptr, nullptr, N, K/2};
+        g.push_back(G{Ag, Asg, Asgg, Bg, Bsg, Bsgg, Dg, Asub, Bsub});
     }
 
     // Set kernel attributes
@@ -728,17 +765,14 @@ int main() {
     bool ncu = false;
 
     // Template parameters: Nb, LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH, SUPERGROUP_SIZE, NUM_D_TILES, OVERLAP_EPI, RASTER_ALONG_N, MMA_PER_TILE
-    N = 1024;
-    run_benchmark<nvfp4_gemm::config<128, 1, 4, 8, 2, true, true, 4>>(N, N, 3072, ncu);
-    N = 2048;
-    run_benchmark<nvfp4_gemm::config<256, 1, 8, 8, 2, true, true, 4>>(N, N, 3072, ncu);
-    N = 4096;
-    run_benchmark<nvfp4_gemm::config<256, 1, 8, 8, 2, false, true, 4>>(N, N, 6144, ncu);
-    N = 8192;
-    run_benchmark<nvfp4_gemm::config<256, 1, 16, 8, 2, false, true, 4>>(N, N, 12288, ncu);
-    N = 16384;
-    run_benchmark<nvfp4_gemm::config<256, 1, 16, 8, 2, false, true, 4>>(N, N, 12288, ncu);
-    run_benchmark<nvfp4_gemm::config<256, 4, 16, 8, 2, false, true, 4>>(8192, 8192, 43008, ncu);
+    // Validate sub-load pipelining against the device reference (reference_nvfp4_gemm).
+    std::cout << "\n## Kb=384 (MMA_PER_TILE=4) + sub-load pipelining ##\n";
+    run_benchmark<nvfp4_gemm::config<256, 4, 16, 8, 2, false, true, 4>>(2048, 2048, 1536, ncu);
+    run_benchmark<nvfp4_gemm::config<256, 4, 16, 8, 2, false, true, 4>>(4096, 4096, 6144, ncu);
+    std::cout << "\n## Kb=768 (MMA_PER_TILE=8, depth 2) + sub-load pipelining ##\n";
+    run_benchmark<nvfp4_gemm::config<256, 2, 16, 8, 2, false, true, 8>>(2048, 2048, 1536, ncu);
+    run_benchmark<nvfp4_gemm::config<256, 2, 16, 8, 2, false, true, 8>>(4096, 4096, 6144, ncu);
+    run_benchmark<nvfp4_gemm::config<256, 2, 16, 8, 2, false, true, 8>>(8192, 8192, 12288, ncu);
 
     return 0;
 }
@@ -757,7 +791,7 @@ void nvfp4_gemm_entrypoint(
     const at::Tensor &B_sc_global,
     at::Tensor &D
 ) {
-    using C = nvfp4_gemm::config<256, 4, 16, 8, 2, false, true, 4>;
+    using C = nvfp4_gemm::config<256, 2, 16, 8, 2, false, true, 8>;
     using G = nvfp4_gemm::globals<C>;
 
     G g {
@@ -767,7 +801,9 @@ void nvfp4_gemm_entrypoint(
         .B = kittens::py::tensor_to_gl<typename G::B_fp4x2_gl>(B),
         .B_sc = kittens::py::tensor_to_gl<typename G::B_sc_gl, false>(B_sc, B_sc.size(0), B_sc.size(1), 32, 16*C::MMA_PER_TILE),
         .B_sc_global = kittens::py::tensor_to_gl<typename G::B_sc_global_gl>(B_sc_global),
-        .D = kittens::py::tensor_to_gl<typename G::D_gl>(D)
+        .D = kittens::py::tensor_to_gl<typename G::D_gl>(D),
+        .A_sub = kittens::py::tensor_to_gl<typename G::A_fp4x2_sub_gl>(A),
+        .B_sub = kittens::py::tensor_to_gl<typename G::B_fp4x2_sub_gl>(B)
     };
     kittens::py::launch_kernel<C, G, nvfp4_gemm::kernel<C>>(g);
 }

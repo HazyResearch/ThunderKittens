@@ -948,4 +948,93 @@ __device__ static inline void mm2_AtBt(D &d, const A &a, const B &b) {
     mma2<transpose::T, transpose::T, D, A, B, 0>(d, a, b);
 }
 
+// ---------------------------------------------------------------------------
+// Single-chunk NVFP4 K96 microscaling MMA.
+//
+// Issues exactly one tcgen05 MMA for K96 chunk `chunk_idx` of the (full,
+// contiguous) A/B shared tiles, reading the matching scale panel from TMEM.
+// This mirrors one iteration of the K96 loop inside the core `mma`, but exposes
+// it so the consumer can interleave per-chunk MMAs with finer-grained input
+// readiness barriers (CuteDSL-style sub-tile staging). `init` selects whether
+// this chunk initializes (acc=0) or accumulates (acc=1) into the accumulator.
+// No commit is performed; call `mma_k96_commit` after the final chunk.
+template<int trans_a, int n_trans_b, int ncta, ducks::tt::all D, ducks::st_descriptor::input A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
+__device__ static inline void mma_k96_chunk(D &d, const A &a, const B &b, const SA &sa, const SB &sb, int chunk_idx, bool init) {
+    using T_AB  = typename A::T;
+    using T_SAB = typename SA::T;
+    using T_D   = typename D::T;
+    static_assert(std::is_same_v<T_AB, fp4e2m1_2>, "mma_k96_chunk is only for NVFP4 operands.");
+    constexpr int block_size = std::is_same_v<typename SA::T, fp8e4m3> ? 16 : 32;
+    constexpr int trans_b = 1 - n_trans_b;
+    constexpr int M = (trans_a ? A::cols : A::rows) * ncta;
+    constexpr int N = (trans_b ? B::cols : B::rows) * ncta;
+    constexpr int M_offset = M / 32 / ncta;
+    constexpr int N_offset = N / 32;
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, trans_a> a_desc(a);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, trans_b> b_desc(b);
+    constexpr uint32_t idesc0 = detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 0, 96>();
+    const uint64_t ad = a_desc.template chunk_descriptor<96>(chunk_idx);
+    const uint64_t bd = b_desc.template chunk_descriptor<96>(chunk_idx);
+    if (init)
+        detail::tcgen05::template st_st<T_AB, T_SAB, 0, ncta, block_size>(
+            d.addr, ad, bd, sa.addr + chunk_idx * M_offset, sb.addr + chunk_idx * N_offset, idesc0);
+    else
+        detail::tcgen05::template st_st<T_AB, T_SAB, 1, ncta, block_size>(
+            d.addr, ad, bd, sa.addr + chunk_idx * M_offset, sb.addr + chunk_idx * N_offset, idesc0);
+}
+template<int ncta>
+__device__ static inline void mma_k96_commit(semaphore &sem) {
+    detail::tcgen05::commit<ncta>(sem);
+}
+// ABt, cta_group::2 convenience wrapper matching mm2_ABt_k96/mma2_ABt_k96.
+template<ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
+__device__ static inline void mma2_ABt_k96_chunk(D &d, const A &a, const B &b, const SA &sa, const SB &sb, int chunk_idx, bool init) {
+    mma_k96_chunk<transpose::N, transpose::T, 2, D, A, B, SA, SB>(d, a, b, sa, sb, chunk_idx, init);
+}
+
+// ---------------------------------------------------------------------------
+// Single-chunk NVFP4 K64 microscaling MMA (E8M0 / block32 scales).
+//
+// Mirrors `mma_k96_chunk` but issues exactly one K64 tcgen05 MMA for chunk
+// `chunk_idx` of the (full, contiguous) A/B shared tiles. The K64 block32 scale
+// addressing matches the core `mma` loop: two consecutive chunks share one
+// scale panel (the panel index advances every 2 chunks) and alternate the
+// scale-factor-id between 0 and 2. `init` selects acc=0 (initialize) vs acc=1
+// (accumulate). No commit is performed; call `mma_k96_commit` after the final
+// chunk (it is K-agnostic and just commits to the semaphore).
+template<int trans_a, int n_trans_b, int ncta, ducks::tt::all D, ducks::st_descriptor::input A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
+__device__ static inline void mma_k64_chunk(D &d, const A &a, const B &b, const SA &sa, const SB &sb, int chunk_idx, bool init) {
+    using T_AB  = typename A::T;
+    using T_SAB = typename SA::T;
+    using T_D   = typename D::T;
+    static_assert(std::is_same_v<T_AB, fp4e2m1_2>, "mma_k64_chunk is only for NVFP4 operands.");
+    static_assert(std::is_same_v<T_SAB, fp8e8m0>, "mma_k64_chunk expects E8M0 (block32) scale factors.");
+    constexpr int block_size = 32;
+    constexpr int trans_b = 1 - n_trans_b;
+    constexpr int M = (trans_a ? A::cols : A::rows) * ncta;
+    constexpr int N = (trans_b ? B::cols : B::rows) * ncta;
+    constexpr int M_offset = M / 32 / ncta;
+    constexpr int N_offset = N / 32;
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, trans_a> a_desc(a);
+    kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, trans_b> b_desc(b);
+    constexpr uint32_t idesc0 = detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 0, 64>();
+    constexpr uint32_t idesc2 = detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 2, 64>();
+    const uint64_t ad = a_desc.template chunk_descriptor<64>(chunk_idx);
+    const uint64_t bd = b_desc.template chunk_descriptor<64>(chunk_idx);
+    const uint32_t sa_addr = sa.addr + (chunk_idx >> 1) * M_offset;
+    const uint32_t sb_addr = sb.addr + (chunk_idx >> 1) * N_offset;
+    const uint32_t idesc   = (chunk_idx & 1) ? idesc2 : idesc0;
+    if (init)
+        detail::tcgen05::template st_st<T_AB, T_SAB, 0, ncta, block_size>(
+            d.addr, ad, bd, sa_addr, sb_addr, idesc);
+    else
+        detail::tcgen05::template st_st<T_AB, T_SAB, 1, ncta, block_size>(
+            d.addr, ad, bd, sa_addr, sb_addr, idesc);
+}
+// ABt, cta_group::2 convenience wrapper matching mma2_ABt_k96_chunk.
+template<ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
+__device__ static inline void mma2_ABt_k64_chunk(D &d, const A &a, const B &b, const SA &sa, const SB &sb, int chunk_idx, bool init) {
+    mma_k64_chunk<transpose::N, transpose::T, 2, D, A, B, SA, SB>(d, a, b, sa, sb, chunk_idx, init);
+}
+
 } // namespace kittens
