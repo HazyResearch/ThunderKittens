@@ -816,10 +816,13 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     // Initialize matrices with random values on device
     uint64_t seed = 2026;
     for (int i = 0; i < arg_group_count; i++) {
-        fill<uint8_t, FillMode::CONSTANT>(reinterpret_cast<uint8_t*>(d_A[i]), M*K/2, 0x22);
+        // Varying random FP4 bytes instead of a constant fill. Every byte is a valid
+        // pair of e2m1 nibbles and the device reference reads the same bytes, so this is
+        // a fair test -- but unlike constant 0x22 it does NOT mask SMEM-layout / K-read bugs.
+        fill<uint8_t, FillMode::RANDOM>(reinterpret_cast<uint8_t*>(d_A[i]), M*K/2, seed + i*100 + 3, 0.0f, 256.0f);
         fill<__nv_fp8_e8m0, FillMode::RANDOM>(d_A_sc[i], A_scale_elems, seed + i*100 + 1, 1.0f, 4.0f);
         fill<__nv_fp8_e8m0, FillMode::RANDOM>(d_B_sc[i], B_scale_elems, seed + i*100 + 2, 1.0f, 4.0f);
-        fill<uint8_t, FillMode::CONSTANT>(reinterpret_cast<uint8_t*>(d_B[i]), N*K/2, 0x22);
+        fill<uint8_t, FillMode::RANDOM>(reinterpret_cast<uint8_t*>(d_B[i]), N*K/2, seed + i*100 + 4, 0.0f, 256.0f);
         fill<float, FillMode::CONSTANT>(d_A_sc_global[i], 1, 1.0f);
         fill<float, FillMode::CONSTANT>(d_B_sc_global[i], 1, 1.0f);
         fill<__nv_bfloat16, FillMode::CONSTANT>(d_D[i], M*N, 0.0f);
