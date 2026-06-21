@@ -20,7 +20,11 @@ struct matmul_template {
     static constexpr int M_BLOCK = _M_BLOCK, N_BLOCK = _N_BLOCK, SUPER_M = _SUPER_M;
     using layout    = matmul_layout<M_BLOCK, N_BLOCK>;
     using wide_tile = st_bf<64, 64*N_BLOCK>;
+#ifdef KITTENS_SM120
+    static constexpr int NUM_CONSUMER_WARPS=M_BLOCK*4, INPUT_PIPE_STAGES=2, PRODUCER_BARRIER_ARRIVALS=1; // 99KB smem on GB10
+#else
     static constexpr int NUM_CONSUMER_WARPS=M_BLOCK*4, INPUT_PIPE_STAGES=4, PRODUCER_BARRIER_ARRIVALS=1;
+#endif
     // Helper functions
     template<bool PERISISTENT_GRID=true> __host__ static inline dim3 grid(int M, int N, int K) {
         return dim3(PERISISTENT_GRID ? 132 : M*N/(M_BLOCK*N_BLOCK*layout::base_tile::num_elements));
@@ -212,7 +216,11 @@ int main() {
     // run_benchmark<matmul_template<12>>(4096, 4096, 4096, Rblocks, Cblocks, Rblocks192, Cblocks192);
     int N;
     N = 4096;
+#ifdef KITTENS_SM120
+    run_benchmark<matmul_template<2,2,8>>(N, N, N); // smaller blocks to fit 99KB smem on GB10
+#else
     run_benchmark<matmul_template<2,4,8>>(N, N, N);
+#endif
     // N = 3072;
     // run_benchmark<matmul_template<2,4,8>>(N, N, N);
     // run_benchmark<matmul_template<3,3,8>>(N, N, N);

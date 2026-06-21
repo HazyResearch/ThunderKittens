@@ -24,7 +24,13 @@ template<int _headdim, int _warps> struct rotary_layout {
     struct consumer_state { rt_fl<16, headdim/2> sin, cos; }; // long-resident tiles
 };
 template<int _headdim> struct rotary_template {
+#ifdef KITTENS_SM120
+    // GB10/SM120 has only 99 KB shared memory (vs 227 KB on H100). Halve the
+    // consumer warps and pipeline depth so the LCSF buffers fit.
+    static constexpr int headdim=_headdim, NUM_CONSUMER_WARPS=4, NUM_BLOCKS=1, OUTPUT_PIPE_STAGES=2, INPUT_PIPE_STAGES=2;
+#else
     static constexpr int headdim=_headdim, NUM_CONSUMER_WARPS=8, NUM_BLOCKS=1, OUTPUT_PIPE_STAGES=3, INPUT_PIPE_STAGES=3;
+#endif
     using layout = rotary_layout<headdim, NUM_CONSUMER_WARPS>;
     __device__ static inline void common_setup(common_setup_args<layout> args) {
         if(args.task_iter == 0) {
