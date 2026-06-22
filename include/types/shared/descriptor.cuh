@@ -92,10 +92,20 @@ struct st_descriptor {
         if constexpr (mma_k == 96) {
             static_assert(!MN_major, "K96 shared descriptors are only supported for K-major tcgen05 operands.");
             static_assert(std::is_same_v<T, fp4e2m1_2>, "K96 shared descriptors are only supported for packed NVFP4.");
-            // K96 FP4 spans 48B, so fold the swizzle-correct +32B offset into
-            // the leading-offset field and enable K96 descriptor mode.
-            uint64_t desc = chunk_descriptor_byte_offset(chunk_idx * 48);
-            uint64_t next_desc = chunk_descriptor_byte_offset(chunk_idx * 48 + 32);
+            // A K96 NVFP4 chunk is 48B, so it straddles the 128B swizzle boundary. PTX uses
+            // "absolute address mode" (lbo_mode bit 52) for this, which requires a 128B swizzle.
+            // See PTX ISA 9.7.17.3.1.2 "Absolute address mode for K dimension being 48B".
+            static_assert(ST::swizzle_bytes == 128,
+                "K96 descriptors require a 128B swizzle atom (MMA_PER_TILE a multiple of 8).");
+            // A chunk is three 16B boxes at byte base=48*chunk_idx. Boxes are read from
+            // start_address until one crosses the 128B band edge; that box and the rest are
+            // read from leading_byte_offset instead, so lbo points at the first crossing box.
+            const int base  = chunk_idx * 48;
+            const int inner = base % 128;
+            const int gap   = 128 - inner;                      // bytes from `base` to the band edge
+            const int lbo_byte = base + (gap < 48 ? gap : 32);  // first crossing box, else the 3rd box
+            uint64_t desc      = chunk_descriptor_byte_offset(base);
+            uint64_t next_desc = chunk_descriptor_byte_offset(lbo_byte);
             desc &= ~(0x3FFFull << 16);
             desc |= (next_desc & 0x3FFFull) << 16;
             desc |= 1ull << 52;
