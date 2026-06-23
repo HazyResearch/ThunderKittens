@@ -2,7 +2,7 @@
 # If you want to run lots of tests without parallel compilation, be prepared
 # to spend a *long* time compiling. (like, HOURS single-threaded.)
 
-# Architecture Selection: Set to SM80, SM90, SM100, SM103, or SM120
+# Architecture Selection: Set to SM80, SM90, SM100, SM103, SM120, or SM121 (GB10)
 ARCH=SM90
 COMP_LEVEL=fast
 
@@ -40,6 +40,10 @@ else ifeq ($(ARCH),SM100)
 NVCCFLAGS+= -gencode arch=compute_100a,code=sm_100a -DKITTENS_SM100 -lcuda -lcudart
 else ifeq ($(ARCH),SM103)
 NVCCFLAGS+= -gencode arch=compute_103a,code=sm_103a -DKITTENS_SM103 -lcuda -lcudart
+else ifeq ($(ARCH),SM121)
+# GB10 (DGX Spark): SM120 feature set, native sm_121a SASS (sm_120a won't load on sm_121).
+# GB10 is single-GPU, so skip the multi-GPU (PGL) tests.
+NVCCFLAGS+= -gencode arch=compute_121a,code=sm_121a -DKITTENS_SM120 -DNUM_GPUS=1 -lcuda -lcudart
 else ifeq ($(ARCH),SM120)
 NVCCFLAGS+= -gencode arch=compute_120a,code=sm_120a -DKITTENS_SM120 -lcuda -lcudart
 endif

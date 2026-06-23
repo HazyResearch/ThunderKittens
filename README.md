@@ -150,6 +150,7 @@ Altogether, this is less than 100 lines of code, and achieves about 855 TFLOPs o
 #### Hardware requirements
 
 * ThunderKittens is mainly built and tested for Hopper and Blackwell GPUs.
+* **GB10 / DGX Spark** (consumer Blackwell, `sm_121`): library primitives and H100 kernels run via a WGMMA shim — build with `make ARCH=SM121`.
 * We no longer actively support Ampere GPUs. However, contributions are welcomed!
 
 #### Build requirements
@@ -352,7 +353,7 @@ ThunderKittens has fairly comprehensive unit testing suite. Simply run `make -j`
 
 The `tests/Makefile` provides several options to customize the test:
 
-* `ARCH`: Set to `SM80`, `SM90`, `SM100`, `SM103`, or `SM120` to specify the target GPU architecture (default: `SM90`).
+* `ARCH`: Set to `SM80`, `SM90`, `SM100`, `SM103`, `SM120`, or `SM121` to specify the target GPU architecture (default: `SM90`). `SM121` targets GB10 (consumer Blackwell / DGX Spark): it uses the `SM120` feature set but emits native `sm_121a` SASS.
 * `COMP_LEVEL`: Set the compiler optimization level. Available options are `fast`, `debug`, and `profile` (default: fast).
 * `TEST_INTENSITY`: Set the level of test intensity. Higher levels compile more tests but take longer. Available options are 1, 2, 3, and 4 (default: 2).
 * `TEST_ALL`: Compile and run all available tests. You can also specify individual test sections or tests using flags like -DTEST_WARP_MEMORY or -DTEST_WARP_MEMORY_VEC_DSMEM.

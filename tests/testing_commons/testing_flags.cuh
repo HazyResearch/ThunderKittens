@@ -129,8 +129,11 @@
 
 /* ----------  MULTI_GPU TEST MACROS  ---------- */
 
-// For fast testing, set it to 2~4
+// For fast testing, set it to 2~4. Override with -DNUM_GPUS=1 on single-GPU
+// machines (e.g. GB10 / DGX Spark) to skip the multi-GPU tests.
+#ifndef NUM_GPUS
 #define NUM_GPUS 2
+#endif
 
 // Macro for testing all the multi-gpu-related tests
 #if defined(TEST_ALL_MULTI_GPU) && NUM_GPUS > 1
@@ -153,6 +156,13 @@
 #define TEST_GROUP_MMA_WARPGROUP_INT32_INT8
 #define TEST_GROUP_MMA_WARPGROUP_INT32_UINT8
 #define TEST_ALL_GROUP_MMA_WARPGROUP_COMPLEX
+#endif
+
+// SM120 warpgroup MMA shim validation: bf16->fp32 only. The warp-level mma.sync
+// path on SM120 has no half->half base for ABt/AtB (and no half->fp32, fp8, int8
+// for these variants), so only the bf16 warpgroup tests are enabled here.
+#if defined(KITTENS_SM120) && defined(TEST_ALL_GROUP_MMA)
+#define TEST_GROUP_MMA_WARPGROUP_FP32_BF16
 #endif
 
 #ifdef TEST_ALL_GROUP_MMA_TENSOR
