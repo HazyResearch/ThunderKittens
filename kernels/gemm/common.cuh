@@ -173,8 +173,14 @@ static inline void reference_blockscaled_gemm(
 // laid out for the tcgen05 MMA the GEMM kernel actually issues:
 //   - K96 kernel: MMA_K=96, SCALE_BLOCKS_PER_MMA=4 (3 used + 1 padding per MMA).
 //   - K64 kernel: MMA_K=64, SCALE_BLOCKS_PER_MMA=2 (2 used, tightly packed).
+// K96_LAYOUT selects the swizzled, per-MMA-padded scale numbering, needed when an MMA's
+// K-blocks don't fill whole SF atoms (SCALE_BLOCKS_PER_MMA > MMA_K/BLOCK_SIZE): K96 pads
+// (block32 4>3, block16 8>6), K64 doesn't (2==2) so swizzled == tight. Hence it keys off
+// the MMA shape (default MMA_K==96); the tight K/BLOCK_SIZE kernels (b200/ref) get false
+// from the MMA_K=64 default. BLOCK_SIZE is 32 (E8M0) or 16 (E4M3).
 template <typename OutputT, typename ScaleT, int STORAGE_K=128, int MMA_PER_TILE=1,
-          int MMA_K=96, int SCALE_BLOCKS_PER_MMA=4>
+          int MMA_K=64, int SCALE_BLOCKS_PER_MMA=4,
+          bool K96_LAYOUT=(MMA_K == 96)>
 __global__ void reference_nvfp4_gemm_kernel(
     OutputT* D,
     __nv_fp4x2_e2m1 const* A_packed,
@@ -191,7 +197,7 @@ __global__ void reference_nvfp4_gemm_kernel(
 
   if (row < M && col < N) {
     float acc = 0.0f;
-    if constexpr (std::is_same_v<ScaleT, __nv_fp8_e8m0>) {
+    if constexpr (K96_LAYOUT) {
       int K_blocks = (K / STORAGE_K) * MMA_PER_TILE * SCALE_BLOCKS_PER_MMA;
       for (int k_tile = 0; k_tile < K; k_tile += STORAGE_K) {
         for (int k_inner = 0; k_inner < MMA_PER_TILE * MMA_K; k_inner += 2) {
@@ -258,7 +264,8 @@ __global__ void reference_nvfp4_gemm_kernel(
 }
 
 template <typename OutputT, typename ScaleT, int STORAGE_K=128, int MMA_PER_TILE=1,
-          int MMA_K=96, int SCALE_BLOCKS_PER_MMA=4>
+          int MMA_K=64, int SCALE_BLOCKS_PER_MMA=4,
+          bool K96_LAYOUT=(MMA_K == 96)>
 static inline void reference_nvfp4_gemm(
     OutputT* D,
     __nv_fp4x2_e2m1 const* A, __nv_fp4x2_e2m1 const* B,
@@ -267,7 +274,7 @@ static inline void reference_nvfp4_gemm(
     int M, int N, int K) {
   dim3 block(16, 16);
   dim3 grid((N + 15) / 16, (M + 15) / 16);
-  reference_nvfp4_gemm_kernel<OutputT, ScaleT, STORAGE_K, MMA_PER_TILE, MMA_K, SCALE_BLOCKS_PER_MMA>
+  reference_nvfp4_gemm_kernel<OutputT, ScaleT, STORAGE_K, MMA_PER_TILE, MMA_K, SCALE_BLOCKS_PER_MMA, K96_LAYOUT>
       <<<grid, block>>>(D, A, B, A_scale, B_scale, A_scale_global, B_scale_global, M, N, K);
 }
 

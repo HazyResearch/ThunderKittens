@@ -4,6 +4,23 @@ using namespace kittens;
 
 namespace nvfp4_gemm {
 
+template <typename SF_DTYPE>
+struct scale_traits;
+
+template <>
+struct scale_traits<fp8e8m0> {
+    static constexpr int SC_COLS_PER_MMA = 16;
+    static constexpr int SF_ATOMS_PER_MMA = 1;
+    static constexpr int SCALE_BLOCKS_PER_MMA = 4;
+};
+
+template <>
+struct scale_traits<fp8e4m3> {
+    static constexpr int SC_COLS_PER_MMA = 32;
+    static constexpr int SF_ATOMS_PER_MMA = 2;
+    static constexpr int SCALE_BLOCKS_PER_MMA = 8;
+};
+
 template <
     int _Nb,
     int _LOAD_PIPE_DEPTH,
@@ -16,7 +33,8 @@ template <
     bool _APPLY_GLOBAL_SCALE=true,
     int _PREFERRED_CLUSTER_M=4,
     // Default 2 (not 4): CLC tiling needs (N/Nb) % PREFERRED_CLUSTER_N == 0; 4 crashed on N=13824.
-    int _PREFERRED_CLUSTER_N=2
+    int _PREFERRED_CLUSTER_N=2,
+    typename _SCALE_DTYPE=fp8e8m0
 >
 struct config {
     static_assert(_Nb == 128 || _Nb == 256, "Nb must be 128 or 256");
@@ -64,6 +82,11 @@ struct config {
     static constexpr int Nb = _Nb;
     static constexpr int Kb = 96 * MMA_PER_TILE;
     static constexpr int B_SC_SIZE = Nb/128;
+    using SCALE_DTYPE = _SCALE_DTYPE;
+    using ST = scale_traits<SCALE_DTYPE>;
+    static constexpr int SC_COLS_PER_MMA = ST::SC_COLS_PER_MMA;
+    static constexpr int SF_ATOMS_PER_MMA = ST::SF_ATOMS_PER_MMA;
+    static constexpr int SCALE_BLOCKS_PER_MMA = ST::SCALE_BLOCKS_PER_MMA;
 
     static constexpr int NUM_D_TILES = _NUM_D_TILES;
 };
@@ -71,9 +94,9 @@ struct config {
 template <typename C>
 struct globals {
     using A_fp4x2_tile = st_fp4e2m1_2<C::Mb/2, C::Kb/2>;
-    using A_sc_tile    = st_fp8e8m0<32, 16*C::MMA_PER_TILE, false>;
+    using A_sc_tile    = st<typename C::SCALE_DTYPE, 32, C::SC_COLS_PER_MMA*C::MMA_PER_TILE, false>;
     using B_fp4x2_tile = st_fp4e2m1_2<C::Nb/2, C::Kb/2>;
-    using B_sc_tile    = st_fp8e8m0<32, 16*C::MMA_PER_TILE, false>;
+    using B_sc_tile    = st<typename C::SCALE_DTYPE, 32, C::SC_COLS_PER_MMA*C::MMA_PER_TILE, false>;
     using D_tile       = st_bf<C::Mb/2, C::Nb/C::EPI_PIPE_DEPTH>;
 
     // Fine-grained sub-tile staging of A/B along K. Each sub-load
@@ -90,19 +113,19 @@ struct globals {
 
     using A_fp4x2_gl     = gl<fp4e2m1_2,  1,  1, -1, -1, A_fp4x2_tile>;
     using A_fp4x2_sub_gl = gl<fp4e2m1_2,  1,  1, -1, -1, A_fp4x2_sub_tile>;
-    using A_sc_gl        = gl<fp8e8m0,   -1, -1, 32, 16*C::MMA_PER_TILE, A_sc_tile>;
+    using A_sc_gl        = gl<typename C::SCALE_DTYPE, -1, -1, 32, C::SC_COLS_PER_MMA*C::MMA_PER_TILE, A_sc_tile>;
     using A_sc_global_gl = gl<float,      1,  1,  1,  1>;
     using B_fp4x2_gl     = gl<fp4e2m1_2,  1,  1, -1, -1, B_fp4x2_tile>;
     using B_fp4x2_sub_gl = gl<fp4e2m1_2,  1,  1, -1, -1, B_fp4x2_sub_tile>;
-    using B_sc_gl        = gl<fp8e8m0,   -1, -1, 32, 16*C::MMA_PER_TILE, B_sc_tile>;
+    using B_sc_gl        = gl<typename C::SCALE_DTYPE, -1, -1, 32, C::SC_COLS_PER_MMA*C::MMA_PER_TILE, B_sc_tile>;
     using B_sc_global_gl = gl<float,      1,  1,  1,  1>;
     using D_gl           = gl<bf16,       1,  1, -1, -1, D_tile>;
 
     A_fp4x2_gl     A;           // M x (N // 2)
-    A_sc_gl        A_sc;        // (M // 128) x (K // Kb) x 32 x (16*MMA_PER_TILE)
+    A_sc_gl        A_sc;        // (M // 128) x (K // Kb) x 32 x (SC_COLS_PER_MMA*MMA_PER_TILE)
     A_sc_global_gl A_sc_global; // (1,)
     B_fp4x2_gl     B;           // M x (N // 2)
-    B_sc_gl        B_sc;        // (N // 128) x (K // Kb) x 32 x (16*MMA_PER_TILE)
+    B_sc_gl        B_sc;        // (N // 128) x (K // Kb) x 32 x (SC_COLS_PER_MMA*MMA_PER_TILE)
     B_sc_global_gl B_sc_global; // (1,)
     D_gl           D;           // M x N
     A_fp4x2_sub_gl A_sub;       // alias of A with a per-swizzle-period TMA box
@@ -376,8 +399,9 @@ __device__ inline void kernel(const globals<C> &g) {
             wait(tmem_provisioned, 0);
             tm_allocator.set_addr(tmem_addr);
             auto out_tm  = tm_allocator.template allocate<full_tt_fl<C::Nb>>(0);
-            auto A_sc_tm = tm_allocator.template allocate<full_tt_fp8e8m0<16*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(256);
-            auto B_sc_tm = tm_allocator.template allocate<full_tt_fp8e8m0<32*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(256+4*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH);
+            auto A_sc_tm = tm_allocator.template allocate<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, C::SC_COLS_PER_MMA*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(256);
+            auto B_sc_tm = tm_allocator.template allocate<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, C::SC_COLS_PER_MMA*C::B_SC_SIZE*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(
+                256 + (C::SC_COLS_PER_MMA / 4) * C::MMA_PER_TILE * C::LOAD_PIPE_DEPTH);
             int2 work_base = home_base;
             for (int item = 0; ; ++item) {
                 wait(outputs_finished, get_phasebit<1>(phasebits, 0));
@@ -390,17 +414,31 @@ __device__ inline void kernel(const globals<C> &g) {
                     if (i < C::LOAD_PIPE_DEPTH)
 #endif
                     #pragma unroll
-                    for (int ii = 0; ii < C::MMA_PER_TILE; ii++) {
-                        auto A_sc_tm_subtile = A_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage*C::MMA_PER_TILE*16+ii*16);
-                        auto &A_sc_sm_subtile = *reinterpret_cast<st_fp8e8m0<32, 16, false> *>(reinterpret_cast<uint64_t>(&input_scales[stage].A.data[0])+16*32*ii);
-                        load_mxnv_scale_async2(A_sc_tm_subtile, A_sc_sm_subtile);
-                        auto B_sc_tm_subtile_0 = B_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage*C::MMA_PER_TILE*32+ii*C::B_SC_SIZE*16);
-                        auto &B_sc_sm_subtile_0 = *reinterpret_cast<st_fp8e8m0<32, 16, false> *>(reinterpret_cast<uint64_t>(&input_scales[stage].B[0].data[0])+16*32*ii);
-                        load_mxnv_scale_async2(B_sc_tm_subtile_0, B_sc_sm_subtile_0);
-                        if constexpr (C::B_SC_SIZE == 2) {
-                            auto B_sc_tm_subtile_1 = B_sc_tm.template subtile<full_tt_fp8e8m0<16>>(stage*C::MMA_PER_TILE*32+ii*C::B_SC_SIZE*16+16);
-                            auto &B_sc_sm_subtile_1 = *reinterpret_cast<st_fp8e8m0<32, 16, false> *>(reinterpret_cast<uint64_t>(&input_scales[stage].B[1].data[0])+16*32*ii);
-                            load_mxnv_scale_async2(B_sc_tm_subtile_1, B_sc_sm_subtile_1);
+                    for (int ii = 0; ii < C::MMA_PER_TILE; ++ii) {
+                        // A K96 MMA covers 96/BLOCK_SIZE K-blocks: 3 for E8M0 (block32), 6 for
+                        // E4M3 (block16). One 32x16 SF atom holds 4 K-blocks, so that rounds up to
+                        // SF_ATOMS_PER_MMA = ceil(blocks/4) atoms (1 for E8M0, 2 for E4M3); copy each.
+                        #pragma unroll
+                        for (int g = 0; g < C::SF_ATOMS_PER_MMA; ++g) {
+                            auto A_sc_tm_subtile = A_sc_tm.template subtile<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, 16>>(
+                                stage*C::MMA_PER_TILE*C::SC_COLS_PER_MMA + ii*C::SC_COLS_PER_MMA + g*16);
+                            auto &A_sc_sm_subtile = *reinterpret_cast<st<typename C::SCALE_DTYPE, 32, 16, false> *>(
+                                reinterpret_cast<uint64_t>(&input_scales[stage].A.data[0]) + C::SC_COLS_PER_MMA*32*ii + 16*32*g);
+                            load_mxnv_scale_async2(A_sc_tm_subtile, A_sc_sm_subtile);
+                            // block16/4X needs both N-halves of a K-atom adjacent in TMEM, so
+                            // atom g is at g*SC_COLS_PER_MMA with B[1] +16 past B[0] (E8M0: g==0).
+                            auto B_sc_tm_subtile_0 = B_sc_tm.template subtile<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, 16>>(
+                                stage*C::MMA_PER_TILE*C::SC_COLS_PER_MMA*C::B_SC_SIZE + ii*C::B_SC_SIZE*C::SC_COLS_PER_MMA + g*C::SC_COLS_PER_MMA);
+                            auto &B_sc_sm_subtile_0 = *reinterpret_cast<st<typename C::SCALE_DTYPE, 32, 16, false> *>(
+                                reinterpret_cast<uint64_t>(&input_scales[stage].B[0].data[0]) + C::SC_COLS_PER_MMA*32*ii + 16*32*g);
+                            load_mxnv_scale_async2(B_sc_tm_subtile_0, B_sc_sm_subtile_0);
+                            if constexpr (C::B_SC_SIZE == 2) {
+                                auto B_sc_tm_subtile_1 = B_sc_tm.template subtile<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, 16>>(
+                                    stage*C::MMA_PER_TILE*C::SC_COLS_PER_MMA*C::B_SC_SIZE + ii*C::B_SC_SIZE*C::SC_COLS_PER_MMA + g*C::SC_COLS_PER_MMA + 16);
+                                auto &B_sc_sm_subtile_1 = *reinterpret_cast<st<typename C::SCALE_DTYPE, 32, 16, false> *>(
+                                    reinterpret_cast<uint64_t>(&input_scales[stage].B[1].data[0]) + C::SC_COLS_PER_MMA*32*ii + 16*32*g);
+                                load_mxnv_scale_async2(B_sc_tm_subtile_1, B_sc_sm_subtile_1);
+                            }
                         }
                     }
                     #pragma unroll
@@ -408,8 +446,10 @@ __device__ inline void kernel(const globals<C> &g) {
                         tma::expect_bytes(tiles_arrived[stage][s],
                             2*(sizeof(typename G::A_fp4x2_sub_tile) + sizeof(typename G::B_fp4x2_sub_tile)));
                     {
-                        auto A_sc_sub = A_sc_tm.template subtile<full_tt_fp8e8m0<C::MMA_PER_TILE*16>>(stage*C::MMA_PER_TILE*16);
-                        auto B_sc_sub = B_sc_tm.template subtile<full_tt_fp8e8m0<C::MMA_PER_TILE*32>>(stage*C::MMA_PER_TILE*32);
+                        auto A_sc_sub = A_sc_tm.template subtile<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, C::MMA_PER_TILE*C::SC_COLS_PER_MMA>>(
+                            stage*C::MMA_PER_TILE*C::SC_COLS_PER_MMA);
+                        auto B_sc_sub = B_sc_tm.template subtile<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, C::MMA_PER_TILE*C::SC_COLS_PER_MMA*C::B_SC_SIZE>>(
+                            stage*C::MMA_PER_TILE*C::SC_COLS_PER_MMA*C::B_SC_SIZE);
                         const uint32_t tphase = get_phasebit<0>(phasebits, stage);
                         int waited = -1;
                         #pragma unroll
@@ -803,12 +843,20 @@ __global__ void kernel_entrypoint(const __grid_constant__ nvfp4_gemm::globals<C>
     nvfp4_gemm::kernel<C>(g);
 }
 
+template <typename T>
+__host__ constexpr const char* scale_dtype_name() {
+    if constexpr (std::is_same_v<T, fp8e8m0>) return "e8m0";
+    else if constexpr (std::is_same_v<T, fp8e4m3>) return "e4m3";
+    else return "unknown";
+}
+
 template <typename C>
 __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     using G = nvfp4_gemm::globals<C>;
 
     std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
     std::cout << "Template: Mb=" << C::Mb << " Nb=" << C::Nb << " Kb=" << C::Kb
+              << " SF=" << scale_dtype_name<typename C::SCALE_DTYPE>()
               << " PREF_CLUSTER=" << C::PREFERRED_CLUSTER_M << "x" << C::PREFERRED_CLUSTER_N
               << " RASTER=" << (C::RASTER_ALONG_N ? "along_n" : "along_m")
               << " MMA_PER_TILE=" << C::MMA_PER_TILE
@@ -829,19 +877,19 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     // Allocate device memory
     std::vector<__nv_fp4x2_e2m1*> d_A(arg_group_count);
     std::vector<__nv_fp4x2_e2m1*> d_B(arg_group_count);
-    std::vector<__nv_fp8_e8m0*> d_A_sc(arg_group_count);
-    std::vector<__nv_fp8_e8m0*> d_B_sc(arg_group_count);
+    std::vector<typename C::SCALE_DTYPE*> d_A_sc(arg_group_count);
+    std::vector<typename C::SCALE_DTYPE*> d_B_sc(arg_group_count);
     std::vector<float*> d_A_sc_global(arg_group_count);
     std::vector<float*> d_B_sc_global(arg_group_count);
     std::vector<__nv_bfloat16*> d_D(arg_group_count);
     __nv_bfloat16* d_D_ref;
-    const size_t A_scale_elems = (M / 128) * (K / C::Kb) * 32 * 16 * C::MMA_PER_TILE;
-    const size_t B_scale_elems = (N / 128) * (K / C::Kb) * 32 * 16 * C::MMA_PER_TILE;
+    const size_t A_scale_elems = (M / 128) * (K / C::Kb) * 32 * C::SC_COLS_PER_MMA * C::MMA_PER_TILE;
+    const size_t B_scale_elems = (N / 128) * (K / C::Kb) * 32 * C::SC_COLS_PER_MMA * C::MMA_PER_TILE;
     for (int i = 0; i < arg_group_count; i++) {
         cudaMalloc(&d_A[i], M*K*sizeof(__nv_fp4x2_e2m1)/2);
         cudaMalloc(&d_B[i], N*K*sizeof(__nv_fp4x2_e2m1)/2);
-        cudaMalloc(&d_A_sc[i], A_scale_elems*sizeof(__nv_fp8_e8m0));
-        cudaMalloc(&d_B_sc[i], B_scale_elems*sizeof(__nv_fp8_e8m0));
+        cudaMalloc(&d_A_sc[i], A_scale_elems*sizeof(typename C::SCALE_DTYPE));
+        cudaMalloc(&d_B_sc[i], B_scale_elems*sizeof(typename C::SCALE_DTYPE));
         cudaMalloc(&d_A_sc_global[i], sizeof(float));
         cudaMalloc(&d_B_sc_global[i], sizeof(float));
         cudaMalloc(&d_D[i], M * N * sizeof(__nv_bfloat16));
@@ -853,9 +901,9 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     for (int i = 0; i < arg_group_count; i++) {
         // Random FP4 bytes (every byte is a valid e2m1 pair); unlike a constant fill this exposes K-read bugs.
         fill<uint8_t, FillMode::RANDOM>(reinterpret_cast<uint8_t*>(d_A[i]), M*K/2, seed + i*100 + 3, 0.0f, 256.0f);
-        // Random e8m0 scales in [0.5, 4.0] (= 2^-1..2^2) exercise the block-scale path without overflowing bf16.
-        fill<__nv_fp8_e8m0, FillMode::RANDOM>(d_A_sc[i], A_scale_elems, seed + i*100 + 5, 0.5f, 4.0f);
-        fill<__nv_fp8_e8m0, FillMode::RANDOM>(d_B_sc[i], B_scale_elems, seed + i*100 + 6, 0.5f, 4.0f);
+        // Random scales in [0.5, 4.0] exercise the block-scale path without overflowing bf16.
+        fill<typename C::SCALE_DTYPE, FillMode::RANDOM>(d_A_sc[i], A_scale_elems, seed + i*100 + 5, 0.5f, 4.0f);
+        fill<typename C::SCALE_DTYPE, FillMode::RANDOM>(d_B_sc[i], B_scale_elems, seed + i*100 + 6, 0.5f, 4.0f);
         fill<uint8_t, FillMode::RANDOM>(reinterpret_cast<uint8_t*>(d_B[i]), N*K/2, seed + i*100 + 4, 0.0f, 256.0f);
         fill<float, FillMode::CONSTANT>(d_A_sc_global[i], 1, 1.0f);
         fill<float, FillMode::CONSTANT>(d_B_sc_global[i], 1, 1.0f);
@@ -864,7 +912,7 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     fill<__nv_bfloat16, FillMode::CONSTANT>(d_D_ref, M*N, 0.0f);
 
     // Compute reference GEMM on device
-    reference_nvfp4_gemm<__nv_bfloat16, __nv_fp8_e8m0, C::Kb, C::MMA_PER_TILE>(
+    reference_nvfp4_gemm<__nv_bfloat16, typename C::SCALE_DTYPE, C::Kb, C::MMA_PER_TILE, 96, C::SCALE_BLOCKS_PER_MMA, true>(
         d_D_ref, d_A[0], d_B[0], d_A_sc[0], d_B_sc[0], d_A_sc_global[0], d_B_sc_global[0], M, N, K);
     cudaDeviceSynchronize();
 
@@ -947,7 +995,8 @@ int main(int argc, char **argv) {
 
     // Template parameters: Nb, LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH, SUPERGROUP_SIZE, NUM_D_TILES,
     //                      OVERLAP_EPI, RASTER_ALONG_N, MMA_PER_TILE, APPLY_GLOBAL_SCALE, PREF_M, PREF_N
-    run_benchmark<nvfp4_gemm::config<256, 2, 8, 4, 1, false, true, 8, false, 2, 2>>(8192, 8192, 33024, ncu);
+    run_benchmark<nvfp4_gemm::config<256, 2, 16, 4, 2, false, true, 8, false, 2, 1, fp8e8m0>>(8192, 8192, 2304, ncu);
+    run_benchmark<nvfp4_gemm::config<256, 1, 16, 4, 2, false, true, 8, false, 2, 1, fp8e4m3>>(4096, 4096, 768, ncu);
 
     return 0;
 }
@@ -956,6 +1005,37 @@ int main(int argc, char **argv) {
 
 #include "pyutils/torchutils.cuh"
 #include "ATen/Functions.h"
+
+template <typename C>
+void nvfp4_gemm_typed_entrypoint(
+    const at::Tensor &A,
+    const at::Tensor &A_sc,
+    const at::Tensor &A_sc_global,
+    const at::Tensor &B,
+    const at::Tensor &B_sc,
+    const at::Tensor &B_sc_global,
+    at::Tensor &D
+) {
+    using G = nvfp4_gemm::globals<C>;
+
+    G g {
+        .A = kittens::py::tensor_to_gl<typename G::A_fp4x2_gl>(A),
+        .A_sc = kittens::py::tensor_to_gl<typename G::A_sc_gl, false>(A_sc, A_sc.size(0), A_sc.size(1), 32, G::A_sc_tile::cols),
+        .A_sc_global = kittens::py::tensor_to_gl<typename G::A_sc_global_gl>(A_sc_global),
+        .B = kittens::py::tensor_to_gl<typename G::B_fp4x2_gl>(B),
+        .B_sc = kittens::py::tensor_to_gl<typename G::B_sc_gl, false>(B_sc, B_sc.size(0), B_sc.size(1), 32, G::B_sc_tile::cols),
+        .B_sc_global = kittens::py::tensor_to_gl<typename G::B_sc_global_gl>(B_sc_global),
+        .D = kittens::py::tensor_to_gl<typename G::D_gl>(D),
+        .A_sub = kittens::py::tensor_to_gl<typename G::A_fp4x2_sub_gl>(A),
+        .B_sub = kittens::py::tensor_to_gl<typename G::B_fp4x2_sub_gl>(B)
+    };
+    kittens::py::launch_kernel<C, G, nvfp4_gemm::kernel<C>>(g);
+}
+
+using nvfp4_gemm_e8m0_config = nvfp4_gemm::config<256, 2, 16, 8, 2, false, true, 8, false, 2, 1, fp8e8m0>;
+// E4M3/block16 scale panels are twice as large as E8M0/block32, so the current
+// shared pipeline fits only one load stage until AB/SF stage counts are split.
+using nvfp4_gemm_e4m3_config = nvfp4_gemm::config<256, 1, 16, 8, 2, false, true, 8, false, 2, 1, fp8e4m3>;
 
 void nvfp4_gemm_entrypoint(
     const at::Tensor &A,
@@ -966,21 +1046,37 @@ void nvfp4_gemm_entrypoint(
     const at::Tensor &B_sc_global,
     at::Tensor &D
 ) {
-    using C = nvfp4_gemm::config<256, 2, 16, 8, 2, false, true, 8>;
-    using G = nvfp4_gemm::globals<C>;
+    if (A_sc.scalar_type() == at::kFloat8_e8m0fnu) {
+        nvfp4_gemm_typed_entrypoint<nvfp4_gemm_e8m0_config>(A, A_sc, A_sc_global, B, B_sc, B_sc_global, D);
+    } else if (A_sc.scalar_type() == at::kFloat8_e4m3fn) {
+        nvfp4_gemm_typed_entrypoint<nvfp4_gemm_e4m3_config>(A, A_sc, A_sc_global, B, B_sc, B_sc_global, D);
+    } else {
+        TORCH_CHECK(false, "nvfp4_gemm expected A_sc dtype float8_e8m0fnu or float8_e4m3fn");
+    }
+}
 
-    G g {
-        .A = kittens::py::tensor_to_gl<typename G::A_fp4x2_gl>(A),
-        .A_sc = kittens::py::tensor_to_gl<typename G::A_sc_gl, false>(A_sc, A_sc.size(0), A_sc.size(1), 32, 16*C::MMA_PER_TILE),
-        .A_sc_global = kittens::py::tensor_to_gl<typename G::A_sc_global_gl>(A_sc_global),
-        .B = kittens::py::tensor_to_gl<typename G::B_fp4x2_gl>(B),
-        .B_sc = kittens::py::tensor_to_gl<typename G::B_sc_gl, false>(B_sc, B_sc.size(0), B_sc.size(1), 32, 16*C::MMA_PER_TILE),
-        .B_sc_global = kittens::py::tensor_to_gl<typename G::B_sc_global_gl>(B_sc_global),
-        .D = kittens::py::tensor_to_gl<typename G::D_gl>(D),
-        .A_sub = kittens::py::tensor_to_gl<typename G::A_fp4x2_sub_gl>(A),
-        .B_sub = kittens::py::tensor_to_gl<typename G::B_fp4x2_sub_gl>(B)
-    };
-    kittens::py::launch_kernel<C, G, nvfp4_gemm::kernel<C>>(g);
+void nvfp4_gemm_e8m0_entrypoint(
+    const at::Tensor &A,
+    const at::Tensor &A_sc,
+    const at::Tensor &A_sc_global,
+    const at::Tensor &B,
+    const at::Tensor &B_sc,
+    const at::Tensor &B_sc_global,
+    at::Tensor &D
+) {
+    nvfp4_gemm_typed_entrypoint<nvfp4_gemm_e8m0_config>(A, A_sc, A_sc_global, B, B_sc, B_sc_global, D);
+}
+
+void nvfp4_gemm_e4m3_entrypoint(
+    const at::Tensor &A,
+    const at::Tensor &A_sc,
+    const at::Tensor &A_sc_global,
+    const at::Tensor &B,
+    const at::Tensor &B_sc,
+    const at::Tensor &B_sc_global,
+    at::Tensor &D
+) {
+    nvfp4_gemm_typed_entrypoint<nvfp4_gemm_e4m3_config>(A, A_sc, A_sc_global, B, B_sc, B_sc_global, D);
 }
 
 void nvfp4_quantize_entrypoint(
@@ -1041,6 +1137,8 @@ at::Tensor fp4x2_to_fp32_entrypoint(at::Tensor A_fp4x2) {
 
 PYBIND11_MODULE(_C, m) {
     m.def("nvfp4_gemm", &nvfp4_gemm_entrypoint);
+    m.def("nvfp4_gemm_e8m0", &nvfp4_gemm_e8m0_entrypoint);
+    m.def("nvfp4_gemm_e4m3", &nvfp4_gemm_e4m3_entrypoint);
     m.def("nvfp4_quantize", &nvfp4_quantize_entrypoint);
     m.def("fp32_to_fp4x2", &fp32_to_fp4x2_entrypoint);
     m.def("fp4x2_to_fp32", &fp4x2_to_fp32_entrypoint);

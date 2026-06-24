@@ -154,9 +154,12 @@ __device__ static inline constexpr uint32_t instruction_descriptor() {
     // Only supported types are MXFP8 and NVFP4
     static_assert(std::is_same_v<AB, fp8e4m3> || std::is_same_v<AB, fp4e2m1_2>, "AB must be fp8e4m3 for f4e2m1");
     static_assert(std::is_same_v<SAB, fp8e4m3> || std::is_same_v<SAB, fp8e8m0>, "SAB must be either fp8e4m3 or fp8e8m0");
+    // K=96 is a packed-FP4 (mxf4nvf4) mode; the hardware allows either scale type
+    // (block32/E8M0 == MXFP4, block16/E4M3 == NVFP4). SAB is already constrained to
+    // {E4M3,E8M0} above, so only the data type and K need checking here.
     static_assert(
-        mma_k == 64 || (std::is_same_v<AB, fp4e2m1_2> && std::is_same_v<SAB, fp8e8m0> && mma_k == 96),
-        "K96 block-scaled MMA is only supported for NVFP4 with E8M0 scales.");
+        mma_k == 64 || (std::is_same_v<AB, fp4e2m1_2> && mma_k == 96),
+        "K96 block-scaled MMA is only supported for packed NVFP4 (E4M3 or E8M0 scales).");
     constexpr int scale_type = std::is_same_v<SAB, fp8e4m3> ? 0 : std::is_same_v<SAB, fp8e8m0> ? 1 : -1;
 
     uint32_t desc = 0;
@@ -591,10 +594,11 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
 #endif
     static_assert(mma_k == 64 || mma_k == 96, "Microscaling MMA K dimension must be 64 or 96.");
     if constexpr (mma_k == 96) {
-        static_assert(std::is_same_v<typename A::T, fp4e2m1_2>, "K96 microscaling MMA is only supported for NVFP4.");
+        static_assert(std::is_same_v<typename A::T, fp4e2m1_2>, "K96 microscaling MMA is only supported for packed FP4.");
         static_assert(
-            std::is_same_v<typename SA::T, fp8e8m0> && std::is_same_v<typename SB::T, fp8e8m0>,
-            "K96 NVFP4 support expects E8M0 scale factors.");
+            (std::is_same_v<typename SA::T, fp8e8m0> && std::is_same_v<typename SB::T, fp8e8m0>) ||
+            (std::is_same_v<typename SA::T, fp8e4m3> && std::is_same_v<typename SB::T, fp8e4m3>),
+            "K96 expects matching E8M0 (MXFP4, block32) or E4M3 (NVFP4, block16) scale factors.");
         static_assert(ncta == 1 || ncta == 2, "K96 NVFP4 support expects cta_group::1 or cta_group::2.");
         static_assert(trans_a == transpose::N && trans_b == transpose::N, "K96 NVFP4 support currently expects ABt/K-major operands.");
     }
@@ -973,14 +977,15 @@ __device__ static inline void mma_k96_chunk(D &d, const A &a, const B &b, const 
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, trans_a> a_desc(a);
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, trans_b> b_desc(b);
     constexpr uint32_t idesc0 = detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 0, 96>();
+    constexpr int sf_atoms = ((96 / block_size) + 3) / 4;
     const uint64_t ad = a_desc.template chunk_descriptor<96>(chunk_idx);
     const uint64_t bd = b_desc.template chunk_descriptor<96>(chunk_idx);
     if (init)
         detail::tcgen05::template st_st<T_AB, T_SAB, 0, ncta, block_size>(
-            d.addr, ad, bd, sa.addr + chunk_idx * M_offset, sb.addr + chunk_idx * N_offset, idesc0);
+            d.addr, ad, bd, sa.addr + chunk_idx * M_offset * sf_atoms, sb.addr + chunk_idx * N_offset * sf_atoms, idesc0);
     else
         detail::tcgen05::template st_st<T_AB, T_SAB, 1, ncta, block_size>(
-            d.addr, ad, bd, sa.addr + chunk_idx * M_offset, sb.addr + chunk_idx * N_offset, idesc0);
+            d.addr, ad, bd, sa.addr + chunk_idx * M_offset * sf_atoms, sb.addr + chunk_idx * N_offset * sf_atoms, idesc0);
 }
 template<int ncta>
 __device__ static inline void mma_k96_commit(semaphore &sem) {
