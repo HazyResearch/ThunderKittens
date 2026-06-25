@@ -12,10 +12,11 @@ template <
     int _NUM_D_TILES,
     bool _OVERLAP_EPI,
     bool _RASTER_ALONG_N=false,
-    int _MMA_PER_TILE=4,
+    int _MMA_PER_TILE=8,
     bool _APPLY_GLOBAL_SCALE=true,
     int _PREFERRED_CLUSTER_M=4,
-    int _PREFERRED_CLUSTER_N=4
+    // Default 2 (not 4): CLC tiling needs (N/Nb) % PREFERRED_CLUSTER_N == 0; 4 crashed on N=13824.
+    int _PREFERRED_CLUSTER_N=2
 >
 struct config {
     static_assert(_Nb == 128 || _Nb == 256, "Nb must be 128 or 256");
@@ -23,9 +24,8 @@ struct config {
     static_assert(_EPI_PIPE_DEPTH > 0, "EPI_PIPE_DEPTH must be greater than 0");
     static_assert(_SUPERGROUP_SIZE > 0, "SUPERGROUP_SIZE must be greater than 0");
     static_assert(_NUM_D_TILES > 0, "NUM_D_TILES must be greater than 0");
-    static_assert(_MMA_PER_TILE % 4 == 0, "MMA_PER_TILE must be a multiple of 4");
-    // NUM_D_TILES == 1 with EPI_PIPE_DEPTH > 1 is allowed: store_async_read_wait<0> fully
-    // serializes SMEM reuse against outstanding TMA reads.
+    // MMA_PER_TILE % 8 == 0 keeps the fp4 tile on a 128B swizzle atom, required for K96 (see descriptor.cuh).
+    static_assert(_MMA_PER_TILE % 8 == 0, "MMA_PER_TILE must be a multiple of 8 (K96 needs a 128B swizzle atom)");
 
     static constexpr int CLUSTER_SIZE = 2;
     // CUTLASS-style dynamic cluster launch: the driver grants the preferred shape where it can
@@ -816,10 +816,12 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     // Initialize matrices with random values on device
     uint64_t seed = 2026;
     for (int i = 0; i < arg_group_count; i++) {
-        fill<uint8_t, FillMode::CONSTANT>(reinterpret_cast<uint8_t*>(d_A[i]), M*K/2, 0x22);
-        fill<__nv_fp8_e8m0, FillMode::RANDOM>(d_A_sc[i], A_scale_elems, seed + i*100 + 1, 1.0f, 4.0f);
-        fill<__nv_fp8_e8m0, FillMode::RANDOM>(d_B_sc[i], B_scale_elems, seed + i*100 + 2, 1.0f, 4.0f);
-        fill<uint8_t, FillMode::CONSTANT>(reinterpret_cast<uint8_t*>(d_B[i]), N*K/2, 0x22);
+        // Random FP4 bytes (every byte is a valid e2m1 pair); unlike a constant fill this exposes K-read bugs.
+        fill<uint8_t, FillMode::RANDOM>(reinterpret_cast<uint8_t*>(d_A[i]), M*K/2, seed + i*100 + 3, 0.0f, 256.0f);
+        // Random e8m0 scales in [0.5, 4.0] (= 2^-1..2^2) exercise the block-scale path without overflowing bf16.
+        fill<__nv_fp8_e8m0, FillMode::RANDOM>(d_A_sc[i], A_scale_elems, seed + i*100 + 5, 0.5f, 4.0f);
+        fill<__nv_fp8_e8m0, FillMode::RANDOM>(d_B_sc[i], B_scale_elems, seed + i*100 + 6, 0.5f, 4.0f);
+        fill<uint8_t, FillMode::RANDOM>(reinterpret_cast<uint8_t*>(d_B[i]), N*K/2, seed + i*100 + 4, 0.0f, 256.0f);
         fill<float, FillMode::CONSTANT>(d_A_sc_global[i], 1, 1.0f);
         fill<float, FillMode::CONSTANT>(d_B_sc_global[i], 1, 1.0f);
         fill<__nv_bfloat16, FillMode::CONSTANT>(d_D[i], M*N, 0.0f);
@@ -908,7 +910,7 @@ int main(int argc, char **argv) {
 
     // Template parameters: Nb, LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH, SUPERGROUP_SIZE, NUM_D_TILES,
     //                      OVERLAP_EPI, RASTER_ALONG_N, MMA_PER_TILE, APPLY_GLOBAL_SCALE, PREF_M, PREF_N
-    run_benchmark<nvfp4_gemm::config<256, 4, 8, 4, 1, false, true, 4, false, 2, 2>>(8192, 8192, 33024, ncu);
+    run_benchmark<nvfp4_gemm::config<256, 2, 8, 4, 1, false, true, 8, false, 2, 2>>(8192, 8192, 33024, ncu);
 
     return 0;
 }
@@ -927,7 +929,7 @@ void nvfp4_gemm_entrypoint(
     const at::Tensor &B_sc_global,
     at::Tensor &D
 ) {
-    using C = nvfp4_gemm::config<256, 4, 8, 8, 2, false, true, 4>;
+    using C = nvfp4_gemm::config<256, 2, 16, 8, 2, false, true, 8>;
     using G = nvfp4_gemm::globals<C>;
 
     G g {
