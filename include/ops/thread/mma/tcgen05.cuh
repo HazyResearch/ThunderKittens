@@ -962,8 +962,10 @@ __device__ static inline void mm2_AtBt(D &d, const A &a, const B &b) {
 // readiness barriers (CuteDSL-style sub-tile staging). `init` selects whether
 // this chunk initializes (acc=0) or accumulates (acc=1) into the accumulator.
 // No commit is performed; call `mma_k96_commit` after the final chunk.
-template<int trans_a, int n_trans_b, int ncta, ducks::tt::all D, ducks::st_descriptor::input A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
-__device__ static inline void mma_k96_chunk(D &d, const A &a, const B &b, const SA &sa, const SB &sb, int chunk_idx, bool init) {
+// `ab_chunk_idx` picks the A/B K96 slice; `sf_chunk_idx` picks the SF panel (group-local, may be
+// finer than the A/B K-tile). tight_sf packs scales with no per-MMA atom padding.
+template<int trans_a, int n_trans_b, int ncta, bool tight_sf, ducks::tt::all D, ducks::st_descriptor::input A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
+__device__ static inline void mma_k96_chunk(D &d, const A &a, const B &b, const SA &sa, const SB &sb, int ab_chunk_idx, int sf_chunk_idx, bool init) {
     using T_AB  = typename A::T;
     using T_SAB = typename SA::T;
     using T_D   = typename D::T;
@@ -976,16 +978,42 @@ __device__ static inline void mma_k96_chunk(D &d, const A &a, const B &b, const 
     constexpr int N_offset = N / 32;
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<A>, trans_a> a_desc(a);
     kittens::st_descriptor<ducks::st_descriptor::detail::get_st<B>, trans_b> b_desc(b);
+    // SFID descriptors 0..3 (idesc1/3 unused by padded and block16-tight).
     constexpr uint32_t idesc0 = detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 0, 96>();
+    constexpr uint32_t idesc1 = detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 1, 96>();
+    constexpr uint32_t idesc2 = detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 2, 96>();
+    constexpr uint32_t idesc3 = detail::tcgen05::instruction_descriptor<T_D, T_AB, T_SAB, M, N, false, 3, 96>();
     constexpr int sf_atoms = ((96 / block_size) + 3) / 4;
-    const uint64_t ad = a_desc.template chunk_descriptor<96>(chunk_idx);
-    const uint64_t bd = b_desc.template chunk_descriptor<96>(chunk_idx);
+    // Scale TMEM is addressed per 4-block atom (1 atom = M_offset addr for A / N_offset for B); the
+    // block within an atom is the scale_factor_id. Padded: each MMA owns whole atoms at SFID 0.
+    // Tight: MMA sf_chunk_idx starts at block sf_chunk_idx*real_blocks -> atom = start/4 (address),
+    // SFID = start%4 ({0,2} for block16, {0,1,2,3} for block32).
+    constexpr int real_blocks = 96 / block_size;
+    const int start_block = sf_chunk_idx * real_blocks;
+    const int tight_atom  = start_block / 4;
+    const int tight_sfid  = start_block % 4;
+    const uint32_t sa_off = tight_sf ? uint32_t(tight_atom * M_offset)
+                                     : uint32_t(sf_chunk_idx * M_offset * sf_atoms);
+    const uint32_t sb_off = tight_sf ? uint32_t(tight_atom * N_offset)
+                                     : uint32_t(sf_chunk_idx * N_offset * sf_atoms);
+    const uint32_t idesc  = !tight_sf ? idesc0
+                          : (tight_sfid == 0 ? idesc0
+                          :  tight_sfid == 1 ? idesc1
+                          :  tight_sfid == 2 ? idesc2
+                          :                    idesc3);
+    const uint64_t ad = a_desc.template chunk_descriptor<96>(ab_chunk_idx);
+    const uint64_t bd = b_desc.template chunk_descriptor<96>(ab_chunk_idx);
     if (init)
         detail::tcgen05::template st_st<T_AB, T_SAB, 0, ncta, block_size>(
-            d.addr, ad, bd, sa.addr + chunk_idx * M_offset * sf_atoms, sb.addr + chunk_idx * N_offset * sf_atoms, idesc0);
+            d.addr, ad, bd, sa.addr + sa_off, sb.addr + sb_off, idesc);
     else
         detail::tcgen05::template st_st<T_AB, T_SAB, 1, ncta, block_size>(
-            d.addr, ad, bd, sa.addr + chunk_idx * M_offset * sf_atoms, sb.addr + chunk_idx * N_offset * sf_atoms, idesc0);
+            d.addr, ad, bd, sa.addr + sa_off, sb.addr + sb_off, idesc);
+}
+// Single-index form (A/B slice == SF panel): unchanged interface for existing callers.
+template<int trans_a, int n_trans_b, int ncta, ducks::tt::all D, ducks::st_descriptor::input A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
+__device__ static inline void mma_k96_chunk(D &d, const A &a, const B &b, const SA &sa, const SB &sb, int chunk_idx, bool init) {
+    mma_k96_chunk<trans_a, n_trans_b, ncta, false, D, A, B, SA, SB>(d, a, b, sa, sb, chunk_idx, chunk_idx, init);
 }
 template<int ncta>
 __device__ static inline void mma_k96_commit(semaphore &sem) {
@@ -995,6 +1023,12 @@ __device__ static inline void mma_k96_commit(semaphore &sem) {
 template<ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
 __device__ static inline void mma2_ABt_k96_chunk(D &d, const A &a, const B &b, const SA &sa, const SB &sb, int chunk_idx, bool init) {
     mma_k96_chunk<transpose::N, transpose::T, 2, D, A, B, SA, SB>(d, a, b, sa, sb, chunk_idx, init);
+}
+// ABt, cta_group::2 wrapper with separate A/B-slice and SF-panel indices; tight_sf packs SF without
+// per-MMA atom padding.
+template<bool tight_sf=false, ducks::tt::all D, typename A, ducks::st_descriptor::input B, ducks::tt::all SA, ducks::tt::all SB>
+__device__ static inline void mma2_ABt_k96_chunk(D &d, const A &a, const B &b, const SA &sa, const SB &sb, int ab_chunk_idx, int sf_chunk_idx, bool init) {
+    mma_k96_chunk<transpose::N, transpose::T, 2, tight_sf, D, A, B, SA, SB>(d, a, b, sa, sb, ab_chunk_idx, sf_chunk_idx, init);
 }
 
 // ---------------------------------------------------------------------------
