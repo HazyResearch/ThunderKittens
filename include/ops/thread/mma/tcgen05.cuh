@@ -666,14 +666,17 @@ __device__ static inline void mma(D &d, const A &a, const B &b, const SA &sa, co
             );
         }
     } else if constexpr (std::is_same_v<typename A::T, fp4e2m1_2> && block_size == 16) { // FP4E2M1 + FP8E4M3 scale (NVFP4)
+        // A K96 block16 MMA consumes 6 real scale blocks = ceil(6/4) = 2 whole 4-block SF atoms
+        // (padded), so its scale address advances by sf_atoms panels per MMA (all SFID 0).
+        constexpr int sf_atoms = ((96 / block_size) + 3) / 4;
         #pragma unroll
         for (int i = 1; i < K / red_dim; i++) {
             detail::tcgen05::template st_st<T_AB, T_SAB, 1, ncta, block_size>(
                 d.addr,
                 a_desc.template chunk_descriptor<mma_k>(i),
                 b_desc.template chunk_descriptor<mma_k>(i),
-                sa.addr + i * M_offset,
-                sb.addr + i * N_offset,
+                sa.addr + i * M_offset * sf_atoms,
+                sb.addr + i * N_offset * sf_atoms,
                 idescs[0] // SFID is always 0
             );
         }

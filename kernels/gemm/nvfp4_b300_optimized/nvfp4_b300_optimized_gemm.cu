@@ -267,7 +267,7 @@ __device__ static inline void clc_try_cancel(uint4 &response, semaphore &bar) {
 // first CTA id and each CTA covers first_ctaid + its own offset within the cluster.
 __device__ static inline bool clc_query_cancel(const uint4 &response, int2 &first_ctaid) {
     const uint32_t response_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&response));
-    uint32_t x, y, z, valid;
+    uint32_t x, y, valid;
     asm volatile(
         "{\n\t"
         ".reg .pred p;\n\t"
