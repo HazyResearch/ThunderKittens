@@ -959,7 +959,7 @@ int main(int argc, char **argv) {
     run_benchmark<nvfp4_gemm::config<256, 2, 8, 4, 1, false, true, 8, false, 2, 2, fp8e8m0>>(8192, 8192, 33024, ncu);
     // E4M3/block16 scale panels are 2x the SMEM of E8M0/block32, so this shared (non-subtile) pipe
     // only fits LOAD_PIPE_DEPTH=1 for e4m3.
-    run_benchmark<nvfp4_gemm::config<256, 1, 8, 4, 1, false, true, 8, false, 2, 2, fp8e4m3>>(8192, 8192, 3072, ncu);
+    run_benchmark<nvfp4_gemm::config<256, 1, 8, 4, 1, false, true, 8, false, 2, 1, fp8e4m3>>(8192, 8192, 3072, ncu);
 
     return 0;
 }
