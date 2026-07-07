@@ -80,6 +80,7 @@ concept col_layout = all<T> && std::is_same_v<typename T::layout, ducks::rt_layo
  */
 template<typename _T, int _rows, int _cols, ducks::rt_layout::all _layout=ducks::rt_layout::row>
 struct rt {
+    static_assert(!std::is_same_v<_T, char>, "Bare 'char' is not permitted because its signedness is ISA-dependent.");
     using identifier = ducks::rt::identifier; ///< Type identifier for the rt structure.
     using layout = _layout; ///< Layout of the matrix tile.
     static_assert(kittens::ducks::base_types::T1<_T>); // confirm it's a supported type

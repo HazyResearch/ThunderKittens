@@ -41,7 +41,7 @@ __host__ static inline void tensor_check(const at::Tensor &t) {
         return;
     } else if constexpr (std::is_same_v<typename Layout::dtype, bool>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Bool, "Tensor has invalid dtype (expected bool)");
-    } else if constexpr (std::is_same_v<typename Layout::dtype, char> || std::is_same_v<typename Layout::dtype, signed char>) {
+    } else if constexpr (std::is_same_v<typename Layout::dtype, signed char>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Char, "Tensor has invalid dtype (expected int8)");
     } else if constexpr (std::is_same_v<typename Layout::dtype, unsigned char>) {
         TORCH_CHECK(t.dtype() == at::ScalarType::Byte, "Tensor has invalid dtype (expected uint8)");

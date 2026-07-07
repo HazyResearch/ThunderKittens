@@ -51,6 +51,7 @@ concept all = requires {
  */
 template<typename _T, size_t _length>
 struct KITTENS_DEFAULT_ALIGN sv {
+    static_assert(!std::is_same_v<_T, char>, "Bare 'char' is not permitted because its signedness is ISA-dependent.");
     using identifier = ducks::sv::identifier;
     using T = base_types::packing<_T>::unpacked_type;
     using T2 = base_types::packing<_T>::packed_type;

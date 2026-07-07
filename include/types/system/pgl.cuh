@@ -45,6 +45,7 @@ struct pgl {
     using identifier = ducks::pgl::identifier;
     using GL = _GL;
     using T = GL::dtype;
+    static_assert(!std::is_same_v<T, char>, "Bare 'char' is not permitted because its signedness is ISA-dependent.");
     using dtype = T;
 
     static constexpr int num_devices = NUM_DEVICES;

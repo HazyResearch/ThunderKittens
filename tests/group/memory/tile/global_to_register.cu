@@ -15,7 +15,7 @@ struct group_load_store {
                                                       std::is_same_v<T, kittens::fp8e5m2> ? "group_reg_loadstore_gmem=fp8e5m2" :
 #endif
                                                       std::is_same_v<T, bool> ? "group_reg_loadstore_gmem=bool" :
-                                                      std::is_same_v<T, char> ? "group_reg_loadstore_gmem=char" :
+                                                      std::is_same_v<T, signed char> ? "group_reg_loadstore_gmem=signed_char" :
                                                       std::is_same_v<T, unsigned char> ? "group_reg_loadstore_gmem=unsigned_char" :
                                                       std::is_same_v<T, short> ? "group_reg_loadstore_gmem=short" :
                                                       std::is_same_v<T, unsigned short> ? "group_reg_loadstore_gmem=unsigned_short" :
@@ -90,7 +90,7 @@ void group::memory::tile::global_to_register::tests(test_data &results) {
     sweep_size_2d<group_load_store<kittens::fp8e5m2>, SIZE, 4, 12, kittens::ducks::rt_layout::row>::run(results);
 #endif
     sweep_size_2d<group_load_store<bool>, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
-    sweep_size_2d<group_load_store<char>, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d<group_load_store<signed char>, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_2d<group_load_store<unsigned char>, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_2d<group_load_store<short>, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
     sweep_size_2d<group_load_store<unsigned short>, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);

@@ -60,6 +60,7 @@ template<typename T> concept tile_layout  = align_layout<T> || ortho_layout<T>; 
  */
 template<typename _T, size_t _length, ducks::rv_layout::all _layout=ducks::rv_layout::naive>
 struct rv {
+    static_assert(!std::is_same_v<_T, char>, "Bare 'char' is not permitted because its signedness is ISA-dependent.");
     using identifier = ducks::rv::identifier; ///< Type identifier for the rv structure.
     static_assert(kittens::ducks::base_types::T1<_T>); // confirm it's a supported type
     using layout = _layout;

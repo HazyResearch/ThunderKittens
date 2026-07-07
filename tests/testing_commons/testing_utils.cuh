@@ -168,11 +168,6 @@ void initialize(T **d_i, T **d_o, std::vector<float> &i_ref, std::vector<float> 
             i_t[idx] = f > 0.f;
             i_ref[idx] = float(i_t[idx]);
         }
-        else if constexpr (std::is_same_v<T, char>) {
-            if constexpr (initializer == initializers::RANDOM) f *= 64.f;
-            i_t[idx] = static_cast<char>(f);
-            i_ref[idx] = float(i_t[idx]);
-        }
         else if constexpr (std::is_same_v<T, signed char>) {
             if constexpr (initializer == initializers::RANDOM) f *= 64.f;
             i_t[idx] = static_cast<signed char>(f);
@@ -358,10 +353,6 @@ test_result validate(T *d_i, T *d_o, const std::vector<float> &i_ref, std::vecto
         else if constexpr(std::is_same_v<T, bool>) {
             o[idx] = float(o_t[idx]);
             o_ref[idx] = float(bool(o_ref[idx]));
-        }
-        else if constexpr(std::is_same_v<T, char>) {
-            o[idx] = float(o_t[idx]);
-            o_ref[idx] = float(static_cast<char>(o_ref[idx]));
         }
         else if constexpr(std::is_same_v<T, signed char>) {
             o[idx] = float(o_t[idx]);

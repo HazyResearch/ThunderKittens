@@ -111,6 +111,7 @@ struct identifier {};
 
 template<typename _T, int b, int d, int r, int c, typename... TMA_Types>
 struct gl {
+    static_assert(!std::is_same_v<_T, char>, "Bare 'char' is not permitted because its signedness is ISA-dependent.");
 #if defined(KITTENS_SM10X) || defined(KITTENS_SM120)
     static_assert(!std::is_same_v<_T, fp4e2m1>, "For FP4 types, you must use a packed type (i.e., fp4e2m1_2 or fp4e2m1_4).");
 #endif

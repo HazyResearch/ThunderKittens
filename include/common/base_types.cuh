@@ -374,12 +374,7 @@ template<> struct packing<bool_2> {
     using packed_type = bool_2;
     static __device__ inline constexpr bool_2 pack(const bool &i) { return bool_2{i, i}; } // this replication makes code cleaner later.
 };
-template<> struct packing<char> {
-    static __device__ inline constexpr int num() { return 1; }
-    using unpacked_type = char; // for compatibility
-    using packed_type = int8_4;
-    static __device__ inline constexpr int8_4 pack(const char &i) { return int8_4{i, i, i, i}; } // this replication makes code cleaner later.
-};
+// There is deliberately no packing<char> specialization
 template<> struct packing<int8> {
     static __device__ inline constexpr int num() { return 1; }
     using unpacked_type = int8;
