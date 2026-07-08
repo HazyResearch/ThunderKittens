@@ -90,8 +90,12 @@ struct st_descriptor {
         // So for MN-major, this is same as asking "how to forward 32 bytes worth of elements (=K elements) in the stride dimension?"
         // And for K-major, "how to forward K elements in the leading dimension?"
         if constexpr (mma_k == 96) {
+#ifdef KITTENS_SM103
             static_assert(!MN_major, "K96 shared descriptors are only supported for K-major tcgen05 operands.");
             static_assert(std::is_same_v<T, fp4e2m1_2>, "K96 shared descriptors are only supported for packed NVFP4.");
+#else
+            static_assert(mma_k != 96, "K96 shared descriptors are only supported on SM103.");
+#endif
             // A K96 NVFP4 chunk is 48B, so it straddles the 128B swizzle boundary. PTX uses
             // "absolute address mode" (lbo_mode bit 52) for this, which requires a 128B swizzle.
             // See PTX ISA 9.7.17.3.1.2 "Absolute address mode for K dimension being 48B".
