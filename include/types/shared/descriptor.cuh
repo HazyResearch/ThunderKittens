@@ -78,7 +78,7 @@ struct st_descriptor {
         // Return the n-th chunk along the K dimension.
         // In MMA instructions, K per tensor core call is always 32 bytes
         //   ex. Hopper: K=32 for FP8, K=16 for BF16/FP16, K=8 for TF32)
-        //   ex. Blackwell: K=64 for FP4, K=32 for FP8, K=16 for BF16/FP16, K=8 for TF32 (*For FP4, K=96 also possible, but we don't support yet)
+        //   ex. Blackwell: K=64 for FP4, K=32 for FP8, K=16 for BF16/FP16, K=8 for TF32 (for FP4, K=96 is also possible on SM103; see chunk_descriptor_k96)
         // So for MN-major, this is same as asking "how to forward 32 bytes worth of elements (=K elements) in the stride dimension?"
         // And for K-major, "how to forward K elements in the leading dimension?"
         if constexpr (MN_major) { // MN major mode (i.e., K x M for A matrix, K x N for B matrix)
@@ -107,6 +107,20 @@ struct st_descriptor {
             }
         }
     }
+#ifdef KITTENS_SM103
+    __device__ inline uint64_t chunk_descriptor_k96(int chunk_idx) {
+        static_assert(!MN_major, "K96 chunk descriptors are only supported for K-major tcgen05 operands.");
+        static_assert(std::is_same_v<T, fp4e2m1_2>, "K96 chunk descriptors are only supported for packed FP4.");
+        static_assert(ST::swizzle_bytes == 128, "K96 chunk descriptors require 128B swizzle mode.");
+        const int start_byte = chunk_idx*48;
+        const int edge_gap = 128 - start_byte%128;                          // bytes from the chunk start to the swizzle atom's edge
+        const int cont_byte = start_byte + (edge_gap < 48 ? edge_gap : 32); // first box read through the leading byte offset
+        // 8 chunks span 3 swizzle atoms (384B); move on to the next atom every 128 bytes (rows * 128B swizzle bytes)
+        const uint64_t start_desc = base_desc + detail::matrix_descriptor_encode(start_byte%128 + (start_byte/128)*(ST::rows/TILE_ROW_DIM<T>)*2048);
+        const uint64_t cont_desc  = base_desc + detail::matrix_descriptor_encode(cont_byte%128 + (cont_byte/128)*(ST::rows/TILE_ROW_DIM<T>)*2048);
+        return (start_desc & ~(0x3FFFull << 16)) | ((cont_desc & 0x3FFFull) << 16) | (1ull << 52);
+    }
+#endif
 };
 
 namespace ducks {
