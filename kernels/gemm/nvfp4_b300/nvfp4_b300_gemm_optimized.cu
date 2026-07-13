@@ -41,9 +41,8 @@ template <
     bool _RASTER_ALONG_N=false,
     int _MMA_PER_TILE=8,
     bool _APPLY_GLOBAL_SCALE=true,
-    int _PREFERRED_CLUSTER_M=4,
-    // Default 2 (not 4): CLC tiling needs (N/Nb) % PREFERRED_CLUSTER_N == 0; 4 crashed on N=13824.
-    int _PREFERRED_CLUSTER_N=2,
+    int _PREFERRED_CLUSTER_M=2,
+    int _PREFERRED_CLUSTER_N=1,
     typename _SCALE_DTYPE=fp8e8m0,
     // Scale-factor pipeline depth, decoupled from LOAD_PIPE_DEPTH. Block16 (E4M3) scale
     // panels are 2x the SMEM/TMEM of block32, so a finer SF buffer (see SF_GROUP_MMAS) lets
@@ -62,7 +61,7 @@ template <
     // Tight scale-factor packing: drop the per-MMA K96 atom pad (E4M3 8->6, E8M0 4->3), shrinking
     // each SF stage (~25%/~12.5%) so a deeper SF pipe fits. A group of MMAs shares whole atoms, each
     // reading via a whole-atom address + intra-atom SFID: E4M3 uses {0,2} (group 2), E8M0 {0,1,2,3}
-    // (group 4). See mma_k96_chunk.
+    // (group 4). See mma_chunk.
     bool _TIGHT_SF=false
 >
 struct config {
@@ -88,6 +87,13 @@ struct config {
     static_assert(PREFERRED_CLUSTER_M % CLUSTER_SIZE == 0, "preferred cluster M must contain whole 2CTA MMA groups");
     static_assert(PREFERRED_CLUSTER_M % FALLBACK_CLUSTER_M == 0 && PREFERRED_CLUSTER_N % FALLBACK_CLUSTER_N == 0,
                   "fallback cluster must tile the preferred cluster");
+    // The tile/scale buffer-release commits (tensor_commit) use the default pair-local multicast
+    // mask, which only reaches cluster ranks 0/1. With preferred clusters larger than one 2-CTA
+    // MMA pair, producer CTAs outside ranks 0/1 never see their buffers freed and the kernel
+    // deadlocks (observed hangs with 2x2 and 4x1). Lift this only together with pair-aware
+    // release masks like the baseline kernel's inputs_finished_mask.
+    static_assert(PREFERRED_CLUSTER_M * PREFERRED_CLUSTER_N <= CLUSTER_SIZE,
+                  "preferred clusters larger than one 2-CTA MMA pair deadlock the buffer-release protocol");
     // Cluster-launch-control work stealing: the grid covers the full problem and resident
     // clusters cancel pending cluster launches to steal their tiles. The response ring must
     // cover the consumption stagger between the load producers and the epilogue.
@@ -252,21 +258,10 @@ __device__ static inline int2 cluster_nctaid() {
     return dims;
 }
 
-// Request cancellation of one pending cluster launch. The 16B response and the mbarrier
-// complete-tx are multicast to the same shared-memory offsets in every CTA of the
-// requesting cluster; the canceled chunk has the requesting cluster's shape.
-__device__ static inline void clc_try_cancel(uint4 &response, semaphore &bar) {
-    const uint32_t response_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&response));
-    const uint32_t bar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
-    asm volatile(
-        "clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.multicast::cluster::all.b128 [%0], [%1];\n"
-        :: "r"(response_addr), "r"(bar_addr));
-}
-
-// Returns false when the grid is drained; otherwise first_ctaid is the canceled cluster's
-// first CTA id and each CTA covers first_ctaid + its own offset within the cluster.
-__device__ static inline bool clc_query_cancel(const uint4 &response, int2 &first_ctaid) {
-    const uint32_t response_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&response));
+// Fence-free variant of kittens::clc::query. The mbarrier complete-tx wait already orders the
+// multicast response's visibility, and clc::query's trailing fence.proxy.async stalls behind
+// in-flight TMA traffic (~3% on short-K shapes), so the fence is deliberately omitted here.
+__device__ static inline bool clc_query(clc::handle &h, int2 &first_ctaid) {
     uint32_t x, y, z, valid;
     asm volatile(
         "{\n\t"
@@ -278,7 +273,7 @@ __device__ static inline bool clc_query_cancel(const uint4 &response, int2 &firs
         "@p clusterlaunchcontrol.query_cancel.get_first_ctaid.v4.b32.b128 {%0, %1, %2, _}, clc_result;\n\t"
         "}\n"
         : "=r"(x), "=r"(y), "=r"(z), "=r"(valid)
-        : "r"(response_addr)
+        : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&h.internal_value)))
         : "memory");
     first_ctaid = {static_cast<int>(x), static_cast<int>(y)};
     return valid != 0;
@@ -364,7 +359,7 @@ __device__ inline void kernel(const globals<C> &g) {
     __shared__ semaphore scales_finished[C::SF_PIPE_DEPTH];
     __shared__ semaphore outputs_arrived;
     __shared__ semaphore outputs_finished;
-    __shared__ alignas(16) uint4 clc_response[C::CLC_DEPTH];
+    __shared__ clc::handle clc_response[C::CLC_DEPTH];
     __shared__ semaphore clc_full[C::CLC_DEPTH];
     __shared__ semaphore clc_empty[C::CLC_DEPTH];
     // The try_cancel response is multicast to every CTA of the cluster, so slot reuse must be
@@ -412,7 +407,7 @@ __device__ inline void kernel(const globals<C> &g) {
     auto clc_next = [&](int it, int2 &base) -> bool {
         const int slot = it % C::CLC_DEPTH;
         wait(clc_full[slot], (it / C::CLC_DEPTH) & 1);
-        return clc_query_cancel(clc_response[slot], base);
+        return clc_query(clc_response[slot], base);
     };
 
     // Main divergence
@@ -453,10 +448,10 @@ __device__ inline void kernel(const globals<C> &g) {
                 const int slot = item % C::CLC_DEPTH;
                 if (cta_rank == 0) {
                     if (item >= C::CLC_DEPTH) wait(clc_empty[slot], ((item - C::CLC_DEPTH) / C::CLC_DEPTH) & 1);
-                    tma::expect_bytes(clc_full[slot], sizeof(uint4));
-                    clc_try_cancel(clc_response[slot], clc_full[slot]);
+                    tma::expect_bytes(clc_full[slot], sizeof(clc::handle));
+                    clc::schedule(clc_response[slot], clc_full[slot]);
                 } else {
-                    tma::expect_bytes(clc_full[slot], sizeof(uint4));
+                    tma::expect_bytes(clc_full[slot], sizeof(clc::handle));
                 }
                 int2 base;
                 if (!clc_next(item, base)) break;
@@ -555,16 +550,16 @@ __device__ inline void kernel(const globals<C> &g) {
                             // every sub-load slice it touches has landed.
                             const int need = (gc*48 + 47) / G::SUBCOL;
                             while (waited < need) { ++waited; wait(tiles_arrived[stage][waited], tphase); }
-                            mma2_ABt_k96_chunk<C::TIGHT_SF>(out_tm, input_tiles[stage].A, input_tiles[stage].B,
+                            mma2_ABt_chunk<48, C::TIGHT_SF>(out_tm, input_tiles[stage].A, input_tiles[stage].B,
                                                A_sc_sub, B_sc_sub, gc, lc, (i == 0 && gc == 0));
                         }
                         // Release this scale group's slot once its copies + MMAs retire.
-                        mma_k96_commit<2>(scales_finished[sf_stage]);
+                        tensor_commit<2>(scales_finished[sf_stage]);
                         update_phasebit<0>(sf_phasebits, sf_stage);
                         sf_stage = (sf_stage + 1) % C::SF_PIPE_DEPTH;
                     }
                     // Release the A/B tile slot once the whole K-tile's MMAs retire.
-                    mma_k96_commit<2>(tiles_finished[stage]);
+                    tensor_commit<2>(tiles_finished[stage]);
                     update_phasebit<0>(phasebits, stage);
                     stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
@@ -1036,7 +1031,7 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     fill<__nv_bfloat16, FillMode::CONSTANT>(d_D_ref, M*N, 0.0f);
 
     // Compute reference GEMM on device
-    reference_nvfp4_gemm<__nv_bfloat16, typename C::SCALE_DTYPE, C::Kb, C::MMA_PER_TILE, 96, C::SF_REF_BLOCKS_PER_MMA, true>(
+    reference_nvfp4_gemm<__nv_bfloat16, typename C::SCALE_DTYPE, 96, !C::TIGHT_SF>(
         d_D_ref, d_A[0], d_B[0], d_A_sc[0], d_B_sc[0], d_A_sc_global[0], d_B_sc_global[0], M, N, K);
     cudaDeviceSynchronize();
 

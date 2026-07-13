@@ -2,6 +2,7 @@ ARCH := SM103
 
 # Standalone mode
 SRC := nvfp4_b300_gemm.cu
+# SRC := nvfp4_b300_gemm_optimized.cu
 OUT := nvfp4_b300_gemm.out
 CMD := ./nvfp4_b300_gemm.out
 CONFIG := standalone
