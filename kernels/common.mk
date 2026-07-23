@@ -3,7 +3,7 @@
 #   SRC := kernel.cu
 #   OUT := kernel
 #   CMD := ./kernel
-#   CONFIG := standalone | python | pytorch
+#   CONFIG := standalone | python | pytorch | tvm_ffi
 #   include common.mk
 
 # These should be set by the including Makefile
@@ -11,7 +11,7 @@ ARCH ?= NOT_SET # SM80 | SM90 | SM100 | SM103 | SM120
 SRC ?= NOT_SET # ex. my_kernel.cu
 OUT ?= NOT_SET # ex. _C$(shell python3 -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))")
 CMD ?= NOT_SET # ex. ./my_kernel, OMP_NUM_THREADS=1 torchrun --nproc_per_node=8 benchmark.py
-CONFIG ?= NOT_SET # standalone | python | pytorch
+CONFIG ?= NOT_SET # standalone | python | pytorch | tvm_ffi
 ifeq ($(ARCH),NOT_SET)
 $(error ARCH is not set. Please set ARCH to SM80, SM90, SM100, SM103, or SM120)
 endif
@@ -25,7 +25,7 @@ ifeq ($(CMD),NOT_SET)
 $(error CMD is not set. Please set CMD to run command)
 endif
 ifeq ($(CONFIG),NOT_SET)
-$(error CONFIG is not set. Please set CONFIG to standalone, python, or pytorch)
+$(error CONFIG is not set. Please set CONFIG to standalone, python, pytorch, or tvm_ffi)
 endif
 
 # Compiler configuration
@@ -81,6 +81,18 @@ NVCCFLAGS += $(PYTHON_INCLUDES) ${PYTHON_LIBDIR} $(PYBIND_INCLUDES)
 NVCCFLAGS += ${PYTORCH_LIBDIR} $(PYTORCH_INCLUDES) 
 NVCCFLAGS += -lpython${PYTHON_VERSION} 
 NVCCFLAGS += -ltorch_python -ltorch_cuda -ltorch_cpu -ltorch -lc10_cuda -lc10
+endif
+
+# TVM-FFI configuration (a regular shared library, not a Python extension)
+ifeq ($(CONFIG),tvm_ffi)
+TVM_FFI_CONFIG ?= tvm-ffi-config
+TVM_FFI_CHECK = $(if $(shell command -v $(TVM_FFI_CONFIG) 2>/dev/null),,$(error tvm-ffi-config was not found. Install it with: python3 -m pip install 'apache-tvm-ffi>=0.1.12,<0.2'))
+TVM_FFI_NVCCFLAGS = $(TVM_FFI_CHECK) \
+	-shared -Xcompiler=-fPIC -Xcompiler=-fvisibility=hidden \
+	$(filter-out -std=c++17,$(shell $(TVM_FFI_CONFIG) --cxxflags)) \
+	$(shell $(TVM_FFI_CONFIG) --ldflags) $(shell $(TVM_FFI_CONFIG) --libs)
+
+$(OUT) ptx: NVCCFLAGS += $(TVM_FFI_NVCCFLAGS)
 endif
 
 # Architecture-specific flags

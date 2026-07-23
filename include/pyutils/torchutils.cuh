@@ -4,6 +4,7 @@
 #include <ATen/core/Tensor.h>
 
 #include "kittens.cuh"
+#include "cuda_utils.cuh"
 #include "parallel_tensor.cuh"
 
 #define CHECK_CUDA(x) TORCH_CHECK(x.device().is_cuda(), #x " must be a CUDA tensor")
@@ -13,23 +14,7 @@
 namespace kittens {
 namespace py {
 
-template <typename Config>
-concept has_min_blocks_per_sm = requires { std::integral_constant<int, int(Config::MIN_BLOCKS_PER_SM)>{}; };
-
-template <typename Config>
-__host__ consteval int min_blocks_per_sm() {
-    if constexpr(has_min_blocks_per_sm<Config>)
-        return Config::MIN_BLOCKS_PER_SM;
-    else
-        return 1;
-}
-
-template <typename Config, typename Globals, auto Kernel>
-__global__
-__launch_bounds__(Config::NUM_THREADS, min_blocks_per_sm<Config>())
-void global_kernel(const __grid_constant__ Globals G) {
-    Kernel(G);
-}
+using ::kittens::detail::global_kernel;
 
 template <typename Layout, bool TypeCheck = true>
 __host__ static inline void tensor_check(const at::Tensor &t) {
@@ -167,60 +152,9 @@ __host__ static inline void parallel_tensor_check(const T1& first, const Ts&... 
     (_parallel_tensor_check(first, rest), ...);
 }
 
-template <typename Config>
-concept static_grid = requires { Config::NUM_BLOCKS; };
-
-template <typename Config>
-concept static_block = requires { Config::NUM_THREADS; };
-
-template <typename Config>
-concept static_dynamic_shared_memory = requires { Config::DYNAMIC_SHARED_MEMORY; };
-
-template <typename Config>
-concept has_pdl_config = requires { { Config::USE_PDL } -> std::convertible_to<bool>; };
-template <typename Config>
-inline constexpr bool use_pdl = false;
-template <typename Config> requires has_pdl_config<Config>
-inline constexpr bool use_pdl<Config> = Config::USE_PDL;
-
 template <typename Config, typename Globals, auto Kernel>
 __host__ static inline void launch_kernel(const Globals &G) {
-    dim3 grid;
-    if constexpr (static_grid<Config>)
-        grid = dim3{Config::NUM_BLOCKS, 1, 1};
-    else
-        grid = G.grid();
-
-    dim3 block;
-    if constexpr (static_block<Config>)
-        block = dim3{Config::NUM_THREADS, 1, 1};
-    else
-        block = G.block();
-
-    int dynamic_shared_memory;
-    if constexpr (static_dynamic_shared_memory<Config>)
-        dynamic_shared_memory = static_cast<int>(Config::DYNAMIC_SHARED_MEMORY);
-    else
-        dynamic_shared_memory = G.dynamic_shared_memory();
-
-    cudaStream_t stream = at::cuda::getCurrentCUDAStream();
-
-#if defined(KITTENS_SM90)
-    static_assert(Config::CLUSTER_SIZE <= 8, "Cluster size must be less than or equal to 8 for Hopper");
-#elif defined(KITTENS_SM10X) || defined(KITTENS_SM120)
-    static_assert(Config::CLUSTER_SIZE <= 16, "Cluster size must be less than or equal to 16 for Blackwell");
-    if constexpr (Config::CLUSTER_SIZE > 8)
-        CUDACHECK(cudaFuncSetAttribute(global_kernel<Config, Globals, Kernel>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
-#endif
-    CUDACHECK(cudaFuncSetAttribute(global_kernel<Config, Globals, Kernel>, cudaFuncAttributeMaxDynamicSharedMemorySize, dynamic_shared_memory));
-
-    if constexpr (Config::CLUSTER_SIZE <= 1) {
-        LaunchConfig<false, use_pdl<Config>> launch_config(grid, block, dynamic_shared_memory, stream);
-        CUDACHECK(cudaLaunchKernelEx(launch_config, global_kernel<Config, Globals, Kernel>, G));
-    } else {
-        LaunchConfig<true, use_pdl<Config>> launch_config(grid, block, dynamic_shared_memory, stream, Config::CLUSTER_SIZE);
-        CUDACHECK(cudaLaunchKernelEx(launch_config, global_kernel<Config, Globals, Kernel>, G));
-    }
+    ::kittens::detail::launch_kernel<Config, Globals, Kernel>(G, at::cuda::getCurrentCUDAStream());
 }
 
 } // namespace py
