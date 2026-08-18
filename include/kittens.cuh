@@ -35,7 +35,11 @@
 #ifdef KITTENS_NO_HOST // useful flag for JIT compilation
 namespace std { using namespace cuda::std; }
 using uint = uint32_t;
+#if defined(__CUDACC_VER_MAJOR__) && __CUDACC_VER_MAJOR__ >= 13
+struct alignas(128) CUtensorMap { char __opaque[128]; };
+#else
 struct alignas(64) CUtensorMap { char __opaque[128]; };
+#endif
 #endif
 
 // CUDA type headers
