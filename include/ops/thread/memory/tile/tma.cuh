@@ -716,7 +716,7 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
         else {
             asm volatile(
                 "cp.async.bulk.tensor.4d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.L2::cache_hint"
-                " [%0], [%1, {%3, %4, %5, %6}], [%2], %8;"
+                " [%0], [%1, {%3, %4, %5, %6}], [%2], %7;"
                 :
                 : "r"(dst_ptr), "l"(tma_ptr), "r"(mbar_ptr),
                 "r"(unit_coord.c), "r"(unit_coord.r), "r"(unit_coord.d), "r"(unit_coord.b), "l"(make_cache_policy<policy>())
