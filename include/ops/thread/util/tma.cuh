@@ -121,66 +121,119 @@ namespace cluster {
 * @param bar Reference to the semaphore variable.
 * @param kPhaseBit The phase bit used for the semaphore.
 */
+template <memory_model M = memory_model::ACQUIRE>
 __device__ static inline void wait(semaphore& bar, int kPhaseBit) {
+    static_assert(M == memory_model::RELAXED || M == memory_model::ACQUIRE, "mbarrier waits support relaxed or acquire semantics");
     void const* const ptr = &bar;
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
 
-    asm volatile (
-        "{\n"
-        ".reg .pred                P1;\n"
-        "LAB_WAIT:\n"
-        "mbarrier.try_wait.parity.acquire.cluster.shared::cta.b64 P1, [%0], %1;\n"
-        "@P1                       bra.uni DONE;\n"
-        "bra.uni                   LAB_WAIT;\n"
-        "DONE:\n"
-        "}\n"
-        :: "r"(mbar_ptr),
-        "r"(kPhaseBit)
-    );
+    if constexpr (M == memory_model::RELAXED) {
+        asm volatile (
+            "{\n"
+            ".reg .pred                P1;\n"
+            "LAB_WAIT:\n"
+            "mbarrier.try_wait.parity.relaxed.cluster.shared::cta.b64 P1, [%0], %1;\n"
+            "@P1                       bra.uni DONE;\n"
+            "bra.uni                   LAB_WAIT;\n"
+            "DONE:\n"
+            "}\n"
+            :: "r"(mbar_ptr), "r"(kPhaseBit)
+        );
+    } else {
+        asm volatile (
+            "{\n"
+            ".reg .pred                P1;\n"
+            "LAB_WAIT:\n"
+            "mbarrier.try_wait.parity.acquire.cluster.shared::cta.b64 P1, [%0], %1;\n"
+            "@P1                       bra.uni DONE;\n"
+            "bra.uni                   LAB_WAIT;\n"
+            "DONE:\n"
+            "}\n"
+            :: "r"(mbar_ptr), "r"(kPhaseBit)
+            : "memory"
+        );
+    }
 }
 
+template <memory_model M = memory_model::ACQUIRE>
 __device__ static inline bool try_wait(semaphore &bar, int kPhaseBit) {
+    static_assert(M == memory_model::RELAXED || M == memory_model::ACQUIRE, "mbarrier waits support relaxed or acquire semantics");
     void const* const ptr = &bar;
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
     uint32_t success;
 
-    asm volatile(
-        "{\n"
-        ".reg .pred P1; \n"
-        "mbarrier.try_wait.parity.acquire.cluster.shared::cta.b64 P1, [%1], %2; \n"
-        "selp.b32 %0, 1, 0, P1; \n"
-        "}\n"
-        : "=r"(success)
-        : "r"(mbar_ptr), "r"(kPhaseBit)
-        : "memory"
-    );
+    if constexpr (M == memory_model::RELAXED) {
+        asm volatile(
+            "{\n"
+            ".reg .pred P1; \n"
+            "mbarrier.try_wait.parity.relaxed.cluster.shared::cta.b64 P1, [%1], %2; \n"
+            "selp.b32 %0, 1, 0, P1; \n"
+            "}\n"
+            : "=r"(success)
+            : "r"(mbar_ptr), "r"(kPhaseBit)
+        );
+    } else {
+        asm volatile(
+            "{\n"
+            ".reg .pred P1; \n"
+            "mbarrier.try_wait.parity.acquire.cluster.shared::cta.b64 P1, [%1], %2; \n"
+            "selp.b32 %0, 1, 0, P1; \n"
+            "}\n"
+            : "=r"(success)
+            : "r"(mbar_ptr), "r"(kPhaseBit)
+            : "memory"
+        );
+    }
 
     return static_cast<bool>(success);
 }
 
+template <memory_model M = memory_model::ACQUIRE>
 __device__ static inline void careful_wait(semaphore& bar, int kPhaseBit) {
+    static_assert(M == memory_model::RELAXED || M == memory_model::ACQUIRE, "mbarrier waits support relaxed or acquire semantics");
     void const* const ptr = &bar;
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr)); 
 
-    asm volatile (
-        "{\n"
-        ".reg .b64                 start_clock, current_clock;\n"
-        "mov.b64                   start_clock, %clock64;\n"
-        ".reg .pred                P_CLOCK;\n"
-        ".reg .pred                P1;\n"
-        "LAB_WAIT:\n"
-        "mbarrier.try_wait.parity.acquire.cluster.shared::cta.b64 P1, [%0], %1;\n"
-        "@P1                       bra.uni DONE;\n"
-        "mov.b64                   current_clock, %clock64;\n"
-        "sub.u64                   current_clock, current_clock, start_clock;\n"
-        "setp.ge.u64               P_CLOCK, current_clock, 1000000;\n"
-        "@P_CLOCK                  trap;\n"
-        "bra.uni                   LAB_WAIT;\n"
-        "DONE:\n"
-        "}\n"
-        :: "r"(mbar_ptr),
-        "r"(kPhaseBit)
-    );
+    if constexpr (M == memory_model::RELAXED) {
+        asm volatile (
+            "{\n"
+            ".reg .b64                 start_clock, current_clock;\n"
+            "mov.b64                   start_clock, %clock64;\n"
+            ".reg .pred                P_CLOCK;\n"
+            ".reg .pred                P1;\n"
+            "LAB_WAIT:\n"
+            "mbarrier.try_wait.parity.relaxed.cluster.shared::cta.b64 P1, [%0], %1;\n"
+            "@P1                       bra.uni DONE;\n"
+            "mov.b64                   current_clock, %clock64;\n"
+            "sub.u64                   current_clock, current_clock, start_clock;\n"
+            "setp.ge.u64               P_CLOCK, current_clock, 1000000;\n"
+            "@P_CLOCK                  trap;\n"
+            "bra.uni                   LAB_WAIT;\n"
+            "DONE:\n"
+            "}\n"
+            :: "r"(mbar_ptr), "r"(kPhaseBit)
+        );
+    } else {
+        asm volatile (
+            "{\n"
+            ".reg .b64                 start_clock, current_clock;\n"
+            "mov.b64                   start_clock, %clock64;\n"
+            ".reg .pred                P_CLOCK;\n"
+            ".reg .pred                P1;\n"
+            "LAB_WAIT:\n"
+            "mbarrier.try_wait.parity.acquire.cluster.shared::cta.b64 P1, [%0], %1;\n"
+            "@P1                       bra.uni DONE;\n"
+            "mov.b64                   current_clock, %clock64;\n"
+            "sub.u64                   current_clock, current_clock, start_clock;\n"
+            "setp.ge.u64               P_CLOCK, current_clock, 1000000;\n"
+            "@P_CLOCK                  trap;\n"
+            "bra.uni                   LAB_WAIT;\n"
+            "DONE:\n"
+            "}\n"
+            :: "r"(mbar_ptr), "r"(kPhaseBit)
+            : "memory"
+        );
+    }
 }
 
 /**
@@ -197,12 +250,21 @@ __device__ static inline void careful_wait(semaphore& bar, int kPhaseBit) {
 * @param bar Reference to the semaphore variable.
 * @param bytes The number of bytes expected at the semaphore.
 */
+template <memory_model M = memory_model::RELEASE>
 __device__ static inline void expect_bytes(semaphore& bar, uint32_t bytes) {
+    static_assert(M == memory_model::RELAXED || M == memory_model::RELEASE, "mbarrier.arrive.expect_tx supports relaxed or release semantics");
     uint32_t mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));
-    asm volatile ("mbarrier.arrive.expect_tx.shared::cluster.b64 _, [%0], %1;\n"
-        :: "r"(mbar_addr), "r"(bytes));
+    if constexpr (M == memory_model::RELAXED) {
+        asm volatile ("mbarrier.arrive.expect_tx.relaxed.cluster.shared::cluster.b64 _, [%0], %1;\n"
+            :: "r"(mbar_addr), "r"(bytes));
+    } else {
+        asm volatile ("mbarrier.arrive.expect_tx.shared::cluster.b64 _, [%0], %1;\n"
+            :: "r"(mbar_addr), "r"(bytes));
+    }
 }
+template <memory_model M = memory_model::RELEASE>
 __device__ static inline void expect_bytes(semaphore& bar, uint32_t bytes, int dst_cta) {
+    static_assert(M == memory_model::RELAXED || M == memory_model::RELEASE, "mbarrier.arrive.expect_tx supports relaxed or release semantics");
     uint32_t mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar)); 
     uint32_t neighbor_mbar_addr;
     asm volatile (
@@ -210,8 +272,13 @@ __device__ static inline void expect_bytes(semaphore& bar, uint32_t bytes, int d
         : "=r"(neighbor_mbar_addr)
         : "r"(mbar_addr), "r"(dst_cta)
     );
-    asm volatile ("mbarrier.arrive.expect_tx.shared::cluster.b64 _, [%0], %1;\n"
-        :: "r"(neighbor_mbar_addr), "r"(bytes));
+    if constexpr (M == memory_model::RELAXED) {
+        asm volatile ("mbarrier.arrive.expect_tx.relaxed.cluster.shared::cluster.b64 _, [%0], %1;\n"
+            :: "r"(neighbor_mbar_addr), "r"(bytes));
+    } else {
+        asm volatile ("mbarrier.arrive.expect_tx.shared::cluster.b64 _, [%0], %1;\n"
+            :: "r"(neighbor_mbar_addr), "r"(bytes));
+    }
 }
 /**
 * @brief Sets the number of bytes expected at the semaphore.
@@ -228,9 +295,9 @@ __device__ static inline void expect_bytes(semaphore& bar, uint32_t bytes, int d
 *
 * This function sets the number of bytes expected at the mbarrier before the transaction arrives.
 */
-template<typename T, typename... args>
+template<memory_model M = memory_model::RELEASE, typename T, typename... args>
 __device__ static inline void expect(semaphore& bar, const T& _1, const args&... _2) {
-    expect_bytes(bar, size_bytes<T, args...>);
+    expect_bytes<M>(bar, size_bytes<T, args...>);
 }
 
 /**
@@ -242,7 +309,9 @@ __device__ static inline void expect(semaphore& bar, const T& _1, const args&...
 * @param dst_cta The destination CTA index.
 * @param count The count value for the arrival.
 */
+template <memory_model M = memory_model::RELEASE>
 __device__ static inline void arrive(semaphore& bar, int dst_cta, uint32_t count=1) {
+    static_assert(M == memory_model::RELAXED || M == memory_model::RELEASE, "mbarrier arrive supports relaxed or release semantics");
     uint32_t mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar)); 
     uint32_t neighbor_mbar_addr;
     asm volatile (
@@ -250,12 +319,20 @@ __device__ static inline void arrive(semaphore& bar, int dst_cta, uint32_t count
         : "=r"(neighbor_mbar_addr)
         : "r"(mbar_addr), "r"(dst_cta)
     );
-    asm volatile (
-        "mbarrier.arrive.shared::cluster.b64 _, [%0], %1;\n"
-        :
-        : "r"(neighbor_mbar_addr), "r" (count)
-        : "memory"
-    );
+    if constexpr (M == memory_model::RELAXED) {
+        asm volatile (
+            "mbarrier.arrive.relaxed.cluster.shared::cluster.b64 _, [%0], %1;\n"
+            :
+            : "r"(neighbor_mbar_addr), "r"(count)
+        );
+    } else {
+        asm volatile (
+            "mbarrier.arrive.shared::cluster.b64 _, [%0], %1;\n"
+            :
+            : "r"(neighbor_mbar_addr), "r" (count)
+            : "memory"
+        );
+    }
 }
 
 /* ------- Non-tensor TMA transfers ------- */
