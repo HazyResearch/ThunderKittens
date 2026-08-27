@@ -10,57 +10,24 @@ struct scale_traits;
 template <>
 struct scale_traits<fp8e8m0> {
     static constexpr int SC_COLS_PER_MMA = 16;
-    static constexpr int SF_ATOMS_PER_MMA = 1;
-    static constexpr int SCALE_BLOCKS_PER_MMA = 4;
+    static constexpr int REAL_BLOCKS_PER_MMA = 3;
+    static constexpr int MMAS_PER_GROUP = 4;
 };
 
 template <>
 struct scale_traits<fp8e4m3> {
     static constexpr int SC_COLS_PER_MMA = 32;
-    static constexpr int SF_ATOMS_PER_MMA = 2;
-    static constexpr int SCALE_BLOCKS_PER_MMA = 8;
+    static constexpr int REAL_BLOCKS_PER_MMA = 6;
+    static constexpr int MMAS_PER_GROUP = 2;
 };
 
-template <
-    int _Nb,
-    int _LOAD_PIPE_DEPTH,
-    int _EPI_PIPE_DEPTH,
-    int _SUPERGROUP_SIZE,
-    int _NUM_D_TILES,
-    bool _OVERLAP_EPI,
-    bool _RASTER_ALONG_N=false,
-    int _MMA_PER_TILE=8,
-    bool _APPLY_GLOBAL_SCALE=true,
-    int _PREFERRED_CLUSTER_M=4,
-    // Default 2 (not 4): CLC tiling needs (N/Nb) % PREFERRED_CLUSTER_N == 0; 4 crashed on N=13824.
-    int _PREFERRED_CLUSTER_N=2,
-    typename _SCALE_DTYPE=fp8e8m0
->
+template <typename _SCALE_DTYPE, bool _APPLY_GLOBAL_SCALE = false>
 struct config {
-    static_assert(_Nb == 128 || _Nb == 256, "Nb must be 128 or 256");
-    static_assert(_LOAD_PIPE_DEPTH > 0 && _LOAD_PIPE_DEPTH <= 5, "LOAD_PIPE_DEPTH must be greater than 0 and at most 5");
-    static_assert(_EPI_PIPE_DEPTH > 0, "EPI_PIPE_DEPTH must be greater than 0");
-    static_assert(_SUPERGROUP_SIZE > 0, "SUPERGROUP_SIZE must be greater than 0");
-    static_assert(_NUM_D_TILES > 0, "NUM_D_TILES must be greater than 0");
-    // MMA_PER_TILE % 8 == 0 keeps the fp4 tile on a 128B swizzle atom, required for K96 (see descriptor.cuh).
-    static_assert(_MMA_PER_TILE % 8 == 0, "MMA_PER_TILE must be a multiple of 8 (K96 needs a 128B swizzle atom)");
+    static_assert(
+        std::is_same_v<_SCALE_DTYPE, fp8e4m3> || std::is_same_v<_SCALE_DTYPE, fp8e8m0>,
+        "B300 packed-FP4 GEMM supports E4M3 or E8M0 scale factors");
 
     static constexpr int CLUSTER_SIZE = 2;
-    // CUTLASS-style dynamic cluster launch: the driver grants the preferred shape where it can
-    // and decomposes the rest into fallback clusters. Work assignment is region-based blockIdx
-    // math so both shapes compute identical tiles; only TMA multicast scope differs.
-    static constexpr int PREFERRED_CLUSTER_M = _PREFERRED_CLUSTER_M;
-    static constexpr int PREFERRED_CLUSTER_N = _PREFERRED_CLUSTER_N;
-    static constexpr int FALLBACK_CLUSTER_M = 2;
-    static constexpr int FALLBACK_CLUSTER_N = 1;
-    static constexpr int REGION_PAIRS_M = PREFERRED_CLUSTER_M / CLUSTER_SIZE;
-    static constexpr int REGION_PAIRS_N = PREFERRED_CLUSTER_N;
-    static_assert(PREFERRED_CLUSTER_M % CLUSTER_SIZE == 0, "preferred cluster M must contain whole 2CTA MMA groups");
-    static_assert(PREFERRED_CLUSTER_M % FALLBACK_CLUSTER_M == 0 && PREFERRED_CLUSTER_N % FALLBACK_CLUSTER_N == 0,
-                  "fallback cluster must tile the preferred cluster");
-    // Cluster-launch-control work stealing: the grid covers the full problem and resident
-    // clusters cancel pending cluster launches to steal their tiles. The response ring must
-    // cover the consumption stagger between the load producers and the epilogue.
     static constexpr int CLC_DEPTH = 3;
     static constexpr bool USE_PDL = true;
 
@@ -70,48 +37,84 @@ struct config {
     static constexpr int NUM_WARPS = NUM_WARPGROUPS * WARPGROUP_WARPS;
     static constexpr int NUM_THREADS = NUM_WARPS * WARP_THREADS;
 
-    static constexpr int LOAD_PIPE_DEPTH = _LOAD_PIPE_DEPTH;
-    static constexpr int EPI_PIPE_DEPTH = _EPI_PIPE_DEPTH;
-    static constexpr bool OVERLAP_EPI = _OVERLAP_EPI;
-    static constexpr bool RASTER_ALONG_N = _RASTER_ALONG_N;
-
-    static constexpr int SUPERGROUP_SIZE = _SUPERGROUP_SIZE;
-    static constexpr int MMA_PER_TILE = _MMA_PER_TILE;
+    // Tuned B300 profile used for the PR #201 benchmark shapes.
+    static constexpr int LOAD_PIPE_DEPTH = 2;
+    static constexpr int SF_PIPE_DEPTH = 6;
+    static constexpr int SF_TMEM_DEPTH = 6;
+    static constexpr int EPI_PIPE_DEPTH = 16;
+    static constexpr int SUPERGROUP_SIZE = 8;
+    static constexpr bool RASTER_ALONG_N = true;
     static constexpr bool APPLY_GLOBAL_SCALE = _APPLY_GLOBAL_SCALE;
+
     static constexpr int Mb = 256;
-    static constexpr int Nb = _Nb;
+    static constexpr int Nb = 256;
+    static constexpr int MMA_PER_TILE = 8;
     static constexpr int Kb = 96 * MMA_PER_TILE;
-    static constexpr int B_SC_SIZE = Nb/128;
+    static constexpr int B_SC_SIZE = Nb / 128;
+
     using SCALE_DTYPE = _SCALE_DTYPE;
     using ST = scale_traits<SCALE_DTYPE>;
     static constexpr int SC_COLS_PER_MMA = ST::SC_COLS_PER_MMA;
-    static constexpr int SF_ATOMS_PER_MMA = ST::SF_ATOMS_PER_MMA;
-    static constexpr int SCALE_BLOCKS_PER_MMA = ST::SCALE_BLOCKS_PER_MMA;
+    static constexpr int REAL_BLOCKS_PER_MMA = ST::REAL_BLOCKS_PER_MMA;
 
-    static constexpr int NUM_D_TILES = _NUM_D_TILES;
+    // Tight K96 scale storage contains only the real block scales. Grouping two E4M3
+    // MMAs or four E8M0 MMAs produces three complete 32x16 scale-factor atoms.
+    static constexpr int SF_TILE_ROWS = 24;
+    static constexpr int SF_SMEM_COLS_PER_MMA = SC_COLS_PER_MMA;
+    static constexpr int SF_GROUP_MMAS = ST::MMAS_PER_GROUP;
+    static constexpr int SF_GROUPS_PER_TILE = MMA_PER_TILE / SF_GROUP_MMAS;
+    static constexpr int SF_GROUP_ROWS = SF_TILE_ROWS * SF_GROUP_MMAS / MMA_PER_TILE;
+    static constexpr int SF_ATOMS_PER_GROUP = SF_GROUP_MMAS * REAL_BLOCKS_PER_MMA / 4;
+    static constexpr int SF_GROUP_TMEM_COLS = SF_ATOMS_PER_GROUP * 16;
+
+    static_assert(SF_ATOMS_PER_GROUP == 3);
+    static_assert(Nb + (SF_GROUP_TMEM_COLS / 4) * SF_TMEM_DEPTH * (1 + B_SC_SIZE) <= MAX_TENSOR_COLS,
+                  "scale-factor pipeline exceeds tensor-memory capacity");
 };
 
 template <typename C>
 struct globals {
     using A_fp4x2_tile = st_fp4e2m1_2<C::Mb/2, C::Kb/2>;
-    using A_sc_tile    = st<typename C::SCALE_DTYPE, 32, C::SC_COLS_PER_MMA*C::MMA_PER_TILE, false>;
+    using A_sc_tile    = st<typename C::SCALE_DTYPE, C::SF_TILE_ROWS, C::SF_SMEM_COLS_PER_MMA*C::MMA_PER_TILE, false>;
     using B_fp4x2_tile = st_fp4e2m1_2<C::Nb/2, C::Kb/2>;
-    using B_sc_tile    = st<typename C::SCALE_DTYPE, 32, C::SC_COLS_PER_MMA*C::MMA_PER_TILE, false>;
+    using B_sc_tile    = st<typename C::SCALE_DTYPE, C::SF_TILE_ROWS, C::SF_SMEM_COLS_PER_MMA*C::MMA_PER_TILE, false>;
+    // Each scale buffer is a contiguous group of K96 MMA scales.
+    using A_sc_grp_tile = st<typename C::SCALE_DTYPE, C::SF_GROUP_ROWS, C::SF_SMEM_COLS_PER_MMA*C::MMA_PER_TILE, false>;
+    using B_sc_grp_tile = st<typename C::SCALE_DTYPE, C::SF_GROUP_ROWS, C::SF_SMEM_COLS_PER_MMA*C::MMA_PER_TILE, false>;
+    using scale_atom = st<typename C::SCALE_DTYPE, 32, 16, false>;
     using D_tile       = st_bf<C::Mb/2, C::Nb/C::EPI_PIPE_DEPTH>;
 
-    using A_fp4x2_gl     = gl<fp4e2m1_2,  1,  1, -1, -1, A_fp4x2_tile>;
-    using A_sc_gl        = gl<typename C::SCALE_DTYPE, -1, -1, 32, C::SC_COLS_PER_MMA*C::MMA_PER_TILE, A_sc_tile>;
+    union scale_group {
+        A_sc_grp_tile tile;
+        scale_atom atoms[C::SF_ATOMS_PER_GROUP];
+    };
+    static_assert(sizeof(scale_group) == sizeof(A_sc_grp_tile));
+
+    // Fine-grained sub-tile staging of A/B along K. Each sub-load
+    // fills exactly one swizzle period (one L2-line-aligned K-slice) of the K-tile,
+    // signalling its own mbarrier, so the MMA consumer can begin issuing K96 chunks
+    // as soon as the slices they touch have landed -- without waiting for the whole
+    // K-tile. fp4e2m1_2 is 1 byte/col, so swizzle_bytes == cols-per-period.
+    static constexpr int SUBCOL       = A_fp4x2_tile::swizzle_bytes;
+    static constexpr int NUM_SUBLOADS = (C::Kb/2) / SUBCOL;
+    static_assert((C::Kb/2) % SUBCOL == 0, "K-tile must be a whole number of swizzle periods.");
+    // Explicit swizzle_bytes so the type matches A_fp4x2_tile::subtile<SUBCOL>(s).
+    using A_fp4x2_sub_tile = st_fp4e2m1_2<C::Mb/2, SUBCOL, true, SUBCOL>;
+    using B_fp4x2_sub_tile = st_fp4e2m1_2<C::Nb/2, SUBCOL, true, SUBCOL>;
+
+    using A_fp4x2_gl     = gl<fp4e2m1_2,  1,  1, -1, -1, A_fp4x2_tile, A_fp4x2_sub_tile>;
+    using A_sc_gl        = gl<typename C::SCALE_DTYPE, -1, -1, C::SF_TILE_ROWS, C::SF_SMEM_COLS_PER_MMA*C::MMA_PER_TILE, A_sc_tile, A_sc_grp_tile>;
     using A_sc_global_gl = gl<float,      1,  1,  1,  1>;
-    using B_fp4x2_gl     = gl<fp4e2m1_2,  1,  1, -1, -1, B_fp4x2_tile>;
-    using B_sc_gl        = gl<typename C::SCALE_DTYPE, -1, -1, 32, C::SC_COLS_PER_MMA*C::MMA_PER_TILE, B_sc_tile>;
+    using B_fp4x2_gl     = gl<fp4e2m1_2,  1,  1, -1, -1, B_fp4x2_tile, B_fp4x2_sub_tile>;
+    using B_sc_gl        = gl<typename C::SCALE_DTYPE, -1, -1, C::SF_TILE_ROWS, C::SF_SMEM_COLS_PER_MMA*C::MMA_PER_TILE, B_sc_tile, B_sc_grp_tile>;
     using B_sc_global_gl = gl<float,      1,  1,  1,  1>;
     using D_gl           = gl<bf16,       1,  1, -1, -1, D_tile>;
 
     A_fp4x2_gl     A;           // M x (N // 2)
-    A_sc_gl        A_sc;        // (M // 128) x (K // Kb) x 32 x (SC_COLS_PER_MMA*MMA_PER_TILE)
+    A_sc_gl        A_sc;        // (M // 128) x (K // Kb) x 24 x (SC_COLS_PER_MMA*MMA_PER_TILE)
     A_sc_global_gl A_sc_global; // (1,)
     B_fp4x2_gl     B;           // M x (N // 2)
-    B_sc_gl        B_sc;        // (N // 128) x (K // Kb) x 32 x (SC_COLS_PER_MMA*MMA_PER_TILE)
+    B_sc_gl        B_sc;        // (N // 128) x (K // Kb) x 24 x (SC_COLS_PER_MMA*MMA_PER_TILE)
     B_sc_global_gl B_sc_global; // (1,)
     D_gl           D;           // M x N
 
@@ -120,116 +123,61 @@ struct globals {
         B_fp4x2_tile B;
     };
     struct input_scales_t {
-        A_sc_tile A;
-        B_sc_tile B[C::B_SC_SIZE];
+        scale_group A;
+        scale_group B[C::B_SC_SIZE];
     };
     struct outputs_t {
-        D_tile D[C::NUM_D_TILES];
+        D_tile D;
     };
     __host__ inline dim3 grid() const {
         // Full-problem grid in CTA units; cluster-launch-control steals the non-resident
         // remainder, so no host-side persistence sizing is needed.
-        return dim3(D.rows() / C::Mb * 2, D.cols() / C::Nb);
+        return dim3((D.rows() / C::Mb) * (D.cols() / C::Nb) * C::CLUSTER_SIZE);
     }
     __host__ inline dim3 block() const { return dim3(C::NUM_THREADS); }
     __host__ inline int dynamic_shared_memory() const {
         constexpr int _dynamic_shared_memory = sizeof(input_tiles_t)  * C::LOAD_PIPE_DEPTH + 1024 +
-                                               sizeof(input_scales_t) * C::LOAD_PIPE_DEPTH + 1024 +
+                                               sizeof(input_scales_t) * C::SF_PIPE_DEPTH  + 1024 +
                                                sizeof(outputs_t);
         static_assert(_dynamic_shared_memory <= MAX_SHARED_MEMORY - 1024);
         return _dynamic_shared_memory;
     }
 };
 
-__device__ static inline int2 cluster_nctaid() {
-    int2 dims;
-    asm volatile("mov.u32 %0, %%cluster_nctaid.x;\n" : "=r"(dims.x));
-    asm volatile("mov.u32 %0, %%cluster_nctaid.y;\n" : "=r"(dims.y));
-    return dims;
-}
-
-// Fence-free variant of kittens::clc::query. The mbarrier complete-tx wait already orders the
-// multicast response's visibility, and clc::query's trailing fence.proxy.async stalls behind
-// in-flight TMA traffic (~3% on short-K shapes), so the fence is deliberately omitted here.
-__device__ static inline bool clc_query(clc::handle &h, int2 &first_ctaid) {
-    uint32_t x, y, z, valid;
-    asm volatile(
-        "{\n\t"
-        ".reg .pred p;\n\t"
-        ".reg .b128 clc_result;\n\t"
-        "ld.shared.b128 clc_result, [%4];\n\t"
-        "clusterlaunchcontrol.query_cancel.is_canceled.pred.b128 p, clc_result;\n\t"
-        "selp.u32 %3, 1, 0, p;\n\t"
-        "@p clusterlaunchcontrol.query_cancel.get_first_ctaid.v4.b32.b128 {%0, %1, %2, _}, clc_result;\n\t"
-        "}\n"
-        : "=r"(x), "=r"(y), "=r"(z), "=r"(valid)
-        : "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&h.internal_value)))
-        : "memory");
-    first_ctaid = {static_cast<int>(x), static_cast<int>(y)};
-    return valid != 0;
-}
-
 template <typename C>
 __device__ inline void kernel(const globals<C> &g) {
     using G = globals<C>;
 
     if (threadIdx.x == 0) {
-#ifdef NVFP4_DEBUG_CLUSTER_SHAPE
-        if (cluster_ctarank() == 0) printf("block (%d,%d): cluster %dx%d\n", blockIdx.x, blockIdx.y, cluster_nctaid().x, cluster_nctaid().y);
-#endif
         g.A.template prefetch_tma<typename G::A_fp4x2_tile>();
+        g.A.template prefetch_tma<typename G::A_fp4x2_sub_tile>();
         g.A_sc.template prefetch_tma<typename G::A_sc_tile>();
+        g.A_sc.template prefetch_tma<typename G::A_sc_grp_tile>();
         g.B.template prefetch_tma<typename G::B_fp4x2_tile>();
+        g.B.template prefetch_tma<typename G::B_fp4x2_sub_tile>();
         g.B_sc.template prefetch_tma<typename G::B_sc_tile>();
+        g.B_sc.template prefetch_tma<typename G::B_sc_grp_tile>();
         g.D.template prefetch_tma<typename G::D_tile>();
     }
 
     const int warpgroup_id = warpgroup::groupid();
-    // Actual cluster geometry (preferred or fallback), used only for TMA multicast scope,
-    // load-issuer election, and barrier signaling.
-    const int cta_rank = cluster_ctarank();
-    const int2 cluster_dims = cluster_nctaid();
-    const int cluster_m = cluster_dims.x;
-    const int cluster_n = cluster_dims.y;
-    const int cta_x = cta_rank % cluster_m;
-    const int cta_y = cta_rank / cluster_m;
-    const int cta_id = cta_x & 1;
-    const int pair_leader_rank = cta_rank - cta_id;
-    const uint16_t pair_mask = uint16_t(0b11u << pair_leader_rank);
-    // Work items are cluster-shaped CTA-id chunks: the home chunk comes from blockIdx, and
-    // subsequent chunks are stolen via cluster launch control. The effective CTA id maps to
-    // a tile through a supergroup swizzle over preferred-cluster-aligned regions, so any mix
-    // of preferred and fallback chunks covers the grid bijectively.
-    const int regions_x = gridDim.x / C::PREFERRED_CLUSTER_M;
-    const int2 home_base{static_cast<int>(blockIdx.x) - cta_x, static_cast<int>(blockIdx.y) - cta_y};
-    uint16_t a_mcast_mask = 0;
-    uint16_t b_mcast_mask = 0;
-    for (int y = 0; y < cluster_n; ++y) {
-        a_mcast_mask |= uint16_t(1u << (y * cluster_m + cta_x));
-    }
-    for (int group_m = 0; group_m < cluster_m / C::CLUSTER_SIZE; ++group_m) {
-        b_mcast_mask |= uint16_t(1u << (cta_y * cluster_m + group_m * C::CLUSTER_SIZE + cta_id));
-    }
-    const uint16_t b_scale_mcast_mask = uint16_t(((1u << cluster_m) - 1u) << (cta_y * cluster_m));
-    // Stage-free commits must reach every CTA that issues loads consumed by this pair: the
-    // pair's cluster column (A and A scales) and the pair's cluster row (B and B scales).
-    // Each CTA then receives cluster_n + cluster_m/2 - 1 commits per stage.
-    uint16_t inputs_finished_mask = b_scale_mcast_mask;
-    for (int y = 0; y < cluster_n; ++y) {
-        inputs_finished_mask |= uint16_t(0b11u << (y * cluster_m + (cta_x & ~1)));
-    }
-    const int inputs_finished_count = cluster_n + cluster_m / C::CLUSTER_SIZE - 1;
-    const int macro_row_blocks = g.D.rows() / C::Mb / C::REGION_PAIRS_M;
-    const int macro_col_blocks = g.D.cols() / C::Nb / C::REGION_PAIRS_N;
+    const int cta_id = cluster_ctarank();
+    const int home_cluster = blockIdx.x / C::CLUSTER_SIZE;
+    const int num_row_blocks = g.D.rows() / C::Mb;
+    const int num_col_blocks = g.D.cols() / C::Nb;
     const int num_red_blocks = 2 * g.A.cols() / C::Kb;
-    uint32_t stage = 0;
+    // A/B tiles ride `stage`/`phasebits` (ring LOAD_PIPE_DEPTH); scales ride the independent
+    // `sf_stage`/`sf_phasebits` (ring SF_PIPE_DEPTH). Each producer warp owns its own copies.
+    int stage = 0;
     uint32_t phasebits = 0xFFFF0000;
+    int sf_stage = 0;
+    uint32_t sf_phasebits = 0xFFFF0000;
 
     // Allocate shared memory
     extern __shared__ int __shm[];
     tma_swizzle_allocator sm_allocator((int*)&__shm[0]);
     typename G::input_tiles_t  (&input_tiles) [C::LOAD_PIPE_DEPTH] = sm_allocator.allocate<G::input_tiles_t, C::LOAD_PIPE_DEPTH>();
-    typename G::input_scales_t (&input_scales)[C::LOAD_PIPE_DEPTH] = sm_allocator.allocate<G::input_scales_t, C::LOAD_PIPE_DEPTH>();
+    typename G::input_scales_t (&input_scales)[C::SF_PIPE_DEPTH]   = sm_allocator.allocate<G::input_scales_t, C::SF_PIPE_DEPTH>();
     typename G::outputs_t       &output_tiles                      = sm_allocator.allocate<G::outputs_t>();
 
     // Allocate tensor memory
@@ -238,54 +186,62 @@ __device__ inline void kernel(const globals<C> &g) {
     // Set up mbarriers
     __shared__ uint32_t tmem_addr;
     __shared__ semaphore tmem_provisioned, tmem_finished;
-    __shared__ semaphore tiles_arrived[C::LOAD_PIPE_DEPTH];
-    __shared__ semaphore scales_arrived[C::LOAD_PIPE_DEPTH];
-    __shared__ semaphore inputs_finished[C::LOAD_PIPE_DEPTH];
+    __shared__ semaphore tiles_arrived[C::LOAD_PIPE_DEPTH][G::NUM_SUBLOADS];
+    __shared__ semaphore scales_arrived[C::SF_PIPE_DEPTH];
+    // A/B tiles and scales now have independent finished-rings (decoupled pipe depths).
+    __shared__ semaphore tiles_finished[C::LOAD_PIPE_DEPTH];
+    __shared__ semaphore scales_finished[C::SF_PIPE_DEPTH];
     __shared__ semaphore outputs_arrived;
     __shared__ semaphore outputs_finished;
     __shared__ clc::handle clc_response[C::CLC_DEPTH];
     __shared__ semaphore clc_full[C::CLC_DEPTH];
     __shared__ semaphore clc_empty[C::CLC_DEPTH];
-    // The try_cancel response is multicast to every CTA of the cluster, so slot reuse must be
-    // gated cluster-wide: all consumers arrive at rank 0's clc_empty. Per CTA that is the tile
-    // and scale producer warps plus the four consumer warps, plus the MMA warp on pair leaders.
-    const int cluster_size = cluster_m * cluster_n;
-    const int clc_empty_count = cluster_size * 6 + cluster_size / C::CLUSTER_SIZE;
+    __shared__ semaphore clc_readers_done[C::CLC_DEPTH];
+    __shared__ semaphore clc_initially_armed;
+    // Seven warps read each CTA-local response; CTA 0 also has the MMA warp.
+    const int clc_local_readers = 7 + (cta_id == 0);
     if (threadIdx.x == 32) {
         init_semaphore(tmem_provisioned, 0, 1);
         init_semaphore(tmem_finished, 0, 1);
         #pragma unroll
         for (int i = 0; i < C::LOAD_PIPE_DEPTH; ++i) {
-            init_semaphore(tiles_arrived[i], 0, 1);
+            #pragma unroll
+            for (int s = 0; s < G::NUM_SUBLOADS; ++s)
+                init_semaphore(tiles_arrived[i][s], 0, 1);
+            init_semaphore(tiles_finished[i], 0, 1);
+        }
+        #pragma unroll
+        for (int i = 0; i < C::SF_PIPE_DEPTH; ++i) {
             init_semaphore(scales_arrived[i], 0, 1);
-            init_semaphore(inputs_finished[i], 0, inputs_finished_count);
+            init_semaphore(scales_finished[i], 0, 1);
         }
         init_semaphore(outputs_arrived, 0, 1);
         init_semaphore(outputs_finished, 0, C::CLUSTER_SIZE);
+        init_semaphore(clc_initially_armed, 0, C::CLUSTER_SIZE);
         #pragma unroll
         for (int i = 0; i < C::CLC_DEPTH; ++i) {
             init_semaphore(clc_full[i], 0, 1);
-            init_semaphore(clc_empty[i], 0, clc_empty_count);
+            init_semaphore(clc_empty[i], 0, C::CLUSTER_SIZE);
+            init_semaphore(clc_readers_done[i], 0, clc_local_readers);
         }
     }
     everyone::tma::cluster::arrive_aligned();
 
-    // Map an effective CTA id (home or stolen) to this CTA's output pair tile.
-    auto tile_coord = [&](int2 base) -> int2 {
-        const int eff_x = base.x + cta_x;
-        const int eff_y = base.y + cta_y;
-        const int swizzle_region = (eff_x / C::PREFERRED_CLUSTER_M) + (eff_y / C::PREFERRED_CLUSTER_N) * regions_x;
-        const int2 macro_coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE, C::RASTER_ALONG_N>(
-            macro_row_blocks, macro_col_blocks, swizzle_region);
-        return {macro_coord.x * C::REGION_PAIRS_M + (eff_x % C::PREFERRED_CLUSTER_M) / C::CLUSTER_SIZE,
-                macro_coord.y * C::REGION_PAIRS_N + (eff_y % C::PREFERRED_CLUSTER_N)};
+    auto tile_coord = [&](int cluster_id) {
+        return get_swizzled_2d_idx<C::SUPERGROUP_SIZE, C::RASTER_ALONG_N>(
+            num_row_blocks, num_col_blocks, cluster_id);
     };
     // Fetch work item `it` (0-based count of steals); returns false when the grid is drained.
-    // The caller signals clc_empty[it % CLC_DEPTH] after the response has been read.
-    auto clc_next = [&](int it, int2 &base) -> bool {
+    auto clc_next = [&](int it, int &cluster_id) {
         const int slot = it % C::CLC_DEPTH;
-        wait(clc_full[slot], (it / C::CLC_DEPTH) & 1);
-        return clc_query(clc_response[slot], base);
+        tma::cluster::wait(clc_full[slot], (it / C::CLC_DEPTH) & 1);
+        const auto result = clc::query(clc_response[slot]);
+        if (result.success)
+            cluster_id = static_cast<int>(result.x) / C::CLUSTER_SIZE;
+        return result.success != 0;
+    };
+    auto clc_done = [&](int it) {
+        arrive(clc_readers_done[it % C::CLC_DEPTH]);
     };
 
     // Main divergence
@@ -296,65 +252,77 @@ __device__ inline void kernel(const globals<C> &g) {
             // Load input tiles to shared memory
             pdl::wait();
             everyone::tma::cluster::wait();
-            int2 work_base = home_base;
+            int cluster_id = home_cluster;
             for (int item = 0; ; ++item) {
-                const int2 coord = tile_coord(work_base);
+                const int2 coord = tile_coord(cluster_id);
                 for (int i = 0; i < num_red_blocks; ++i) {
-#ifdef NVFP4_PERF_PROBE_HOT_LOADS
-                    // Perf probe only: always reload K block 0 (results are WRONG, loads L2-hot).
-                    const int kb = 0;
-#else
-                    const int kb = i;
-#endif
-                    wait(inputs_finished[stage], get_phasebit<1>(phasebits, stage));
-                    if (cta_y == 0) tma::cluster::load_async(input_tiles[stage].A, g.A, {coord.x*2 + cta_id, kb}, tiles_arrived[stage], a_mcast_mask, pair_leader_rank);
-                    if (cta_x < C::CLUSTER_SIZE) tma::cluster::load_async(input_tiles[stage].B, g.B, {coord.y*2 + cta_id, kb}, tiles_arrived[stage], b_mcast_mask, pair_leader_rank);
+                    wait(tiles_finished[stage], get_phasebit<1>(phasebits, stage));
+                    #pragma unroll
+                    for (int s = 0; s < G::NUM_SUBLOADS; ++s) {
+                        tma::cluster::load_async(input_tiles[stage].A.template subtile<G::SUBCOL>(s), g.A,
+                            {coord.x*2 + cta_id, i*G::NUM_SUBLOADS + s}, tiles_arrived[stage][s], (uint16_t)(1<<cta_id), 0);
+                        tma::cluster::load_async(input_tiles[stage].B.template subtile<G::SUBCOL>(s), g.B,
+                            {coord.y*2 + cta_id, i*G::NUM_SUBLOADS + s}, tiles_arrived[stage][s], (uint16_t)(1<<cta_id), 0);
+                    }
                     update_phasebit<1>(phasebits, stage);
-                    stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
+                    stage = ring_advance<C::LOAD_PIPE_DEPTH>(stage);
                 }
-                const bool more = clc_next(item, work_base);
-                tma::cluster::arrive(clc_empty[item % C::CLC_DEPTH], 0, 1);
+                const bool more = clc_next(item, cluster_id);
+                clc_done(item);
                 if (!more) break;
             }
         } else if (warp_id == 1) {
             // Cluster-launch-control scheduler: every CTA posts the expected response bytes on
             // its local barrier; cluster rank 0 issues the cancellation request, whose response
-            // and completion are multicast to all CTAs of the (preferred or fallback) cluster.
-            // Only rank 0 paces on clc_empty, which collects arrivals from the whole cluster,
-            // so a new response never clobbers a slot a peer CTA is still reading.
+            // and completion are multicast to both CTAs.
+            // Each CTA aggregates its local readers before one cluster-scope release to rank 0.
+            // This protects response reuse without placing a cluster fence on every reader.
             everyone::tma::cluster::wait();
+            #pragma unroll
+            for (int slot = 0; slot < C::CLC_DEPTH; ++slot)
+                tma::cluster::expect_bytes<memory_model::RELAXED>(clc_full[slot], sizeof(clc::handle));
+            tma::cluster::arrive<memory_model::RELEASE>(clc_initially_armed, 0, 1);
+            if (cta_id == 0)
+                tma::cluster::wait(clc_initially_armed, 0);
+
             for (int item = 0; ; ++item) {
                 const int slot = item % C::CLC_DEPTH;
-                if (cta_rank == 0) {
-                    if (item >= C::CLC_DEPTH) wait(clc_empty[slot], ((item - C::CLC_DEPTH) / C::CLC_DEPTH) & 1);
-                    tma::expect_bytes(clc_full[slot], sizeof(clc::handle));
-                    clc::schedule(clc_response[slot], clc_full[slot]);
-                } else {
-                    tma::expect_bytes(clc_full[slot], sizeof(clc::handle));
+                if (item >= C::CLC_DEPTH) {
+                    const int empty_phase = ((item - C::CLC_DEPTH) / C::CLC_DEPTH) & 1;
+                    wait(clc_readers_done[slot], empty_phase);
+                    tma::cluster::expect_bytes<memory_model::RELAXED>(clc_full[slot], sizeof(clc::handle));
+                    tma::cluster::arrive<memory_model::RELEASE>(clc_empty[slot], 0, 1);
+                    if (cta_id == 0)
+                        tma::cluster::wait(clc_empty[slot], empty_phase);
                 }
-                int2 base;
-                if (!clc_next(item, base)) break;
+                if (cta_id == 0)
+                    clc::schedule(clc_response[slot], clc_full[slot]);
+                int cluster_id;
+                const bool more = clc_next(item, cluster_id);
+                clc_done(item);
+                if (!more) break;
             }
         } else if (warp_id == 2) {
             // Load input scales to shared memory
             pdl::wait();
             everyone::tma::cluster::wait();
-            int2 work_base = home_base;
+            int cluster_id = home_cluster;
             for (int item = 0; ; ++item) {
-                const int2 coord = tile_coord(work_base);
+                const int2 coord = tile_coord(cluster_id);
                 for (int i = 0; i < num_red_blocks; ++i) {
-                    wait(inputs_finished[stage], get_phasebit<1>(phasebits, stage));
-                    if (cta_y == 0) tma::cluster::load_async(input_scales[stage].A, g.A_sc, {coord.x*2 + cta_id, i, 0, 0}, scales_arrived[stage], a_mcast_mask, pair_leader_rank);
-                    if constexpr (C::B_SC_SIZE == 2) {
-                        if (cta_x < C::CLUSTER_SIZE) tma::cluster::load_async(input_scales[stage].B[cta_id], g.B_sc, {coord.y*2 + cta_id, i, 0, 0}, scales_arrived[stage], b_scale_mcast_mask, pair_leader_rank);
-                    } else if (cta_id == 0 && cta_x < C::CLUSTER_SIZE) {
-                        tma::cluster::load_async(input_scales[stage].B[0], g.B_sc, {coord.y, i, 0, 0}, scales_arrived[stage], b_scale_mcast_mask, pair_leader_rank);
+                    // Each K-tile's scales are loaded as SF_GROUPS_PER_TILE separate groups (TMA
+                    // sub-column boxes), so the SF ring advances at the finer group granularity.
+                    #pragma unroll
+                    for (int gj = 0; gj < C::SF_GROUPS_PER_TILE; ++gj) {
+                        wait(scales_finished[sf_stage], get_phasebit<1>(phasebits, sf_stage));
+                        tma::cluster::load_async(input_scales[sf_stage].A.tile, g.A_sc, {coord.x*2 + cta_id, i, gj, 0}, scales_arrived[sf_stage], uint16_t(1 << cta_id), 0);
+                        tma::cluster::load_async(input_scales[sf_stage].B[cta_id].tile, g.B_sc, {coord.y*2 + cta_id, i, gj, 0}, scales_arrived[sf_stage], uint16_t(0b11), 0);
+                        update_phasebit<1>(phasebits, sf_stage);
+                        sf_stage = ring_advance<C::SF_PIPE_DEPTH>(sf_stage);
                     }
-                    update_phasebit<1>(phasebits, stage);
-                    stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
                 }
-                const bool more = clc_next(item, work_base);
-                tma::cluster::arrive(clc_empty[item % C::CLC_DEPTH], 0, 1);
+                const bool more = clc_next(item, cluster_id);
+                clc_done(item);
                 if (!more) break;
             }
         } else if (cta_id == 0 && warp_id == 0) {
@@ -363,66 +331,73 @@ __device__ inline void kernel(const globals<C> &g) {
             wait(tmem_provisioned, 0);
             tm_allocator.set_addr(tmem_addr);
             auto out_tm  = tm_allocator.template allocate<full_tt_fl<C::Nb>>(0);
-            auto A_sc_tm = tm_allocator.template allocate<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, C::SC_COLS_PER_MMA*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(256);
-            auto B_sc_tm = tm_allocator.template allocate<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, C::SC_COLS_PER_MMA*C::B_SC_SIZE*C::MMA_PER_TILE*C::LOAD_PIPE_DEPTH>>(
-                256 + (C::SC_COLS_PER_MMA / 4) * C::MMA_PER_TILE * C::LOAD_PIPE_DEPTH);
-            int2 work_base = home_base;
+            auto A_sc_tm = tm_allocator.template allocate<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, C::SF_GROUP_TMEM_COLS*C::SF_TMEM_DEPTH>>(256);
+            auto B_sc_tm = tm_allocator.template allocate<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, C::SF_GROUP_TMEM_COLS*C::B_SC_SIZE*C::SF_TMEM_DEPTH>>(
+                256 + (C::SF_GROUP_TMEM_COLS / 4) * C::SF_TMEM_DEPTH);
+            int cluster_id = home_cluster;
             for (int item = 0; ; ++item) {
-                wait(outputs_finished, get_phasebit<1>(phasebits, 0));
+                tma::cluster::wait(outputs_finished, get_phasebit<1>(phasebits, 0));
                 tensor_after_thread_sync();
                 for (int i = 0; i < num_red_blocks; i++) {
-                    tma::expect_bytes(scales_arrived[stage], 2*sizeof(G::input_scales_t));
-                    wait(scales_arrived[stage], get_phasebit<0>(phasebits, stage));
-#ifdef NVFP4_PERF_PROBE_NO_SCALE_CP
-                    // Perf probe only: skip steady-state scale TMEM copies (results are WRONG).
-                    if (i < C::LOAD_PIPE_DEPTH)
-#endif
+                    // A/B tiles arrive at K-tile granularity (one input_tiles[stage] per i).
                     #pragma unroll
-                    for (int ii = 0; ii < C::MMA_PER_TILE; ++ii) {
-                        // A K96 MMA covers 96/BLOCK_SIZE K-blocks: 3 for E8M0 (block32), 6 for E4M3
-                        // (block16). One 32x16 SF atom holds 4 K-blocks, so that rounds up to
-                        // SF_ATOMS_PER_MMA = ceil(blocks/4) atoms (1 for E8M0, 2 for E4M3); copy each.
+                    for (int s = 0; s < G::NUM_SUBLOADS; ++s)
+                        tma::expect_bytes(tiles_arrived[stage][s],
+                            2*(sizeof(typename G::A_fp4x2_sub_tile) + sizeof(typename G::B_fp4x2_sub_tile)));
+                    const uint32_t tphase = get_phasebit<0>(phasebits, stage);
+                    int waited = -1;
+                    // Scales stream in finer SF groups (SF_GROUP_MMAS MMAs each). Per group:
+                    // wait its scales -> copy SMEM->TMEM ring slot sf_stage -> issue its MMAs ->
+                    // release the slot. The A/B K96 slice uses the tile-global chunk index `gc`,
+                    // while the SF TMEM panel uses the group-local index `lc`.
+                    #pragma unroll
+                    for (int gj = 0; gj < C::SF_GROUPS_PER_TILE; ++gj) {
+                        tma::expect_bytes(scales_arrived[sf_stage], 2*sizeof(G::input_scales_t));
+                        wait(scales_arrived[sf_stage], get_phasebit<0>(sf_phasebits, sf_stage));
+                        // SMEM slot is sf_stage (load ring); TMEM slot is the shallower ring.
+                        const uint32_t sf_tmem = sf_stage % C::SF_TMEM_DEPTH;
                         #pragma unroll
-                        for (int g = 0; g < C::SF_ATOMS_PER_MMA; ++g) {
+                        for (int k = 0; k < C::SF_ATOMS_PER_GROUP; ++k) {
+                            // Copy this group's three tightly packed 32x16 scale atoms to TMEM.
                             auto A_sc_tm_subtile = A_sc_tm.template subtile<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, 16>>(
-                                stage*C::MMA_PER_TILE*C::SC_COLS_PER_MMA + ii*C::SC_COLS_PER_MMA + g*16);
-                            auto &A_sc_sm_subtile = *reinterpret_cast<st<typename C::SCALE_DTYPE, 32, 16, false> *>(
-                                reinterpret_cast<uint64_t>(&input_scales[stage].A.data[0]) + C::SC_COLS_PER_MMA*32*ii + 16*32*g);
-                            load_mxnv_scale_async2(A_sc_tm_subtile, A_sc_sm_subtile);
-                            // block16 needs both N-halves of a K-atom adjacent in TMEM, so atom g is
-                            // at g*SC_COLS_PER_MMA with B[1] +16 past B[0] (E8M0: g==0).
+                                sf_tmem*C::SF_GROUP_TMEM_COLS + k*16);
+                            load_mxnv_scale_async2(A_sc_tm_subtile, input_scales[sf_stage].A.atoms[k]);
+                            // B keeps both N-halves of each K-atom adjacent in TMEM (B[1] +16 past B[0]).
                             auto B_sc_tm_subtile_0 = B_sc_tm.template subtile<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, 16>>(
-                                stage*C::MMA_PER_TILE*C::SC_COLS_PER_MMA*C::B_SC_SIZE + ii*C::B_SC_SIZE*C::SC_COLS_PER_MMA + g*C::SC_COLS_PER_MMA);
-                            auto &B_sc_sm_subtile_0 = *reinterpret_cast<st<typename C::SCALE_DTYPE, 32, 16, false> *>(
-                                reinterpret_cast<uint64_t>(&input_scales[stage].B[0].data[0]) + C::SC_COLS_PER_MMA*32*ii + 16*32*g);
-                            load_mxnv_scale_async2(B_sc_tm_subtile_0, B_sc_sm_subtile_0);
-                            if constexpr (C::B_SC_SIZE == 2) {
-                                auto B_sc_tm_subtile_1 = B_sc_tm.template subtile<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, 16>>(
-                                    stage*C::MMA_PER_TILE*C::SC_COLS_PER_MMA*C::B_SC_SIZE + ii*C::B_SC_SIZE*C::SC_COLS_PER_MMA + g*C::SC_COLS_PER_MMA + 16);
-                                auto &B_sc_sm_subtile_1 = *reinterpret_cast<st<typename C::SCALE_DTYPE, 32, 16, false> *>(
-                                    reinterpret_cast<uint64_t>(&input_scales[stage].B[1].data[0]) + C::SC_COLS_PER_MMA*32*ii + 16*32*g);
-                                load_mxnv_scale_async2(B_sc_tm_subtile_1, B_sc_sm_subtile_1);
-                            }
+                                sf_tmem*C::SF_GROUP_TMEM_COLS*C::B_SC_SIZE + k*C::B_SC_SIZE*16);
+                            load_mxnv_scale_async2(B_sc_tm_subtile_0, input_scales[sf_stage].B[0].atoms[k]);
+                            auto B_sc_tm_subtile_1 = B_sc_tm.template subtile<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, 16>>(
+                                sf_tmem*C::SF_GROUP_TMEM_COLS*C::B_SC_SIZE + k*C::B_SC_SIZE*16 + 16);
+                            load_mxnv_scale_async2(B_sc_tm_subtile_1, input_scales[sf_stage].B[1].atoms[k]);
                         }
+                        auto A_sc_sub = A_sc_tm.template subtile<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, C::SF_GROUP_TMEM_COLS>>(
+                            sf_tmem*C::SF_GROUP_TMEM_COLS);
+                        auto B_sc_sub = B_sc_tm.template subtile<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, C::SF_GROUP_TMEM_COLS*C::B_SC_SIZE>>(
+                            sf_tmem*C::SF_GROUP_TMEM_COLS*C::B_SC_SIZE);
+                        #pragma unroll
+                        for (int lc = 0; lc < C::SF_GROUP_MMAS; ++lc) {
+                            const int gc = gj*C::SF_GROUP_MMAS + lc; // tile-global K96 chunk index
+                            // K96 chunk gc reads bytes [gc*48, gc*48+48) of the K-tile; wait until
+                            // every sub-load slice it touches has landed.
+                            const int need = (gc*48 + 47) / G::SUBCOL;
+                            while (waited < need) { ++waited; wait(tiles_arrived[stage][waited], tphase); }
+                            mma2_ABt_chunk<48, true>(out_tm, input_tiles[stage].A, input_tiles[stage].B,
+                                               A_sc_sub, B_sc_sub, gc, lc, (i == 0 && gc == 0));
+                        }
+                        // Release this scale group's slot once its copies + MMAs retire.
+                        tensor_commit<2>(scales_finished[sf_stage]);
+                        update_phasebit<0>(sf_phasebits, sf_stage);
+                        sf_stage = ring_advance<C::SF_PIPE_DEPTH>(sf_stage);
                     }
-                    tma::expect_bytes(tiles_arrived[stage], 2*sizeof(G::input_tiles_t));
-                    wait(tiles_arrived[stage], get_phasebit<0>(phasebits, stage));
-                    if (i == 0) mm2_ABt<48>(out_tm, input_tiles[stage].A, input_tiles[stage].B,
-                                        A_sc_tm.template subtile<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, C::MMA_PER_TILE*C::SC_COLS_PER_MMA>>(stage*C::MMA_PER_TILE*C::SC_COLS_PER_MMA),
-                                        B_sc_tm.template subtile<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, C::MMA_PER_TILE*C::SC_COLS_PER_MMA*C::B_SC_SIZE>>(stage*C::MMA_PER_TILE*C::SC_COLS_PER_MMA*C::B_SC_SIZE));
-                    else       mma2_ABt<48>(out_tm, input_tiles[stage].A, input_tiles[stage].B,
-                                        A_sc_tm.template subtile<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, C::MMA_PER_TILE*C::SC_COLS_PER_MMA>>(stage*C::MMA_PER_TILE*C::SC_COLS_PER_MMA),
-                                        B_sc_tm.template subtile<tt<typename C::SCALE_DTYPE, MAX_TENSOR_ROWS, C::MMA_PER_TILE*C::SC_COLS_PER_MMA*C::B_SC_SIZE>>(stage*C::MMA_PER_TILE*C::SC_COLS_PER_MMA*C::B_SC_SIZE));
-                    // Buffer-release commits must reach every CTA that loaded into this pair's
-                    // buffers, not just the pair itself, so commit manually with the full mask.
-                    tensor_commit<2>(inputs_finished[stage], inputs_finished_mask);
+                    // Release the A/B tile slot once the whole K-tile's MMAs retire.
+                    tensor_commit<2>(tiles_finished[stage]);
                     update_phasebit<0>(phasebits, stage);
-                    stage = (stage + 1) % C::LOAD_PIPE_DEPTH;
+                    stage = ring_advance<C::LOAD_PIPE_DEPTH>(stage);
                 }
-                tensor_commit<2>(outputs_arrived, pair_mask);
+                tensor_commit<2>(outputs_arrived);
                 update_phasebit<1>(phasebits, 0);
-                const bool more = clc_next(item, work_base);
-                tma::cluster::arrive(clc_empty[item % C::CLC_DEPTH], 0, 1);
+                const bool more = clc_next(item, cluster_id);
+                clc_done(item);
                 if (!more) break;
             }
         }
@@ -438,70 +413,44 @@ __device__ inline void kernel(const globals<C> &g) {
         auto out_tm = tm_allocator.template allocate<full_tt_fl<C::Nb>>(0);
         const float global_scale = g.A_sc_global[{0}] * g.B_sc_global[{0}];
 
-        int2 work_base = home_base;
+        int cluster_id = home_cluster;
         for (int item = 0; ; ++item) {
-            const int2 coord = tile_coord(work_base);
+            const int2 coord = tile_coord(cluster_id);
 
             // Wait for the last matmul to complete.
             wait(outputs_arrived, get_phasebit<0>(phasebits, 0));
 
-#ifdef NVFP4_PERF_PROBE_NO_EPI
-            // Perf probe only: release the accumulator without draining it (D is WRONG).
-            warpgroup::sync(1);
-            warpgroup::tma::cluster::arrive(outputs_finished, pair_leader_rank, 1);
-#else
-            // Load the output from tensor memory into registers and store to HBM.
-            if constexpr (C::OVERLAP_EPI) {
-                #pragma unroll
-                for (int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
-                    rt_fl<C::Mb / 8, C::Nb/C::EPI_PIPE_DEPTH> D_reg;
-                    warpgroup::load_async(D_reg, out_tm.template subtile<full_tt_fl<C::Nb/C::EPI_PIPE_DEPTH>>(0, C::Nb/C::EPI_PIPE_DEPTH*i));
-                    if (i == C::EPI_PIPE_DEPTH - 1) {
-                        tensor_load_wait();
-                        tensor_before_thread_sync();
-                        warpgroup::sync(1);
-                        warpgroup::tma::cluster::arrive(outputs_finished, pair_leader_rank, 1);
-                    }
-                    if constexpr (C::APPLY_GLOBAL_SCALE) warp::mul(D_reg, D_reg, global_scale);
-                    warpgroup::tma::store_async_read_wait<C::NUM_D_TILES-1>();
-                    warpgroup::sync(1);
-                    warpgroup::store(output_tiles.D[i%C::NUM_D_TILES], D_reg);
-                    warpgroup::sync(1);
-                    warpgroup::tma::store_async<dim::ROW, cache_policy::EVICT_FIRST>(g.D, output_tiles.D[i%C::NUM_D_TILES], {coord.x*2 + cta_id, C::EPI_PIPE_DEPTH*coord.y + i});
-                }
-            } else {
-                rt_bf<C::Mb / 8, C::Nb/C::EPI_PIPE_DEPTH> D_reg[C::EPI_PIPE_DEPTH];
-                #pragma unroll
-                for (int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
-                    rt_fl<C::Mb / 8, C::Nb/C::EPI_PIPE_DEPTH> D_reg_fl;
-                    warpgroup::load_async(D_reg_fl, out_tm.template subtile<full_tt_fl<C::Nb/C::EPI_PIPE_DEPTH>>(0, C::Nb/C::EPI_PIPE_DEPTH*i));
-                    if constexpr (C::APPLY_GLOBAL_SCALE) warp::mul(D_reg_fl, D_reg_fl, global_scale);
-                    warp::copy(D_reg[i], D_reg_fl);
-                }
-                tensor_load_wait();
-                tensor_before_thread_sync();
-                warpgroup::sync(1);
-                warpgroup::tma::cluster::arrive(outputs_finished, pair_leader_rank, 1);
-                #pragma unroll
-                for (int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
-                    warpgroup::tma::store_async_read_wait<C::NUM_D_TILES-1>();
-                    warpgroup::sync(1);
-                    warpgroup::store(output_tiles.D[i%C::NUM_D_TILES], D_reg[i]);
-                    warpgroup::sync(1);
-                    warpgroup::tma::store_async<dim::ROW, cache_policy::EVICT_FIRST>(g.D, output_tiles.D[i%C::NUM_D_TILES], {coord.x*2 + cta_id, C::EPI_PIPE_DEPTH*coord.y + i});
-                }
+            // Drain all accumulator slices before releasing TMEM, then pipeline their TMA stores.
+            rt_bf<C::Mb / 8, C::Nb/C::EPI_PIPE_DEPTH> D_reg[C::EPI_PIPE_DEPTH];
+            #pragma unroll
+            for (int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
+                rt_fl<C::Mb / 8, C::Nb/C::EPI_PIPE_DEPTH> D_reg_fl;
+                warpgroup::load_async(D_reg_fl, out_tm.template subtile<full_tt_fl<C::Nb/C::EPI_PIPE_DEPTH>>(0, C::Nb/C::EPI_PIPE_DEPTH*i));
+                if constexpr (C::APPLY_GLOBAL_SCALE) warp::mul(D_reg_fl, D_reg_fl, global_scale);
+                warp::copy(D_reg[i], D_reg_fl);
             }
-#endif
+            tensor_load_wait();
+            tensor_before_thread_sync();
+            warpgroup::sync(1);
+            warpgroup::tma::cluster::arrive<memory_model::RELAXED>(outputs_finished, 0, 1);
+            #pragma unroll
+            for (int i = 0; i < C::EPI_PIPE_DEPTH; i++) {
+                warpgroup::tma::store_async_read_wait<0>();
+                warpgroup::sync(1);
+                warpgroup::store(output_tiles.D, D_reg[i]);
+                warpgroup::sync(1);
+                warpgroup::tma::store_async<dim::ROW, cache_policy::EVICT_FIRST>(g.D, output_tiles.D, {coord.x*2 + cta_id, C::EPI_PIPE_DEPTH*coord.y + i});
+            }
             update_phasebit<0>(phasebits, 0);
-            const bool more = clc_next(item, work_base);
-            if (laneid() == 0) tma::cluster::arrive(clc_empty[item % C::CLC_DEPTH], 0, 1);
+            const bool more = clc_next(item, cluster_id);
+            if (laneid() == 0) clc_done(item);
             if (!more) break;
         }
         warpgroup::sync(1);
         warpgroup::pdl::arrive();
         if (warpgroup::warpid() == 0) {
-            if (warp::elect_leader()) tma::cluster::arrive(tmem_finished, cta_rank ^ 1);
-            wait(tmem_finished, 0);
+            if (warp::elect_leader()) tma::cluster::arrive<memory_model::RELAXED>(tmem_finished, 1 - cta_id);
+            tma::cluster::wait(tmem_finished, 0);
             tm_allocator.deprovision();
         }
     }
@@ -789,18 +738,10 @@ __device__ inline void fp4x2_to_fp32_kernel(const globals &G) {
 
 #include "../common.cuh"
 
-// No static __cluster_dims__: cluster shape is chosen at launch (preferred with fallback).
 template <typename C>
-__launch_bounds__(C::NUM_THREADS)
+__cluster_dims__(C::CLUSTER_SIZE) __launch_bounds__(C::NUM_THREADS)
 __global__ void kernel_entrypoint(const __grid_constant__ nvfp4_gemm::globals<C> g) {
     nvfp4_gemm::kernel<C>(g);
-}
-
-template <typename T>
-__host__ constexpr const char* scale_dtype_name() {
-    if constexpr (std::is_same_v<T, fp8e8m0>) return "e8m0";
-    else if constexpr (std::is_same_v<T, fp8e4m3>) return "e4m3";
-    else return "unknown";
 }
 
 template <typename C>
@@ -809,13 +750,9 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
 
     std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n";
     std::cout << "Template: Mb=" << C::Mb << " Nb=" << C::Nb << " Kb=" << C::Kb
-              << " SF=" << scale_dtype_name<typename C::SCALE_DTYPE>()
-              << " PREF_CLUSTER=" << C::PREFERRED_CLUSTER_M << "x" << C::PREFERRED_CLUSTER_N
-              << " RASTER=" << (C::RASTER_ALONG_N ? "along_n" : "along_m")
-              << " MMA_PER_TILE=" << C::MMA_PER_TILE
+              << " SF=" << (std::is_same_v<typename C::SCALE_DTYPE, fp8e8m0> ? "e8m0" : "e4m3")
               << " SUPERGROUP_SIZE=" << C::SUPERGROUP_SIZE << " LOAD_PIPE_DEPTH=" << C::LOAD_PIPE_DEPTH
-              << " EPI_PIPE_DEPTH=" << C::EPI_PIPE_DEPTH << " NUM_D_TILES=" << C::NUM_D_TILES
-              << " OVERLAP_EPI=" << C::OVERLAP_EPI << "\n";
+              << " EPI_PIPE_DEPTH=" << C::EPI_PIPE_DEPTH << "\n";
 
     // Cooldown between configurations
     sleep_ms(500);
@@ -836,8 +773,8 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     std::vector<float*> d_B_sc_global(arg_group_count);
     std::vector<__nv_bfloat16*> d_D(arg_group_count);
     __nv_bfloat16* d_D_ref;
-    const size_t A_scale_elems = (M / 128) * (K / C::Kb) * 32 * C::SC_COLS_PER_MMA * C::MMA_PER_TILE;
-    const size_t B_scale_elems = (N / 128) * (K / C::Kb) * 32 * C::SC_COLS_PER_MMA * C::MMA_PER_TILE;
+    const size_t A_scale_elems = (M / 128) * (K / C::Kb) * C::SF_TILE_ROWS * C::SF_SMEM_COLS_PER_MMA * C::MMA_PER_TILE;
+    const size_t B_scale_elems = (N / 128) * (K / C::Kb) * C::SF_TILE_ROWS * C::SF_SMEM_COLS_PER_MMA * C::MMA_PER_TILE;
     for (int i = 0; i < arg_group_count; i++) {
         cudaMalloc(&d_A[i], M*K*sizeof(__nv_fp4x2_e2m1)/2);
         cudaMalloc(&d_B[i], N*K*sizeof(__nv_fp4x2_e2m1)/2);
@@ -852,12 +789,10 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     // Initialize matrices with random values on device
     uint64_t seed = 2026;
     for (int i = 0; i < arg_group_count; i++) {
-        // Random FP4 bytes (every byte is a valid e2m1 pair); unlike a constant fill this exposes K-read bugs.
-        fill<uint8_t, FillMode::RANDOM>(reinterpret_cast<uint8_t*>(d_A[i]), M*K/2, seed + i*100 + 3, 0.0f, 256.0f);
-        // Random e8m0 scales in [0.5, 4.0] (= 2^-1..2^2) exercise the block-scale path without overflowing bf16.
-        fill<typename C::SCALE_DTYPE, FillMode::RANDOM>(d_A_sc[i], A_scale_elems, seed + i*100 + 5, 0.5f, 4.0f);
-        fill<typename C::SCALE_DTYPE, FillMode::RANDOM>(d_B_sc[i], B_scale_elems, seed + i*100 + 6, 0.5f, 4.0f);
-        fill<uint8_t, FillMode::RANDOM>(reinterpret_cast<uint8_t*>(d_B[i]), N*K/2, seed + i*100 + 4, 0.0f, 256.0f);
+        fill<uint8_t, FillMode::RANDOM>(reinterpret_cast<uint8_t*>(d_A[i]), M*K/2, seed + i * 100 + 3, 0.0f, 256.0f);
+        fill<uint8_t, FillMode::RANDOM>(reinterpret_cast<uint8_t*>(d_B[i]), N*K/2, seed + i * 100 + 4, 0.0f, 256.0f);
+        fill<typename C::SCALE_DTYPE, FillMode::RANDOM>(d_A_sc[i], A_scale_elems, seed + i * 100 + 5, 0.5f, 4.0f);
+        fill<typename C::SCALE_DTYPE, FillMode::RANDOM>(d_B_sc[i], B_scale_elems, seed + i * 100 + 6, 0.5f, 4.0f);
         fill<float, FillMode::CONSTANT>(d_A_sc_global[i], 1, 1.0f);
         fill<float, FillMode::CONSTANT>(d_B_sc_global[i], 1, 1.0f);
         fill<__nv_bfloat16, FillMode::CONSTANT>(d_D[i], M*N, 0.0f);
@@ -865,29 +800,26 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     fill<__nv_bfloat16, FillMode::CONSTANT>(d_D_ref, M*N, 0.0f);
 
     // Compute reference GEMM on device
-    reference_nvfp4_gemm<__nv_bfloat16, typename C::SCALE_DTYPE, 96, true>(
+    reference_nvfp4_gemm<__nv_bfloat16, typename C::SCALE_DTYPE, 96, false>(
         d_D_ref, d_A[0], d_B[0], d_A_sc[0], d_B_sc[0], d_A_sc_global[0], d_B_sc_global[0], M, N, K);
     cudaDeviceSynchronize();
 
     // Prepare kernel inputs
     std::vector<G> g;
     for (int i = 0; i < arg_group_count; i++) {
-        typename G::A_fp4x2_gl Ag{d_A[i], nullptr, nullptr, M, K/2};
-        typename G::A_sc_gl Asg{d_A_sc[i], M/128, K/C::Kb, nullptr, nullptr};
-        typename G::A_sc_global_gl Asgg{d_A_sc_global[i], nullptr, nullptr, nullptr, nullptr};
-        typename G::B_fp4x2_gl Bg{d_B[i], nullptr, nullptr, N, K/2};
-        typename G::B_sc_gl Bsg{d_B_sc[i], N/128, K/C::Kb, nullptr, nullptr};
-        typename G::B_sc_global_gl Bsgg{d_B_sc_global[i], nullptr, nullptr, nullptr, nullptr};
-        typename G::D_gl Dg{d_D[i], nullptr, nullptr, M, N};
-        g.push_back(G{Ag, Asg, Asgg, Bg, Bsg, Bsgg, Dg});
+        typename G::A_fp4x2_gl a{d_A[i], nullptr, nullptr, M, K/2};
+        typename G::A_sc_gl a_sc{d_A_sc[i], M/128, K/C::Kb, nullptr, nullptr};
+        typename G::A_sc_global_gl a_sc_global{d_A_sc_global[i], nullptr, nullptr, nullptr, nullptr};
+        typename G::B_fp4x2_gl b{d_B[i], nullptr, nullptr, N, K/2};
+        typename G::B_sc_gl b_sc{d_B_sc[i], N/128, K/C::Kb, nullptr, nullptr};
+        typename G::B_sc_global_gl b_sc_global{d_B_sc_global[i], nullptr, nullptr, nullptr, nullptr};
+        typename G::D_gl d{d_D[i], nullptr, nullptr, M, N};
+        g.push_back(G{a, a_sc, a_sc_global, b, b_sc, b_sc_global, d});
     }
 
     // Set kernel attributes
     CUDACHECK(cudaFuncSetAttribute(kernel_entrypoint<C>, cudaFuncAttributeMaxDynamicSharedMemorySize, g[0].dynamic_shared_memory()));
-    CUDACHECK(cudaFuncSetAttribute(kernel_entrypoint<C>, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
-    dim3 preferred_cluster(C::PREFERRED_CLUSTER_M, C::PREFERRED_CLUSTER_N, 1);
-    dim3 fallback_cluster(C::FALLBACK_CLUSTER_M, C::FALLBACK_CLUSTER_N, 1);
-    LaunchConfig<true, true> launch_config(g[0].grid(), g[0].block(), g[0].dynamic_shared_memory(), 0, preferred_cluster, fallback_cluster);
+    LaunchConfig<true, true> launch_config(g[0].grid(), g[0].block(), g[0].dynamic_shared_memory(), 0, C::CLUSTER_SIZE);
 
     // Number of iterations
     int num_warmups = ncu ? 0 : 10;
@@ -896,9 +828,8 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     // Warmup
     for (int i = 0; i < num_warmups; i++) {
         int idx = i % arg_group_count;
-        CUDACHECK(cudaLaunchKernelEx(launch_config, kernel_entrypoint<C>, g[idx]));
+        cudaLaunchKernelEx(launch_config, kernel_entrypoint<C>, g[idx]);
     }
-    CUDACHECK(cudaDeviceSynchronize());
 
     // Benchmark
     cudaEvent_t start, stop;
@@ -907,7 +838,7 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     CUDACHECK(cudaEventRecord(start));
     for (int i = 0; i < num_iters; i++) {
         int idx = i % arg_group_count;
-        CUDACHECK(cudaLaunchKernelEx(launch_config, kernel_entrypoint<C>, g[idx]));
+        cudaLaunchKernelEx(launch_config, kernel_entrypoint<C>, g[idx]);
     }
     CUDACHECK(cudaEventRecord(stop));
     CUDACHECK(cudaEventSynchronize(stop));
@@ -941,17 +872,22 @@ __host__ double run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     return tflops;
 }
 
-int main(int argc, char **argv) {
-    bool ncu = argc > 1 && std::string(argv[1]) == "--ncu";
+int main() {
+    bool ncu = false;
 
-    // Template parameters: Nb, LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH, SUPERGROUP_SIZE, NUM_D_TILES,
-    //   OVERLAP_EPI, RASTER_ALONG_N, MMA_PER_TILE, APPLY_GLOBAL_SCALE, PREF_M, PREF_N, [SCALE_DTYPE]
-    // Note: 2x2 preferred clusters are correct but have shown transient launch failures when the
-    // GPU is shared with another process; use 2x1 if the GPU is not exclusive.
-    run_benchmark<nvfp4_gemm::config<256, 2, 8, 4, 1, false, true, 8, false, 2, 2, fp8e8m0>>(8192, 8192, 33024, ncu);
-    // E4M3/block16 scale panels are 2x the SMEM of E8M0/block32, so this shared (non-subtile) pipe
-    // only fits LOAD_PIPE_DEPTH=1 for e4m3.
-    run_benchmark<nvfp4_gemm::config<256, 1, 8, 4, 1, false, true, 8, false, 2, 1, fp8e4m3>>(8192, 8192, 3072, ncu);
+    run_benchmark<nvfp4_gemm::config<fp8e4m3>>(32768,  5120,  5376, ncu);
+    run_benchmark<nvfp4_gemm::config<fp8e4m3>>(32768, 13824,  5376, ncu);
+    run_benchmark<nvfp4_gemm::config<fp8e4m3>>(32768,  5120, 13824, ncu);
+    run_benchmark<nvfp4_gemm::config<fp8e4m3>>(75776,  5120,  5376, ncu);
+    run_benchmark<nvfp4_gemm::config<fp8e4m3>>(75776, 13824,  5376, ncu);
+    run_benchmark<nvfp4_gemm::config<fp8e4m3>>(75776,  5120, 13824, ncu);
+
+    run_benchmark<nvfp4_gemm::config<fp8e8m0>>(32768,  5120,  5376, ncu);
+    run_benchmark<nvfp4_gemm::config<fp8e8m0>>(32768, 13824,  5376, ncu);
+    run_benchmark<nvfp4_gemm::config<fp8e8m0>>(32768,  5120, 13824, ncu);
+    run_benchmark<nvfp4_gemm::config<fp8e8m0>>(75776,  5120,  5376, ncu);
+    run_benchmark<nvfp4_gemm::config<fp8e8m0>>(75776, 13824,  5376, ncu);
+    run_benchmark<nvfp4_gemm::config<fp8e8m0>>(75776,  5120, 13824, ncu);
 
     return 0;
 }
@@ -960,35 +896,6 @@ int main(int argc, char **argv) {
 
 #include "pyutils/torchutils.cuh"
 #include "ATen/Functions.h"
-
-template <typename C>
-void nvfp4_gemm_typed_entrypoint(
-    const at::Tensor &A,
-    const at::Tensor &A_sc,
-    const at::Tensor &A_sc_global,
-    const at::Tensor &B,
-    const at::Tensor &B_sc,
-    const at::Tensor &B_sc_global,
-    at::Tensor &D
-) {
-    using G = nvfp4_gemm::globals<C>;
-
-    G g {
-        .A = kittens::py::tensor_to_gl<typename G::A_fp4x2_gl>(A),
-        .A_sc = kittens::py::tensor_to_gl<typename G::A_sc_gl, false>(A_sc, A_sc.size(0), A_sc.size(1), 32, G::A_sc_tile::cols),
-        .A_sc_global = kittens::py::tensor_to_gl<typename G::A_sc_global_gl>(A_sc_global),
-        .B = kittens::py::tensor_to_gl<typename G::B_fp4x2_gl>(B),
-        .B_sc = kittens::py::tensor_to_gl<typename G::B_sc_gl, false>(B_sc, B_sc.size(0), B_sc.size(1), 32, G::B_sc_tile::cols),
-        .B_sc_global = kittens::py::tensor_to_gl<typename G::B_sc_global_gl>(B_sc_global),
-        .D = kittens::py::tensor_to_gl<typename G::D_gl>(D)
-    };
-    kittens::py::launch_kernel<C, G, nvfp4_gemm::kernel<C>>(g);
-}
-
-using nvfp4_gemm_e8m0_config = nvfp4_gemm::config<256, 2, 16, 8, 2, false, true, 8, false, 2, 1, fp8e8m0>;
-// E4M3/block16 scale panels are twice as large as E8M0/block32, so the current shared (non-subtile)
-// pipeline fits only one load stage.
-using nvfp4_gemm_e4m3_config = nvfp4_gemm::config<256, 1, 16, 8, 2, false, true, 8, false, 2, 1, fp8e4m3>;
 
 void nvfp4_gemm_entrypoint(
     const at::Tensor &A,
@@ -1000,36 +907,36 @@ void nvfp4_gemm_entrypoint(
     at::Tensor &D
 ) {
     if (A_sc.scalar_type() == at::kFloat8_e8m0fnu) {
-        nvfp4_gemm_typed_entrypoint<nvfp4_gemm_e8m0_config>(A, A_sc, A_sc_global, B, B_sc, B_sc_global, D);
+        using C = nvfp4_gemm::config<fp8e8m0, true>;
+        using G = nvfp4_gemm::globals<C>;
+
+        G g {
+            .A = kittens::py::tensor_to_gl<typename G::A_fp4x2_gl>(A),
+            .A_sc = kittens::py::tensor_to_gl<typename G::A_sc_gl, false>(A_sc, A_sc.size(0), A_sc.size(1), G::A_sc_tile::rows, G::A_sc_tile::cols),
+            .A_sc_global = kittens::py::tensor_to_gl<typename G::A_sc_global_gl>(A_sc_global),
+            .B = kittens::py::tensor_to_gl<typename G::B_fp4x2_gl>(B),
+            .B_sc = kittens::py::tensor_to_gl<typename G::B_sc_gl, false>(B_sc, B_sc.size(0), B_sc.size(1), G::B_sc_tile::rows, G::B_sc_tile::cols),
+            .B_sc_global = kittens::py::tensor_to_gl<typename G::B_sc_global_gl>(B_sc_global),
+            .D = kittens::py::tensor_to_gl<typename G::D_gl>(D)
+        };
+        kittens::py::launch_kernel<C, G, nvfp4_gemm::kernel<C>>(g);
     } else if (A_sc.scalar_type() == at::kFloat8_e4m3fn) {
-        nvfp4_gemm_typed_entrypoint<nvfp4_gemm_e4m3_config>(A, A_sc, A_sc_global, B, B_sc, B_sc_global, D);
+        using C = nvfp4_gemm::config<fp8e4m3, true>;
+        using G = nvfp4_gemm::globals<C>;
+
+        G g {
+            .A = kittens::py::tensor_to_gl<typename G::A_fp4x2_gl>(A),
+            .A_sc = kittens::py::tensor_to_gl<typename G::A_sc_gl, false>(A_sc, A_sc.size(0), A_sc.size(1), G::A_sc_tile::rows, G::A_sc_tile::cols),
+            .A_sc_global = kittens::py::tensor_to_gl<typename G::A_sc_global_gl>(A_sc_global),
+            .B = kittens::py::tensor_to_gl<typename G::B_fp4x2_gl>(B),
+            .B_sc = kittens::py::tensor_to_gl<typename G::B_sc_gl, false>(B_sc, B_sc.size(0), B_sc.size(1), G::B_sc_tile::rows, G::B_sc_tile::cols),
+            .B_sc_global = kittens::py::tensor_to_gl<typename G::B_sc_global_gl>(B_sc_global),
+            .D = kittens::py::tensor_to_gl<typename G::D_gl>(D)
+        };
+        kittens::py::launch_kernel<C, G, nvfp4_gemm::kernel<C>>(g);
     } else {
         TORCH_CHECK(false, "nvfp4_gemm expected A_sc dtype float8_e8m0fnu or float8_e4m3fn");
     }
-}
-
-void nvfp4_gemm_e8m0_entrypoint(
-    const at::Tensor &A,
-    const at::Tensor &A_sc,
-    const at::Tensor &A_sc_global,
-    const at::Tensor &B,
-    const at::Tensor &B_sc,
-    const at::Tensor &B_sc_global,
-    at::Tensor &D
-) {
-    nvfp4_gemm_typed_entrypoint<nvfp4_gemm_e8m0_config>(A, A_sc, A_sc_global, B, B_sc, B_sc_global, D);
-}
-
-void nvfp4_gemm_e4m3_entrypoint(
-    const at::Tensor &A,
-    const at::Tensor &A_sc,
-    const at::Tensor &A_sc_global,
-    const at::Tensor &B,
-    const at::Tensor &B_sc,
-    const at::Tensor &B_sc_global,
-    at::Tensor &D
-) {
-    nvfp4_gemm_typed_entrypoint<nvfp4_gemm_e4m3_config>(A, A_sc, A_sc_global, B, B_sc, B_sc_global, D);
 }
 
 void nvfp4_quantize_entrypoint(
@@ -1090,8 +997,6 @@ at::Tensor fp4x2_to_fp32_entrypoint(at::Tensor A_fp4x2) {
 
 PYBIND11_MODULE(_C, m) {
     m.def("nvfp4_gemm", &nvfp4_gemm_entrypoint);
-    m.def("nvfp4_gemm_e8m0", &nvfp4_gemm_e8m0_entrypoint);
-    m.def("nvfp4_gemm_e4m3", &nvfp4_gemm_e4m3_entrypoint);
     m.def("nvfp4_quantize", &nvfp4_quantize_entrypoint);
     m.def("fp32_to_fp4x2", &fp32_to_fp4x2_entrypoint);
     m.def("fp4x2_to_fp32", &fp4x2_to_fp32_entrypoint);
