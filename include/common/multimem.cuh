@@ -6,6 +6,7 @@
 #pragma once
 
 #include "base_types.cuh"
+#include "util.cuh"
 
 namespace kittens {
 
@@ -15,11 +16,6 @@ enum class reduce_op {
     MAX = 2
 };
 
-enum class memory_model {
-    WEAK = 0,
-    STRONG = 1
-};
-
 template <typename T>
 struct multimem;
 
@@ -27,11 +23,15 @@ template <>
 struct multimem<int> {
     template <reduce_op Op, memory_model M = memory_model::WEAK>
     __device__ static inline void ld_reduce(int &dst, const int *src) {
+        static_assert(M != memory_model::RELEASE, "multimem loads do not support release semantics");
         if constexpr (Op == reduce_op::ADD) {
             if constexpr (M == memory_model::WEAK) {
                 asm volatile("multimem.ld_reduce.weak.global.add.s32 %0, [%1];"
                     : "=r"(dst) : "l"(src) : "memory");
-            } else if constexpr (M == memory_model::STRONG) {
+            } else if constexpr (M == memory_model::RELAXED) {
+                asm volatile("multimem.ld_reduce.relaxed.sys.global.add.s32 %0, [%1];"
+                    : "=r"(dst) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::ACQUIRE) {
                 asm volatile("multimem.ld_reduce.acquire.sys.global.add.s32 %0, [%1];"
                     : "=r"(dst) : "l"(src) : "memory");
             }
@@ -39,7 +39,10 @@ struct multimem<int> {
             if constexpr (M == memory_model::WEAK) {
                 asm volatile("multimem.ld_reduce.weak.global.min.s32 %0, [%1];"
                     : "=r"(dst) : "l"(src) : "memory");
-            } else if constexpr (M == memory_model::STRONG) {
+            } else if constexpr (M == memory_model::RELAXED) {
+                asm volatile("multimem.ld_reduce.relaxed.sys.global.min.s32 %0, [%1];"
+                    : "=r"(dst) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::ACQUIRE) {
                 asm volatile("multimem.ld_reduce.acquire.sys.global.min.s32 %0, [%1];"
                     : "=r"(dst) : "l"(src) : "memory");
             }
@@ -47,7 +50,10 @@ struct multimem<int> {
             if constexpr (M == memory_model::WEAK) {
                 asm volatile("multimem.ld_reduce.weak.global.max.s32 %0, [%1];"
                     : "=r"(dst) : "l"(src) : "memory");
-            } else if constexpr (M == memory_model::STRONG) {
+            } else if constexpr (M == memory_model::RELAXED) {
+                asm volatile("multimem.ld_reduce.relaxed.sys.global.max.s32 %0, [%1];"
+                    : "=r"(dst) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::ACQUIRE) {
                 asm volatile("multimem.ld_reduce.acquire.sys.global.max.s32 %0, [%1];"
                     : "=r"(dst) : "l"(src) : "memory");
             }
@@ -55,10 +61,14 @@ struct multimem<int> {
     }
     template <memory_model M = memory_model::WEAK>
     __device__ static inline void st(int *dst, const int &src) {
+        static_assert(M != memory_model::ACQUIRE, "multimem stores do not support acquire semantics");
         if constexpr (M == memory_model::WEAK) {
             asm volatile("multimem.st.weak.global.s32 [%0], %1;"
                 :: "l"(dst), "r"(src) : "memory");
-        } else if constexpr (M == memory_model::STRONG) {
+        } else if constexpr (M == memory_model::RELAXED) {
+            asm volatile("multimem.st.relaxed.sys.global.s32 [%0], %1;"
+                :: "l"(dst), "r"(src) : "memory");
+        } else if constexpr (M == memory_model::RELEASE) {
             asm volatile("multimem.st.release.sys.global.s32 [%0], %1;"
                 :: "l"(dst), "r"(src) : "memory");
         }
@@ -82,11 +92,15 @@ template <>
 struct multimem<uint> {
     template <reduce_op Op, memory_model M = memory_model::WEAK>
     __device__ static inline void ld_reduce(uint &dst, const uint *src) {
+        static_assert(M != memory_model::RELEASE, "multimem loads do not support release semantics");
         if constexpr (Op == reduce_op::ADD) {
             if constexpr (M == memory_model::WEAK) {
                 asm volatile("multimem.ld_reduce.weak.global.add.u32 %0, [%1];"
                     : "=r"(dst) : "l"(src) : "memory");
-            } else if constexpr (M == memory_model::STRONG) {
+            } else if constexpr (M == memory_model::RELAXED) {
+                asm volatile("multimem.ld_reduce.relaxed.sys.global.add.u32 %0, [%1];"
+                    : "=r"(dst) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::ACQUIRE) {
                 asm volatile("multimem.ld_reduce.acquire.sys.global.add.u32 %0, [%1];"
                     : "=r"(dst) : "l"(src) : "memory");
             }
@@ -94,7 +108,10 @@ struct multimem<uint> {
             if constexpr (M == memory_model::WEAK) {
                 asm volatile("multimem.ld_reduce.weak.global.min.u32 %0, [%1];"
                     : "=r"(dst) : "l"(src) : "memory");
-            } else if constexpr (M == memory_model::STRONG) {
+            } else if constexpr (M == memory_model::RELAXED) {
+                asm volatile("multimem.ld_reduce.relaxed.sys.global.min.u32 %0, [%1];"
+                    : "=r"(dst) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::ACQUIRE) {
                 asm volatile("multimem.ld_reduce.acquire.sys.global.min.u32 %0, [%1];"
                     : "=r"(dst) : "l"(src) : "memory");
             }
@@ -102,7 +119,10 @@ struct multimem<uint> {
             if constexpr (M == memory_model::WEAK) {
                 asm volatile("multimem.ld_reduce.weak.global.max.u32 %0, [%1];"
                     : "=r"(dst) : "l"(src) : "memory");
-            } else if constexpr (M == memory_model::STRONG) {
+            } else if constexpr (M == memory_model::RELAXED) {
+                asm volatile("multimem.ld_reduce.relaxed.sys.global.max.u32 %0, [%1];"
+                    : "=r"(dst) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::ACQUIRE) {
                 asm volatile("multimem.ld_reduce.acquire.sys.global.max.u32 %0, [%1];"
                     : "=r"(dst) : "l"(src) : "memory");
             }
@@ -110,10 +130,14 @@ struct multimem<uint> {
     }
     template <memory_model M = memory_model::WEAK>
     __device__ static inline void st(uint *dst, const uint &src) {
+        static_assert(M != memory_model::ACQUIRE, "multimem stores do not support acquire semantics");
         if constexpr (M == memory_model::WEAK) {
             asm volatile("multimem.st.weak.global.u32 [%0], %1;"
                 :: "l"(dst), "r"(src) : "memory");
-        } else if constexpr (M == memory_model::STRONG) {
+        } else if constexpr (M == memory_model::RELAXED) {
+            asm volatile("multimem.st.relaxed.sys.global.u32 [%0], %1;"
+                :: "l"(dst), "r"(src) : "memory");
+        } else if constexpr (M == memory_model::RELEASE) {
             asm volatile("multimem.st.release.sys.global.u32 [%0], %1;"
                 :: "l"(dst), "r"(src) : "memory");
         }
@@ -137,12 +161,16 @@ template <>
 struct multimem<float> {
     template <reduce_op Op, memory_model M = memory_model::WEAK>
     __device__ static inline void ld_reduce(float &dst, const float *src) {
+        static_assert(M != memory_model::RELEASE, "multimem loads do not support release semantics");
         static_assert(Op == reduce_op::ADD, "MIN/MAX are not supported for f32 ld_reduce operations");
         if constexpr (Op == reduce_op::ADD) {
             if constexpr (M == memory_model::WEAK) {
                 asm volatile("multimem.ld_reduce.weak.global.add.f32 %0, [%1];"
                     : "=f"(dst) : "l"(src) : "memory");
-            } else if constexpr (M == memory_model::STRONG) {
+            } else if constexpr (M == memory_model::RELAXED) {
+                asm volatile("multimem.ld_reduce.relaxed.sys.global.add.f32 %0, [%1];"
+                    : "=f"(dst) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::ACQUIRE) {
                 asm volatile("multimem.ld_reduce.acquire.sys.global.add.f32 %0, [%1];"
                     : "=f"(dst) : "l"(src) : "memory");
             }
@@ -150,10 +178,14 @@ struct multimem<float> {
     }
     template <memory_model M = memory_model::WEAK>
     __device__ static inline void st(float *dst, const float &src) {
+        static_assert(M != memory_model::ACQUIRE, "multimem stores do not support acquire semantics");
         if constexpr (M == memory_model::WEAK) {
             asm volatile("multimem.st.weak.global.f32 [%0], %1;"
                 :: "l"(dst), "f"(src) : "memory");
-        } else if constexpr (M == memory_model::STRONG) {
+        } else if constexpr (M == memory_model::RELAXED) {
+            asm volatile("multimem.st.relaxed.sys.global.f32 [%0], %1;"
+                :: "l"(dst), "f"(src) : "memory");
+        } else if constexpr (M == memory_model::RELEASE) {
             asm volatile("multimem.st.release.sys.global.f32 [%0], %1;"
                 :: "l"(dst), "f"(src) : "memory");
         }
@@ -173,12 +205,16 @@ template <>
 struct multimem<float2> {
     template <reduce_op Op, memory_model M = memory_model::WEAK>
     __device__ static inline void ld_reduce(float2 &dst, const float2 *src) {
+        static_assert(M != memory_model::RELEASE, "multimem loads do not support release semantics");
         static_assert(Op == reduce_op::ADD, "MIN/MAX are not supported for f32 ld_reduce operations");
         if constexpr (Op == reduce_op::ADD) {
             if constexpr (M == memory_model::WEAK) {
                 asm volatile("multimem.ld_reduce.weak.global.add.v2.f32 {%0, %1}, [%2];"
                     : "=f"(dst.x), "=f"(dst.y) : "l"(src) : "memory");
-            } else if constexpr (M == memory_model::STRONG) {
+            } else if constexpr (M == memory_model::RELAXED) {
+                asm volatile("multimem.ld_reduce.relaxed.sys.global.add.v2.f32 {%0, %1}, [%2];"
+                    : "=f"(dst.x), "=f"(dst.y) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::ACQUIRE) {
                 asm volatile("multimem.ld_reduce.acquire.sys.global.add.v2.f32 {%0, %1}, [%2];"
                     : "=f"(dst.x), "=f"(dst.y) : "l"(src) : "memory");
             }
@@ -186,10 +222,14 @@ struct multimem<float2> {
     }
     template <memory_model M = memory_model::WEAK>
     __device__ static inline void st(float2 *dst, const float2 &src) {
+        static_assert(M != memory_model::ACQUIRE, "multimem stores do not support acquire semantics");
         if constexpr (M == memory_model::WEAK) {
             asm volatile("multimem.st.weak.global.v2.f32 [%0], {%1, %2};"
                 :: "l"(dst), "f"(src.x), "f"(src.y) : "memory");
-        } else if constexpr (M == memory_model::STRONG) {
+        } else if constexpr (M == memory_model::RELAXED) {
+            asm volatile("multimem.st.relaxed.sys.global.v2.f32 [%0], {%1, %2};"
+                :: "l"(dst), "f"(src.x), "f"(src.y) : "memory");
+        } else if constexpr (M == memory_model::RELEASE) {
             asm volatile("multimem.st.release.sys.global.v2.f32 [%0], {%1, %2};"
                 :: "l"(dst), "f"(src.x), "f"(src.y) : "memory");
         }
@@ -208,11 +248,15 @@ template <>
 struct multimem<bf16> {
     template <reduce_op Op, memory_model M = memory_model::WEAK>
     __device__ static inline void ld_reduce(bf16 &dst, const bf16 *src) {
+        static_assert(M != memory_model::RELEASE, "multimem loads do not support release semantics");
         if constexpr (Op == reduce_op::ADD) {
             if constexpr (M == memory_model::WEAK) {
                 asm volatile("multimem.ld_reduce.weak.global.add.acc::f32.bf16 %0, [%1];"
                     : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
-            } else if constexpr (M == memory_model::STRONG) {
+            } else if constexpr (M == memory_model::RELAXED) {
+                asm volatile("multimem.ld_reduce.relaxed.sys.global.add.acc::f32.bf16 %0, [%1];"
+                    : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::ACQUIRE) {
                 asm volatile("multimem.ld_reduce.acquire.sys.global.add.acc::f32.bf16 %0, [%1];"
                     : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
             }
@@ -220,7 +264,10 @@ struct multimem<bf16> {
             if constexpr (M == memory_model::WEAK) {
                 asm volatile("multimem.ld_reduce.weak.global.min.bf16 %0, [%1];"
                     : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
-            } else if constexpr (M == memory_model::STRONG) {
+            } else if constexpr (M == memory_model::RELAXED) {
+                asm volatile("multimem.ld_reduce.relaxed.sys.global.min.bf16 %0, [%1];"
+                    : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::ACQUIRE) {
                 asm volatile("multimem.ld_reduce.acquire.sys.global.min.bf16 %0, [%1];"
                     : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
             }
@@ -228,7 +275,10 @@ struct multimem<bf16> {
             if constexpr (M == memory_model::WEAK) {
                 asm volatile("multimem.ld_reduce.weak.global.max.bf16 %0, [%1];"
                     : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
-            } else if constexpr (M == memory_model::STRONG) {
+            } else if constexpr (M == memory_model::RELAXED) {
+                asm volatile("multimem.ld_reduce.relaxed.sys.global.max.bf16 %0, [%1];"
+                    : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::ACQUIRE) {
                 asm volatile("multimem.ld_reduce.acquire.sys.global.max.bf16 %0, [%1];"
                     : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
             }
@@ -236,10 +286,14 @@ struct multimem<bf16> {
     }
     template <memory_model M = memory_model::WEAK>
     __device__ static inline void st(bf16 *dst, const bf16 &src) {
+        static_assert(M != memory_model::ACQUIRE, "multimem stores do not support acquire semantics");
         if constexpr (M == memory_model::WEAK) {
             asm volatile("multimem.st.weak.global.bf16 [%0], %1;"
                 :: "l"(dst), "h"(*reinterpret_cast<const uint16_t *>(&src)) : "memory");
-        } else if constexpr (M == memory_model::STRONG) {
+        } else if constexpr (M == memory_model::RELAXED) {
+            asm volatile("multimem.st.relaxed.sys.global.bf16 [%0], %1;"
+                :: "l"(dst), "h"(*reinterpret_cast<const uint16_t *>(&src)) : "memory");
+        } else if constexpr (M == memory_model::RELEASE) {
             asm volatile("multimem.st.release.sys.global.bf16 [%0], %1;"
                 :: "l"(dst), "h"(*reinterpret_cast<const uint16_t *>(&src)) : "memory");
         }
@@ -258,11 +312,15 @@ template <>
 struct multimem<bf16_2> {
     template <reduce_op Op, memory_model M = memory_model::WEAK>
     __device__ static inline void ld_reduce(bf16_2 &dst, const bf16_2 *src) {
+        static_assert(M != memory_model::RELEASE, "multimem loads do not support release semantics");
         if constexpr (Op == reduce_op::ADD) {
             if constexpr (M == memory_model::WEAK) {
                 asm volatile("multimem.ld_reduce.weak.global.add.acc::f32.bf16x2 %0, [%1];"
                     : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
-            } else if constexpr (M == memory_model::STRONG) {
+            } else if constexpr (M == memory_model::RELAXED) {
+                asm volatile("multimem.ld_reduce.relaxed.sys.global.add.acc::f32.bf16x2 %0, [%1];"
+                    : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::ACQUIRE) {
                 asm volatile("multimem.ld_reduce.acquire.sys.global.add.acc::f32.bf16x2 %0, [%1];"
                     : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
             }
@@ -270,7 +328,10 @@ struct multimem<bf16_2> {
             if constexpr (M == memory_model::WEAK) {
                 asm volatile("multimem.ld_reduce.weak.global.min.bf16x2 %0, [%1];"
                     : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
-            } else if constexpr (M == memory_model::STRONG) {
+            } else if constexpr (M == memory_model::RELAXED) {
+                asm volatile("multimem.ld_reduce.relaxed.sys.global.min.bf16x2 %0, [%1];"
+                    : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::ACQUIRE) {
                 asm volatile("multimem.ld_reduce.acquire.sys.global.min.bf16x2 %0, [%1];"
                     : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
             }
@@ -278,7 +339,10 @@ struct multimem<bf16_2> {
             if constexpr (M == memory_model::WEAK) {
                 asm volatile("multimem.ld_reduce.weak.global.max.bf16x2 %0, [%1];"
                     : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
-            } else if constexpr (M == memory_model::STRONG) {
+            } else if constexpr (M == memory_model::RELAXED) {
+                asm volatile("multimem.ld_reduce.relaxed.sys.global.max.bf16x2 %0, [%1];"
+                    : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::ACQUIRE) {
                 asm volatile("multimem.ld_reduce.acquire.sys.global.max.bf16x2 %0, [%1];"
                     : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
             }
@@ -286,10 +350,14 @@ struct multimem<bf16_2> {
     }
     template <memory_model M = memory_model::WEAK>
     __device__ static inline void st(bf16_2 *dst, const bf16_2 &src) {
+        static_assert(M != memory_model::ACQUIRE, "multimem stores do not support acquire semantics");
         if constexpr (M == memory_model::WEAK) {
             asm volatile("multimem.st.weak.global.bf16x2 [%0], %1;"
                 :: "l"(dst), "r"(*reinterpret_cast<const uint32_t *>(&src)) : "memory");
-        } else if constexpr (M == memory_model::STRONG) {
+        } else if constexpr (M == memory_model::RELAXED) {
+            asm volatile("multimem.st.relaxed.sys.global.bf16x2 [%0], %1;"
+                :: "l"(dst), "r"(*reinterpret_cast<const uint32_t *>(&src)) : "memory");
+        } else if constexpr (M == memory_model::RELEASE) {
             asm volatile("multimem.st.release.sys.global.bf16x2 [%0], %1;"
                 :: "l"(dst), "r"(*reinterpret_cast<const uint32_t *>(&src)) : "memory");
         }
@@ -308,11 +376,15 @@ template <>
 struct multimem<half> {
     template <reduce_op Op, memory_model M = memory_model::WEAK>
     __device__ static inline void ld_reduce(half &dst, const half *src) {
+        static_assert(M != memory_model::RELEASE, "multimem loads do not support release semantics");
         if constexpr (Op == reduce_op::ADD) {
             if constexpr (M == memory_model::WEAK) {
                 asm volatile("multimem.ld_reduce.weak.global.add.acc::f32.f16 %0, [%1];"
                     : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
-            } else if constexpr (M == memory_model::STRONG) {
+            } else if constexpr (M == memory_model::RELAXED) {
+                asm volatile("multimem.ld_reduce.relaxed.sys.global.add.acc::f32.f16 %0, [%1];"
+                    : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::ACQUIRE) {
                 asm volatile("multimem.ld_reduce.acquire.sys.global.add.acc::f32.f16 %0, [%1];"
                     : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
             }
@@ -320,7 +392,10 @@ struct multimem<half> {
             if constexpr (M == memory_model::WEAK) {
                 asm volatile("multimem.ld_reduce.weak.global.min.f16 %0, [%1];"
                     : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
-            } else if constexpr (M == memory_model::STRONG) {
+            } else if constexpr (M == memory_model::RELAXED) {
+                asm volatile("multimem.ld_reduce.relaxed.sys.global.min.f16 %0, [%1];"
+                    : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::ACQUIRE) {
                 asm volatile("multimem.ld_reduce.acquire.sys.global.min.f16 %0, [%1];"
                     : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
             }
@@ -328,7 +403,10 @@ struct multimem<half> {
             if constexpr (M == memory_model::WEAK) {
                 asm volatile("multimem.ld_reduce.weak.global.max.f16 %0, [%1];"
                     : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
-            } else if constexpr (M == memory_model::STRONG) {
+            } else if constexpr (M == memory_model::RELAXED) {
+                asm volatile("multimem.ld_reduce.relaxed.sys.global.max.f16 %0, [%1];"
+                    : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::ACQUIRE) {
                 asm volatile("multimem.ld_reduce.acquire.sys.global.max.f16 %0, [%1];"
                     : "=h"(*reinterpret_cast<uint16_t *>(&dst)) : "l"(src) : "memory");
             }
@@ -336,10 +414,14 @@ struct multimem<half> {
     }
     template <memory_model M = memory_model::WEAK>
     __device__ static inline void st(half *dst, const half &src) {
+        static_assert(M != memory_model::ACQUIRE, "multimem stores do not support acquire semantics");
         if constexpr (M == memory_model::WEAK) {
             asm volatile("multimem.st.weak.global.f16 [%0], %1;"
                 :: "l"(dst), "h"(*reinterpret_cast<const uint16_t *>(&src)) : "memory");
-        } else if constexpr (M == memory_model::STRONG) {
+        } else if constexpr (M == memory_model::RELAXED) {
+            asm volatile("multimem.st.relaxed.sys.global.f16 [%0], %1;"
+                :: "l"(dst), "h"(*reinterpret_cast<const uint16_t *>(&src)) : "memory");
+        } else if constexpr (M == memory_model::RELEASE) {
             asm volatile("multimem.st.release.sys.global.f16 [%0], %1;"
                 :: "l"(dst), "h"(*reinterpret_cast<const uint16_t *>(&src)) : "memory");
         }
@@ -358,11 +440,15 @@ template <>
 struct multimem<half_2> {
     template <reduce_op Op, memory_model M = memory_model::WEAK>
     __device__ static inline void ld_reduce(half_2 &dst, const half_2 *src) {
+        static_assert(M != memory_model::RELEASE, "multimem loads do not support release semantics");
         if constexpr (Op == reduce_op::ADD) {
             if constexpr (M == memory_model::WEAK) {
                 asm volatile("multimem.ld_reduce.weak.global.add.acc::f32.f16x2 %0, [%1];"
                     : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
-            } else if constexpr (M == memory_model::STRONG) {
+            } else if constexpr (M == memory_model::RELAXED) {
+                asm volatile("multimem.ld_reduce.relaxed.sys.global.add.acc::f32.f16x2 %0, [%1];"
+                    : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::ACQUIRE) {
                 asm volatile("multimem.ld_reduce.acquire.sys.global.add.acc::f32.f16x2 %0, [%1];"
                     : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
             }
@@ -370,7 +456,10 @@ struct multimem<half_2> {
             if constexpr (M == memory_model::WEAK) {
                 asm volatile("multimem.ld_reduce.weak.global.min.f16x2 %0, [%1];"
                     : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
-            } else if constexpr (M == memory_model::STRONG) {
+            } else if constexpr (M == memory_model::RELAXED) {
+                asm volatile("multimem.ld_reduce.relaxed.sys.global.min.f16x2 %0, [%1];"
+                    : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::ACQUIRE) {
                 asm volatile("multimem.ld_reduce.acquire.sys.global.min.f16x2 %0, [%1];"
                     : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
             }
@@ -378,7 +467,10 @@ struct multimem<half_2> {
             if constexpr (M == memory_model::WEAK) {
                 asm volatile("multimem.ld_reduce.weak.global.max.f16x2 %0, [%1];"
                     : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
-            } else if constexpr (M == memory_model::STRONG) {
+            } else if constexpr (M == memory_model::RELAXED) {
+                asm volatile("multimem.ld_reduce.relaxed.sys.global.max.f16x2 %0, [%1];"
+                    : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
+            } else if constexpr (M == memory_model::ACQUIRE) {
                 asm volatile("multimem.ld_reduce.acquire.sys.global.max.f16x2 %0, [%1];"
                     : "=r"(*reinterpret_cast<uint32_t *>(&dst)) : "l"(src) : "memory");
             }
@@ -386,10 +478,14 @@ struct multimem<half_2> {
     }
     template <memory_model M = memory_model::WEAK>
     __device__ static inline void st(half_2 *dst, const half_2 &src) {
+        static_assert(M != memory_model::ACQUIRE, "multimem stores do not support acquire semantics");
         if constexpr (M == memory_model::WEAK) {
             asm volatile("multimem.st.weak.global.f16x2 [%0], %1;"
                 :: "l"(dst), "r"(*reinterpret_cast<const uint32_t *>(&src)) : "memory");
-        } else if constexpr (M == memory_model::STRONG) {
+        } else if constexpr (M == memory_model::RELAXED) {
+            asm volatile("multimem.st.relaxed.sys.global.f16x2 [%0], %1;"
+                :: "l"(dst), "r"(*reinterpret_cast<const uint32_t *>(&src)) : "memory");
+        } else if constexpr (M == memory_model::RELEASE) {
             asm volatile("multimem.st.release.sys.global.f16x2 [%0], %1;"
                 :: "l"(dst), "r"(*reinterpret_cast<const uint32_t *>(&src)) : "memory");
         }

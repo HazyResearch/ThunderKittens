@@ -80,6 +80,16 @@ struct axis {
     static constexpr int COL = 1; // column axis of a tile
 };
 
+/**
+ * @brief Memory-ordering semantics for asynchronous and multimem operations.
+ */
+enum class memory_model {
+    WEAK,
+    RELAXED,
+    ACQUIRE,
+    RELEASE
+};
+
 /* ----------  TYPE HELPERS  ---------- */
 
 /**
