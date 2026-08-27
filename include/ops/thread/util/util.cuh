@@ -255,6 +255,7 @@ struct result {
  * @param sem The semaphore that the caller will wait on.
  */
 __device__ static inline void schedule(handle &h, semaphore &sem) {
+    asm volatile("fence.proxy.async::generic.acquire.sync_restrict::shared::cluster.cluster;" ::: "memory");
     asm volatile("{clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.multicast::cluster::all.b128 [%0], [%1];}"
         :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&h.internal_value))), "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&sem)))
         : "memory"
@@ -266,7 +267,7 @@ __device__ static inline void schedule(handle &h, semaphore &sem) {
  * @param h The CLC handle.
  */
 __device__ static inline result query(handle &h) {
-    result r;
+    result r{};
     asm volatile(
         "{\n"
         ".reg .pred SUCCESS;\n"
@@ -276,7 +277,7 @@ __device__ static inline result query(handle &h) {
         "selp.u32 %0, 1, 0, SUCCESS;\n"
         "@!SUCCESS bra.uni DONE;\n"
         "clusterlaunchcontrol.query_cancel.get_first_ctaid.v4.b32.b128 {%1, %2, %3, _}, CLC_HANDLE;\n"
-        "fence.proxy.async.shared::cta;\n"
+        "fence.proxy.async::generic.release.sync_restrict::shared::cta.cluster;\n"
         "DONE:\n"
         "}"
         : "=r"(r.success), "=r"(r.x), "=r"(r.y), "=r"(r.z)
