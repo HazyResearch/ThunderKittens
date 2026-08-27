@@ -1,15 +1,19 @@
 import torch
 from functools import partial
 import numpy as np
+from kernels.common.benchmark_harness import run_benchmark_main
 
-import _C as tk
+try:
+    import _C as tk
+except:
+    tk = None
 
 try:
     # To compare to Flash Attention 2
     from flash_attn import flash_attn_func as flash_attn_func2
     print(f"Successfully imported flash_attention")
 except:
-    flash_attn_func = None
+    flash_attn_func2 = None
     print("Could not import flash_attention. Please: pip install flash-attn")
 
 try:
@@ -202,94 +206,32 @@ IMPLEMENTATIONS_BWD = {
 
 NAME = "ATTENTION"
 
-################## Common Benchmark Harness ######################
-
-# TODO: this code is redundant on every benchmark currently
-
-import pandas as pd
-pd.set_option('display.max_columns', None)
-pd.set_option('display.width', None)
-
-import warnings
-warnings.filterwarnings("ignore", message=".*not a leaf Tensor is being accessed.*")
-warnings.filterwarnings("ignore", message=".*no current CUDA context.*")
-
 b = 16
 h = 16
 dv = 128
 
-def efficiency(flops, time):
-    tflops = flops / 1e12
-    time_ms = time / 1e6
-    return tflops / time_ms
-
-def measure_efficiency(dt, n, method_name, method, verbose=False, torch_compile=True):
-    if verbose:
-        print(f"{b=}, {n=}, {h=}, {dv=}")
-
-    if 'c=t' in method_name:
-        causal = True
-        flops = get_flops(b, n, dv, h, causal=('causal'), mode='bwd' if 'bwd' in method_name else 'fwd')
-    elif 'c=f' in method_name:
-        causal = False
-        flops = get_flops(b, n, dv, h, causal=causal, mode='bwd' if 'bwd' in method_name else 'fwd')
-    else:
-        flops = get_flops(b, n, dv, h)
-
-    outputs, times = method(dt, b, h, n, dv, verbose=verbose, torch_compile=torch_compile)
-    times = times * 1000
-
-    eff = efficiency(flops, times)
-    if verbose:
-        print(f"Method {method_name} -- Efficiency: {eff:.2f} TFLOPS, Time: {times:.4f} us and FLOPS: {flops:.2f}")
-    torch.cuda.empty_cache()
-    return eff, times
+def should_skip(method_name, n, b, h, dv):
+    if "FA3" in method_name and flash_attn_func3 is None:
+        return True
+    if "TK" in method_name and tk is None:
+        return True
+    return False
 
 if __name__ == "__main__":
-    print("Benchmarking the kernels...")
-
-    verbose = True
-    torch_compile = False
-
-    implementations_list = []
-    implementations_fwd = IMPLEMENTATIONS
-    implementations_list.append(implementations_fwd)
-    name = NAME
-    print("============" * 4, name, "============" * 4)
-
-    try:
-        implementations_bwd = IMPLEMENTATIONS_BWD
-        implementations_list.append(implementations_bwd)
-    except:
-        pass
-
-    for implementations in implementations_list:
-        method2tflops = {}
-        method2timing = {}
-
-        for m, method in implementations.items():
-            flops_result, timing_result = {},  {}
-            if verbose:
-                print(f"Method: {m}")
-            for n in [768, 1536, 3072, 6144, 12288]:
-                if "conv" in m and n not in [1024, 4096]:
-                    # restrict to sizes we have implemented
-                    continue
-                if "mamba2_triton" in m and n not in [1024, 2048, 4096, 8192]:
-                    # the kernel results in DEVICE_SIDE_ASSERTS
-                    continue
-                if "layernorm" in m and dv*h != 1024:
-                    # restrict to sizes we have implemented
-                    print('skipping layernorm due to incompatible model dim')
-                if verbose:
-                    print(f"Sequence Length: {n}")
-                tflops, timing = measure_efficiency(torch.bfloat16, n, m, method, verbose=verbose, torch_compile=torch_compile)
-                if tflops > 0: 
-                    flops_result[n] = tflops
-                    timing_result[n] = timing
-            method2tflops[m] = flops_result
-            method2timing[m] = timing_result
-
-        # print table
-        df = pd.DataFrame(method2tflops).replace(np.nan, 'OOM', regex=True)
-        print(df)
+    run_benchmark_main(
+        name=NAME,
+        implementations=IMPLEMENTATIONS,
+        implementations_bwd=IMPLEMENTATIONS_BWD,
+        get_flops=get_flops,
+        b=b,
+        h=h,
+        dv=dv,
+        verbose=True,
+        torch_compile=False,
+        seq_lens=[768, 1536, 3072, 6144, 12288],
+        should_skip=should_skip,
+        dataframe_options={
+            "display.max_columns": None,
+            "display.width": None,
+        },
+    )

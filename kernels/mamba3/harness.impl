@@ -1,0 +1,194 @@
+#include <chrono>
+#include <cmath>
+#include <cstring>
+#include <fstream>
+#include <iostream>
+
+constexpr int MAMBA3_B = 16;
+constexpr int MAMBA3_H = 32;
+constexpr int MAMBA3_N = 2048;
+constexpr int MAMBA3_D = 64;
+constexpr int MAMBA3_ITERS = 10;
+constexpr uint64_t MAMBA3_FLOPS =
+    4llu * MAMBA3_B * MAMBA3_H * MAMBA3_N * MAMBA3_N * MAMBA3_D;
+
+#define CudaCheckError() __cudaCheckError(__FILE__, __LINE__)
+inline void __cudaCheckError(const char *file, const int line) {
+    cudaError err = cudaGetLastError();
+    if (cudaSuccess != err) {
+        fprintf(stderr, "cudaCheckError() failed at %s:%i : %s\n", file, line, cudaGetErrorString(err));
+        exit(-1);
+    }
+    err = cudaDeviceSynchronize();
+    if (cudaSuccess != err) {
+        fprintf(stderr, "cudaCheckError() with sync failed at %s:%i : %s\n", file, line, cudaGetErrorString(err));
+        exit(-1);
+    }
+}
+
+int main(int argc, char **argv) {
+    const bool use_mimo = argc > 2 && std::strcmp(argv[2], "mimo") == 0;
+    const int qk_heads = use_mimo ? MIMO_RANK : 1;
+
+    constexpr int TOTAL_ELEMENTS_VO = MAMBA3_B * MAMBA3_H * MAMBA3_N * MAMBA3_D;
+    const int total_elements_qk = MAMBA3_B * qk_heads * MAMBA3_N * MAMBA3_D;
+    constexpr int TOTAL_ELEMENTS_A = MAMBA3_B * MAMBA3_H * MAMBA3_N;
+
+    bf16 *q = new bf16[total_elements_qk];
+    bf16 *k = new bf16[total_elements_qk];
+    bf16 *v = new bf16[TOTAL_ELEMENTS_VO];
+    bf16 *o_bf = new bf16[TOTAL_ELEMENTS_VO];
+    float *a = new float[TOTAL_ELEMENTS_A];
+    float *b = new float[TOTAL_ELEMENTS_A];
+    float *angle = new float[TOTAL_ELEMENTS_A];
+    float *o = new float[TOTAL_ELEMENTS_VO];
+    float *o_ref = new float[TOTAL_ELEMENTS_VO];
+
+    for (int i = 0; i < total_elements_qk; ++i) {
+        q[i] = __float2bfloat16(0.0f);
+        k[i] = __float2bfloat16(0.0f);
+    }
+    for (int i = 0; i < TOTAL_ELEMENTS_VO; ++i) {
+        v[i] = __float2bfloat16(0.0f);
+        o_bf[i] = __float2bfloat16(0.0f);
+        o[i] = 0.0f;
+        o_ref[i] = 0.0f;
+    }
+    for (int i = 0; i < TOTAL_ELEMENTS_A; ++i) {
+        a[i] = 0.0f;
+        b[i] = 0.0f;
+        angle[i] = 0.0f;
+    }
+
+    bf16 *d_q, *d_k, *d_v, *d_o;
+    float *d_a, *d_b, *d_angle;
+    cudaMalloc(&d_q, total_elements_qk * sizeof(bf16));
+    cudaMalloc(&d_k, total_elements_qk * sizeof(bf16));
+    cudaMalloc(&d_v, TOTAL_ELEMENTS_VO * sizeof(bf16));
+    cudaMalloc(&d_o, TOTAL_ELEMENTS_VO * sizeof(bf16));
+    cudaMalloc(&d_a, TOTAL_ELEMENTS_A * sizeof(float));
+    cudaMalloc(&d_b, TOTAL_ELEMENTS_A * sizeof(float));
+    cudaMalloc(&d_angle, TOTAL_ELEMENTS_A * sizeof(float));
+
+    cudaMemcpy(d_q, q, total_elements_qk * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_k, k, total_elements_qk * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_v, v, TOTAL_ELEMENTS_VO * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_a, a, TOTAL_ELEMENTS_A * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_b, b, TOTAL_ELEMENTS_A * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_angle, angle, TOTAL_ELEMENTS_A * sizeof(float), cudaMemcpyHostToDevice);
+
+    std::cout << "Launching mamba3 standalone in " << (use_mimo ? "mimo" : "siso") << " mode\n";
+    const auto start = std::chrono::high_resolution_clock::now();
+
+    if (use_mimo) {
+        using kernel_t = mamba3_mimo_fwd_template;
+        kernel_t::layout::q_global Qg(d_q, MAMBA3_B, MIMO_RANK, MAMBA3_N, nullptr);
+        kernel_t::layout::k_global Kg(d_k, MAMBA3_B, MIMO_RANK, MAMBA3_N, nullptr);
+        kernel_t::layout::a_global Ag(d_a, MAMBA3_B, MAMBA3_H, nullptr, MAMBA3_N);
+        kernel_t::layout::b_global Bg(d_b, MAMBA3_B, MAMBA3_H, nullptr, MAMBA3_N);
+        kernel_t::layout::angle_global AngleG(d_angle, MAMBA3_B, MAMBA3_H, nullptr, MAMBA3_N);
+        kernel_t::layout::v_global Vg(d_v, MAMBA3_B, MAMBA3_H, MAMBA3_N, nullptr);
+        kernel_t::layout::o_global Og(d_o, MAMBA3_B, MAMBA3_H, MAMBA3_N, nullptr);
+        kernel_t::layout::globals globals = {Qg, Kg, Vg, Og, Ag, Bg, AngleG};
+        unsigned long mem_size = kittens::prototype::detail::MAX_SHARED_MEMORY_v<kernel_t>;
+        cudaFuncSetAttribute(
+            prototype::lcsf::kernel<kernel_t>,
+            cudaFuncAttributeMaxDynamicSharedMemorySize,
+            mem_size
+        );
+        constexpr int BLOCK_SIZE = prototype::detail::NUM_THREADS_v<kernel_t>;
+        dim3 grid(132, 1, 1);
+        for (int i = 0; i < MAMBA3_ITERS; ++i) {
+            prototype::lcsf::kernel<kernel_t><<<grid, BLOCK_SIZE, mem_size>>>(globals);
+        }
+    } else {
+        using kernel_t = mamba3_siso_fwd_template;
+        kernel_t::layout::q_global Qg(d_q, MAMBA3_B, 1, MAMBA3_N, nullptr);
+        kernel_t::layout::k_global Kg(d_k, MAMBA3_B, 1, MAMBA3_N, nullptr);
+        kernel_t::layout::a_global Ag(d_a, MAMBA3_B, MAMBA3_H, nullptr, MAMBA3_N);
+        kernel_t::layout::b_global Bg(d_b, MAMBA3_B, MAMBA3_H, nullptr, MAMBA3_N);
+        kernel_t::layout::angle_global AngleG(d_angle, MAMBA3_B, MAMBA3_H, nullptr, MAMBA3_N);
+        kernel_t::layout::v_global Vg(d_v, MAMBA3_B, MAMBA3_H, MAMBA3_N, nullptr);
+        kernel_t::layout::o_global Og(d_o, MAMBA3_B, MAMBA3_H, MAMBA3_N, nullptr);
+        kernel_t::layout::globals globals = {Qg, Kg, Vg, Og, Ag, Bg, AngleG};
+        unsigned long mem_size = kittens::prototype::detail::MAX_SHARED_MEMORY_v<kernel_t>;
+        cudaFuncSetAttribute(
+            prototype::lcsf::kernel<kernel_t>,
+            cudaFuncAttributeMaxDynamicSharedMemorySize,
+            mem_size
+        );
+        constexpr int BLOCK_SIZE = prototype::detail::NUM_THREADS_v<kernel_t>;
+        dim3 grid(132, 1, 1);
+        for (int i = 0; i < MAMBA3_ITERS; ++i) {
+            prototype::lcsf::kernel<kernel_t><<<grid, BLOCK_SIZE, mem_size>>>(globals);
+        }
+    }
+
+    cudaDeviceSynchronize();
+    const auto finish = std::chrono::high_resolution_clock::now();
+    CudaCheckError();
+    std::cout << "Finished kernel\n";
+
+    cudaMemcpy(o_bf, d_o, TOTAL_ELEMENTS_VO * sizeof(bf16), cudaMemcpyDeviceToHost);
+    for (int i = 0; i < TOTAL_ELEMENTS_VO; ++i) {
+        o[i] = __bfloat162float(o_bf[i]);
+    }
+
+    bool good = true;
+    double total_error = 0.0;
+    std::ofstream o_ref_file("printouts/o_ref.txt");
+    std::ofstream o_file("printouts/o.txt");
+    std::ofstream diff_file("printouts/diff.txt");
+    for (int i = 0; i < TOTAL_ELEMENTS_VO; ++i) {
+        float diff = o[i] - o_ref[i];
+        if (i < MAMBA3_H * MAMBA3_N * MAMBA3_D) {
+            o_ref_file << o_ref[i] << ' ';
+            o_file << o[i] << ' ';
+            diff_file << diff << ' ';
+        }
+        if (i % 64 == 63) {
+            o_ref_file << '\n';
+            o_file << '\n';
+            diff_file << '\n';
+        }
+        if (std::abs(diff) > 0.1f || std::isnan(diff) || std::isinf(diff)) {
+            good = false;
+            if (std::isnan(diff) || std::isinf(diff)) {
+                std::cout << "NaN/inf detected at " << i << std::endl;
+            }
+        }
+        total_error += diff;
+    }
+
+    std::cout << "Average execution time: "
+              << std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count() / MAMBA3_ITERS
+              << " us" << std::endl;
+    std::cout << "Avg error: " << total_error / TOTAL_ELEMENTS_VO << std::endl;
+    if (good) std::cout << "Correct :)\n";
+    else std::cout << "Incorrect :(\n";
+    const double avg_time_s =
+        static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(finish - start).count()) /
+        (MAMBA3_ITERS * 1e6);
+    const double avg_tflops = (MAMBA3_FLOPS / avg_time_s) / 1e12;
+    std::cout << "Average TFLOPs achieved: " << avg_tflops << std::endl;
+
+    cudaFree(d_q);
+    cudaFree(d_k);
+    cudaFree(d_v);
+    cudaFree(d_o);
+    cudaFree(d_a);
+    cudaFree(d_b);
+    cudaFree(d_angle);
+
+    delete[] q;
+    delete[] k;
+    delete[] v;
+    delete[] o_bf;
+    delete[] o;
+    delete[] o_ref;
+    delete[] a;
+    delete[] b;
+    delete[] angle;
+
+    return 0;
+}
