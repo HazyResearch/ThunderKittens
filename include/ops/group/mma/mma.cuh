@@ -9,6 +9,8 @@
 // Hopper has its own warpgroup-scope MMA operations.
 #if defined(KITTENS_SM90)
 #include "warpgroup.cuh"
+#elif defined(KITTENS_SM80) || defined(KITTENS_SM120)
+#include "warpgroup_pseudo.cuh"
 #endif
 
 // Blackwell has its own MMA operations (Tensor Core Generation 5).
