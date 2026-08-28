@@ -1,4 +1,5 @@
 #include "kittens.cuh"
+#include "pyutils/cuda_utils.cuh"
 #include <cooperative_groups.h>
 #include <curand_kernel.h>
 #include <cuda/semaphore>
@@ -166,7 +167,8 @@ void dispatch_layernorm(
     bf16 *d_o_resid,
     float dropout_p,
     size_t B, 
-    size_t N
+    size_t N,
+    cudaStream_t stream = nullptr
 ) {
     constexpr size_t D = 1024;
 
@@ -199,15 +201,18 @@ void dispatch_layernorm(
     n_tile_size, n_per_tile};
 
     unsigned long mem_size = 25480; 
-    cudaFuncSetAttribute(
-        layernorm_tk<D>,
-        cudaFuncAttributeMaxDynamicSharedMemorySize,
-        mem_size
+    kittens::detail::throw_if_cuda_error(
+        cudaFuncSetAttribute(
+            layernorm_tk<D>,
+            cudaFuncAttributeMaxDynamicSharedMemorySize,
+            mem_size
+        ),
+        "cudaFuncSetAttribute"
     );
 
     dim3 grid(n_tile_size, B, 1);
-    layernorm_tk<D><<<grid,NUM_THREADS,mem_size>>>(g, n_per_tile);
-    cudaDeviceSynchronize();
+    layernorm_tk<D><<<grid,NUM_THREADS,mem_size,stream>>>(g, n_per_tile);
+    kittens::detail::throw_if_cuda_error(cudaGetLastError(), "layernorm kernel launch");
 }
 
 
@@ -255,21 +260,85 @@ std::tuple<at::Tensor, at::Tensor> fused_layernorm(
     bf16* d_norm_weight_bf = reinterpret_cast<bf16*>(norm_weight_ptr);
     bf16 *d_o = reinterpret_cast<bf16*>(out.data_ptr<c10::BFloat16>());
     bf16 *d_o_resid = reinterpret_cast<bf16*>(out_resid.data_ptr<c10::BFloat16>());
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
     dispatch_layernorm(
         d_x_bf, d_residual_bf, 
         d_norm_weight_bf, d_norm_bias_bf, 
         d_o, d_o_resid, dropout_p,
-        (size_t)b, (size_t)n
+        (size_t)b, (size_t)n, stream
     );
-    CHECK_CUDA_ERROR(cudaGetLastError());
 
     return std::make_tuple(out, out_resid);
 }
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("fused_layernorm", fused_layernorm, "LayerNorm TK. Takes tensors (x, residual, norm_weight, norm_bias, dropout_p). x, residual, norm_weight, norm_bias are bf16. dropout_p is float. Returns (B, H, N, 128) in bf16.");
 }
+#elif defined(TVM_FFI_COMPILE)
+#include "pyutils/tvm_ffi_utils.cuh"
+
+namespace {
+
+// Caller-owned output buffers must not overlap each other or any input tensor.
+// Violating this precondition results in undefined behavior.
+void TkLayernorm(tvm::ffi::TensorView output,
+                 tvm::ffi::TensorView output_residual,
+                 tvm::ffi::TensorView input,
+                 tvm::ffi::TensorView residual,
+                 tvm::ffi::TensorView weight,
+                 tvm::ffi::TensorView bias) {
+    kittens::tvm_ffi::check_same_device(
+        output, output_residual, input, residual, weight, bias
+    );
+    TVM_FFI_CHECK(output.ndim() == 3 && output_residual.ndim() == 3 &&
+                      input.ndim() == 3 && residual.ndim() == 3,
+                  ValueError)
+        << "tk_layernorm expects output tensors and inputs to be 3-dimensional";
+    TVM_FFI_CHECK(weight.ndim() == 1 && bias.ndim() == 1, ValueError)
+        << "tk_layernorm expects weight and bias to be 1-dimensional";
+    for (int axis = 0; axis < input.ndim(); ++axis) {
+        TVM_FFI_CHECK(output.size(axis) == input.size(axis) &&
+                          output_residual.size(axis) == input.size(axis) &&
+                          residual.size(axis) == input.size(axis),
+                      ValueError)
+            << "output and residual shapes must match input at axis " << axis;
+    }
+    TVM_FFI_CHECK(input.size(2) == 1024, ValueError)
+        << "tk_layernorm expects hidden dimension 1024";
+    TVM_FFI_CHECK(weight.size(0) == 1024 && bias.size(0) == 1024, ValueError)
+        << "tk_layernorm expects weight and bias length 1024";
+    TVM_FFI_CHECK(input.size(1) % 16 == 0, ValueError)
+        << "tk_layernorm expects sequence length to be a multiple of 16";
+
+    bf16 *output_ptr = kittens::tvm_ffi::tensor_data_ptr<bf16>(output);
+    bf16 *output_residual_ptr =
+        kittens::tvm_ffi::tensor_data_ptr<bf16>(output_residual);
+    bf16 *input_ptr = kittens::tvm_ffi::tensor_data_ptr<bf16>(input);
+    bf16 *residual_ptr = kittens::tvm_ffi::tensor_data_ptr<bf16>(residual);
+    bf16 *weight_ptr = kittens::tvm_ffi::tensor_data_ptr<bf16>(weight);
+    bf16 *bias_ptr = kittens::tvm_ffi::tensor_data_ptr<bf16>(bias);
+
+    kittens::tvm_ffi::check_data_alignment(output, 16);
+    kittens::tvm_ffi::check_data_alignment(output_residual, 16);
+    kittens::tvm_ffi::check_data_alignment(input, 16);
+    kittens::tvm_ffi::check_data_alignment(residual, 16);
+    kittens::tvm_ffi::check_data_alignment(weight, 16);
+    kittens::tvm_ffi::check_data_alignment(bias, 16);
+
+    tvm::ffi::CUDADeviceGuard guard(input.device().device_id);
+    cudaStream_t stream = kittens::tvm_ffi::get_cuda_stream(input.device());
+    dispatch_layernorm(
+        input_ptr, residual_ptr,
+        weight_ptr, bias_ptr,
+        output_ptr, output_residual_ptr,
+        0.0f, static_cast<size_t>(input.size(0)),
+        static_cast<size_t>(input.size(1)), stream
+    );
+}
+
+} // namespace
+
+TVM_FFI_DLL_EXPORT_TYPED_FUNC(tk_layernorm, TkLayernorm);
 #else
 #include "harness.impl"
 #endif
-
