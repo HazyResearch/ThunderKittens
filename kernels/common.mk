@@ -84,7 +84,11 @@ NVCCFLAGS += -ltorch_python -ltorch_cuda -ltorch_cpu -ltorch -lc10_cuda -lc10
 endif
 
 # Architecture-specific flags
-ifeq ($(ARCH),SM120)
+ifeq ($(ARCH),SM121)
+# GB10 (DGX Spark) is sm_121: reuse the SM120 consumer-Blackwell feature set,
+# but emit native sm_121a SASS (sm_120a cubins will NOT load on sm_121).
+NVCCFLAGS += -DKITTENS_SM120 -gencode arch=compute_121a,code=sm_121a
+else ifeq ($(ARCH),SM120)
 NVCCFLAGS += -DKITTENS_SM120 -gencode arch=compute_120a,code=sm_120a
 else ifeq ($(ARCH),SM103)
 NVCCFLAGS += -DKITTENS_SM103 -gencode arch=compute_103a,code=sm_103a
@@ -95,7 +99,7 @@ NVCCFLAGS += -DKITTENS_SM90 -gencode arch=compute_90a,code=sm_90a
 else ifeq ($(ARCH),SM80)
 NVCCFLAGS += -DKITTENS_SM80 -gencode arch=compute_80,code=sm_80
 else
-$(error Unsupported ARCH: $(ARCH). Please set ARCH to SM80, SM90, SM100, SM103, or SM120.)
+$(error Unsupported ARCH: $(ARCH). Please set ARCH to SM80, SM90, SM100, SM103, SM120, or SM121.)
 endif
 
 all: $(OUT)

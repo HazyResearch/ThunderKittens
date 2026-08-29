@@ -15,3 +15,9 @@
 #ifdef KITTENS_SM10X
 #include "tcgen05.cuh"
 #endif
+
+// SM120 (consumer Blackwell, e.g. GB10) has neither wgmma nor tcgen05; this shim
+// re-exposes the warpgroup WGMMA API on top of warp-level mma.sync.
+#ifdef KITTENS_SM120
+#include "warpgroup_sm120.cuh"
+#endif
