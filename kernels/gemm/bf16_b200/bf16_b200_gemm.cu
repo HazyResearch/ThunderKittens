@@ -87,7 +87,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
     __shared__ uint32_t tmem_addr;
     __shared__ clc::handle clc_handle[C::CLC_PIPE_DEPTH];
     __shared__ semaphore tmem_provisioned, tmem_finished, schedule_arrived[C::CLC_PIPE_DEPTH], schedule_finished[C::CLC_PIPE_DEPTH];
-    __shared__ semaphore inputs_arrived[C::LOAD_PIPE_DEPTH], inputs_finished[C::LOAD_PIPE_DEPTH], outputs_arrived[C::NUM_CONSUMERS], outputs_finished[C::MMA_PIPE_DEPTH];
+    __shared__ semaphore inputs_arrived[C::LOAD_PIPE_DEPTH], inputs_finished[C::LOAD_PIPE_DEPTH], outputs_arrived[C::MMA_PIPE_DEPTH][C::NUM_CONSUMERS], outputs_finished[C::MMA_PIPE_DEPTH];
     uint32_t bitfield = 0xFFFF0000; // ***_finished phase bits start as 1s, ***_arrived phase bits start as 0s
 
     if (threadIdx.x == 32) {
@@ -104,11 +104,11 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
             init_semaphore(inputs_finished[i], 0, C::NUM_CONSUMERS);
         }
         #pragma unroll
-        for (int i = 0; i < C::NUM_CONSUMERS; i++) {
-            init_semaphore(outputs_arrived[i], 0, 1);
-        }
-        #pragma unroll
         for (int i = 0; i < C::MMA_PIPE_DEPTH; i++) {
+            #pragma unroll
+            for (int j = 0; j < C::NUM_CONSUMERS; j++) {
+                init_semaphore(outputs_arrived[i][j], 0, 1);
+            }
             init_semaphore(outputs_finished[i], 0, C::CLUSTER_SIZE*C::NUM_CONSUMERS);
         }
     }
@@ -175,7 +175,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
                     update_phasebit<0>(bitfield, input_ring);
                     input_ring=ring_advance<C::LOAD_PIPE_DEPTH>(input_ring);
                 }
-                detail::tcgen05::commit<C::CLUSTER_SIZE>(outputs_arrived[warpgroup::warpid()]);
+                detail::tcgen05::commit<C::CLUSTER_SIZE>(outputs_arrived[task_iter%C::MMA_PIPE_DEPTH][warpgroup::warpid()]);
                 if (!schedule.success) break;
             }
         }
@@ -205,7 +205,7 @@ __global__ void kernel(const __grid_constant__ globals<C> g) {
             warpgroup::sync(warpgroup::groupid()+1);
             warpgroup::tma::cluster::arrive(schedule_finished[task_iter%C::CLC_PIPE_DEPTH], 0);
             if (schedule.success) next_tile_coord = get_swizzled_2d_idx<C::SUPERGROUP_SIZE>(rblks, cblks, schedule.x/C::CLUSTER_SIZE);
-            wait(outputs_arrived[warpgroup::groupid()], task_iter%2);
+            wait(outputs_arrived[task_iter%C::MMA_PIPE_DEPTH][warpgroup::groupid()], (task_iter/C::MMA_PIPE_DEPTH)%2);
             if constexpr (C::OVERLAP_MMA_EPI) {
                 rt_bf<C::Mb/8, C::Nb/C::EPI_PIPE_DEPTH> d_reg;
                 #pragma unroll

@@ -129,7 +129,7 @@ __device__ inline void comp_sm(const globals &g) {
 
     __shared__ semaphore inputs_arrived[G::PIPELINE_STAGES], 
                          inputs_finished[G::PIPELINE_STAGES], 
-                         outputs_arrived, 
+                         outputs_arrived[G::MMA_PIPE_DEPTH], 
                          outputs_finished[G::MMA_PIPE_DEPTH];
     int input_ring = 0;
     int mma_ring = 0;
@@ -141,9 +141,9 @@ __device__ inline void comp_sm(const globals &g) {
             init_semaphore(inputs_arrived[i], 0, 1);
             init_semaphore(inputs_finished[i], 0, 1);
         }
-        init_semaphore(outputs_arrived, 0, 1);
         #pragma unroll
         for (int i = 0; i < G::MMA_PIPE_DEPTH; i++) {
+            init_semaphore(outputs_arrived[i], 0, 1);
             init_semaphore(outputs_finished[i], 0, C::CLUSTER_SIZE);
         }
     }
@@ -200,7 +200,7 @@ __device__ inline void comp_sm(const globals &g) {
                     else          mma2_ABt(d_tt[mma_ring], A_smem[input_ring], B_smem[input_ring], inputs_finished[input_ring]);
                     input_ring=ring_advance<G::PIPELINE_STAGES>(input_ring);
                 }
-                kittens::detail::tcgen05::commit<C::CLUSTER_SIZE>(outputs_arrived);
+                kittens::detail::tcgen05::commit<C::CLUSTER_SIZE>(outputs_arrived[mma_ring]);
                 mma_ring=ring_advance<G::MMA_PIPE_DEPTH>(mma_ring);
             }
         }
@@ -236,7 +236,8 @@ __device__ inline void comp_sm(const globals &g) {
                 col_idx = idx_in_shard / num_peer_devices;
             }
 
-            wait(outputs_arrived, mma_ring);
+            wait(outputs_arrived[mma_ring], get_phasebit<0>(bitfield, mma_ring));
+            update_phasebit<0>(bitfield, mma_ring);
             rt_bf<G::ROW_BLOCK/8, G::COL_BLOCK/G::EPI_PIPE_DEPTH> C_reg;
             #pragma unroll
             for(int i = 0; i < G::EPI_PIPE_DEPTH; i++) {
