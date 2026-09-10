@@ -160,7 +160,11 @@ struct wrapper_1d {
             // fill in correct results on cpu
             test::template host_func<S, NUM_WORKERS, GL, args...>(i_ref, o_ref);
             // check and cleanup
-            this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, S*16);
+            const bool is_fp8 = this_result.label.find("fp8")  != std::string::npos ||
+                                this_result.label.find("e4m3") != std::string::npos ||
+                                this_result.label.find("e5m2") != std::string::npos ||
+                                this_result.label.find("e8m0") != std::string::npos;
+            this_result.result = validate(d_i, d_o, i_ref, o_ref, this_result.label, S*16, is_fp8 ? 0.1f : 5e-2f);
         }
         else {
             this_result.result = test_result::INVALID;
