@@ -42,12 +42,12 @@ __device__ static inline void function_name(SV &dst, const PGL &src, const COORD
 }
 #define __KITTENS_TMA_DEFINE_CLUSTER_SEMAPHORE_CACHE_VEC__(function_name) \
 template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>> \
-__device__ static inline void function_name(SV &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask, int dst_mbar_cta=-1) { \
+__device__ static inline void function_name(SV &dst, const GL &src, const COORD &idx, semaphore& bar, cluster_mask_t cluster_mask, int dst_mbar_cta=-1) { \
     function_name<cache_policy::NORMAL>(dst, src, idx, bar, cluster_mask, dst_mbar_cta); \
 }
 #define __KITTENS_TMA_DEFINE_PGL_CLUSTER_SEMAPHORE_CACHE_VEC__(function_name) \
 template<ducks::sv::all SV, ducks::pgl::all PGL, ducks::coord::vec COORD=coord<SV>> \
-__device__ static inline void function_name(SV &dst, const PGL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask, int dst_mbar_cta=-1) { \
+__device__ static inline void function_name(SV &dst, const PGL &src, const COORD &idx, semaphore& bar, cluster_mask_t cluster_mask, int dst_mbar_cta=-1) { \
     function_name<cache_policy::NORMAL>(dst, src, idx, bar, cluster_mask, dst_mbar_cta); \
 }
 
@@ -188,7 +188,7 @@ template<cache_policy policy> __device__ static inline void vec_load_async_tma_i
 }
 
 namespace cluster {
-template<cache_policy policy> __device__ static inline void vec_load_async_tma_internal(uint64_t tma_ptr, uint32_t dst_i_ptr, uint32_t mbar_ptr, coord<> tma_coord, uint16_t cluster_mask, int dst_mbar_cta=-1) {
+template<cache_policy policy> __device__ static inline void vec_load_async_tma_internal(uint64_t tma_ptr, uint32_t dst_i_ptr, uint32_t mbar_ptr, coord<> tma_coord, cluster_mask_t cluster_mask, int dst_mbar_cta=-1) {
 #ifdef KITTENS_SM10X
     if(dst_mbar_cta != -1) {
         uint32_t neighbor_mbar_ptr;
@@ -199,21 +199,21 @@ template<cache_policy policy> __device__ static inline void vec_load_async_tma_i
         );
         if constexpr (policy == cache_policy::NORMAL) {
             asm volatile (
-                "cp.async.bulk.tensor.4d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.cta_group::2.multicast::cluster"
+                "cp.async.bulk.tensor.4d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.cta_group::2.multicast::cluster" KITTENS_MCAST_SUFFIX
                 " [%0], [%1, {%3, %4, %5, %6}], [%2], %7;"
                 :
                 : "r"(dst_i_ptr), "l"(tma_ptr), "r"(neighbor_mbar_ptr),
-                "r"(tma_coord.c), "r"(tma_coord.r), "r"(tma_coord.d), "r"(tma_coord.b), "h"(cluster_mask)
+                "r"(tma_coord.c), "r"(tma_coord.r), "r"(tma_coord.d), "r"(tma_coord.b), KITTENS_MCAST_OPERAND(cluster_mask)
                 : "memory"
             );
         }
         else {
             asm volatile (
-                "cp.async.bulk.tensor.4d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.cta_group::2.multicast::cluster.L2::cache_hint"
+                "cp.async.bulk.tensor.4d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.cta_group::2.multicast::cluster" KITTENS_MCAST_SUFFIX ".L2::cache_hint"
                 " [%0], [%1, {%3, %4, %5, %6}], [%2], %7, %8;"
                 :
                 : "r"(dst_i_ptr), "l"(tma_ptr), "r"(neighbor_mbar_ptr),
-                "r"(tma_coord.c), "r"(tma_coord.r), "r"(tma_coord.d), "r"(tma_coord.b), "h"(cluster_mask), "l"(make_cache_policy<policy>())
+                "r"(tma_coord.c), "r"(tma_coord.r), "r"(tma_coord.d), "r"(tma_coord.b), KITTENS_MCAST_OPERAND(cluster_mask), "l"(make_cache_policy<policy>())
                 : "memory"
             );
         }
@@ -221,21 +221,21 @@ template<cache_policy policy> __device__ static inline void vec_load_async_tma_i
 #endif
     if constexpr (policy == cache_policy::NORMAL) {
         asm volatile (
-            "cp.async.bulk.tensor.4d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster"
+            "cp.async.bulk.tensor.4d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster" KITTENS_MCAST_SUFFIX
             " [%0], [%1, {%3, %4, %5, %6}], [%2], %7;"
             :
             : "r"(dst_i_ptr), "l"(tma_ptr), "r"(mbar_ptr),
-            "r"(tma_coord.c), "r"(tma_coord.r), "r"(tma_coord.d), "r"(tma_coord.b), "h"(cluster_mask)
+            "r"(tma_coord.c), "r"(tma_coord.r), "r"(tma_coord.d), "r"(tma_coord.b), KITTENS_MCAST_OPERAND(cluster_mask)
             : "memory"
         );
     }
     else {
         asm volatile (
-            "cp.async.bulk.tensor.4d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster.L2::cache_hint"
+            "cp.async.bulk.tensor.4d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster" KITTENS_MCAST_SUFFIX ".L2::cache_hint"
             " [%0], [%1, {%3, %4, %5, %6}], [%2], %7, %8;"
             :
             : "r"(dst_i_ptr), "l"(tma_ptr), "r"(mbar_ptr),
-            "r"(tma_coord.c), "r"(tma_coord.r), "r"(tma_coord.d), "r"(tma_coord.b), "h"(cluster_mask), "l"(make_cache_policy<policy>())
+            "r"(tma_coord.c), "r"(tma_coord.r), "r"(tma_coord.d), "r"(tma_coord.b), KITTENS_MCAST_OPERAND(cluster_mask), "l"(make_cache_policy<policy>())
             : "memory"
         );
     }
@@ -400,7 +400,7 @@ __KITTENS_TMA_DEFINE_SEMAPHORE_CACHE_VEC__(load_async)
 
 namespace cluster {
 template<cache_policy policy, ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
-__device__ static inline void load_async(SV &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask, int dst_mbar_cta=-1) {
+__device__ static inline void load_async(SV &dst, const GL &src, const COORD &idx, semaphore& bar, cluster_mask_t cluster_mask, int dst_mbar_cta=-1) {
     coord<> unit_coord = idx.template unit_coord<-1, 3>();
     uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.template get_tma<SV, -1>());
     uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));

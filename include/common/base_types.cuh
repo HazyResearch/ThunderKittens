@@ -30,6 +30,18 @@ using int8 = signed char;
 using uint8 = unsigned char;
 
 /**
+ * @brief CTA-rank mask type used by cluster multicast operations.
+ *
+ * SM107 adds 32-bit multicast-mask instruction forms. Earlier architectures
+ * retain the original 16-bit API and operand width.
+ */
+#ifdef KITTENS_SM107
+using cluster_mask_t = uint32_t;
+#else
+using cluster_mask_t = uint16_t;
+#endif
+
+/**
  * @brief Packed word of two bfloat16 floating-point values.
  */
 using bf16_2 = __nv_bfloat162;

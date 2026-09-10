@@ -14,6 +14,11 @@ namespace kittens {
 
 constexpr int MAX_TENSOR_ROWS = 128;
 constexpr int MAX_TENSOR_COLS = 512;
+#ifdef KITTENS_SM107
+constexpr int MAX_TENSOR_COLS_EXCLUSIVE = 576;
+#else
+constexpr int MAX_TENSOR_COLS_EXCLUSIVE = MAX_TENSOR_COLS;
+#endif
 
 namespace ducks {
 /**

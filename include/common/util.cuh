@@ -5,6 +5,17 @@
 
 #pragma once
 
+// SM107 multicast instructions require the explicit ::32b suffix and a 32-bit register operand.
+// Earlier architectures use the implicit 16-bit form and a half-register operand. Keep the
+// instruction suffix and inline-assembly operand constraint paired through these macros.
+#ifdef KITTENS_SM107
+#define KITTENS_MCAST_SUFFIX "::32b"
+#define KITTENS_MCAST_OPERAND(mask) "r"(mask)
+#else
+#define KITTENS_MCAST_SUFFIX ""
+#define KITTENS_MCAST_OPERAND(mask) "h"(mask)
+#endif
+
 /**
  * @namespace kittens
  *
@@ -69,6 +80,11 @@ constexpr int MAX_SHARED_MEMORY = 163 * 1024;
 constexpr int MAX_SHARED_MEMORY = 227 * 1024;
 #elif defined(KITTENS_SM120)
 constexpr int MAX_SHARED_MEMORY = 99 * 1024;
+#endif
+#ifdef KITTENS_SM107
+constexpr int MAX_SHARED_MEMORY_OVERSIZED = 327 * 1024;
+#else
+constexpr int MAX_SHARED_MEMORY_OVERSIZED = MAX_SHARED_MEMORY;
 #endif
 
 struct transpose {
@@ -371,9 +387,10 @@ __device__ static inline int cluster_nctarank() {
  * @param linear_idx Linear task index
  * @tparam SUPERGROUP_SIZE Supergroup extent (columns if row-major, rows if column-major)
  * @tparam ROW_MAJOR Select row-major or column-major swizzle
+ * @tparam SERPENTINE Reverse traversal direction in alternating supergroups
  * @return int2 {row_idx, col_idx}
  */
-template <int SUPERGROUP_SIZE, bool ROW_MAJOR = true>
+template <int SUPERGROUP_SIZE, bool ROW_MAJOR = true, bool SERPENTINE = true>
 __device__ static inline int2 get_swizzled_2d_idx(const int num_rows, const int num_cols, const int linear_idx) {
     static_assert(SUPERGROUP_SIZE > 0, "SUPERGROUP_SIZE must be greater than 0");
     if constexpr (ROW_MAJOR) {
@@ -391,7 +408,7 @@ __device__ static inline int2 get_swizzled_2d_idx(const int num_rows, const int 
             row_idx = remainder_task_id/finalsection_cols;
             col_idx = supersection_cols + remainder_task_id%finalsection_cols;
         }
-        return { (supergroup_idx&1) ? num_rows-row_idx-1 : row_idx, col_idx };
+        return { (SERPENTINE && (supergroup_idx&1)) ? num_rows-row_idx-1 : row_idx, col_idx };
     } else {
         const int supergroup_numel = num_cols*SUPERGROUP_SIZE;
         const int supergroup_idx = linear_idx/supergroup_numel;
@@ -407,7 +424,7 @@ __device__ static inline int2 get_swizzled_2d_idx(const int num_rows, const int 
             row_idx = supersection_rows + remainder_task_id%finalsection_rows;
             col_idx = remainder_task_id/finalsection_rows;
         }
-        return { row_idx, (supergroup_idx&1) ? num_cols-col_idx-1 : col_idx };
+        return { row_idx, (SERPENTINE && (supergroup_idx&1)) ? num_cols-col_idx-1 : col_idx };
     }
 }
 

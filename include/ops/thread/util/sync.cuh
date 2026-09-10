@@ -274,7 +274,7 @@ __device__ inline static void tensor_store_wait() {
 }
 
 template <int ncta>
-__device__ static inline void tensor_commit(kittens::semaphore &sem, uint16_t dst_cta_mask = 0b11) {
+__device__ static inline void tensor_commit(kittens::semaphore &sem, kittens::cluster_mask_t dst_cta_mask = 0b11) {
     if constexpr (ncta == 1) {
         asm volatile(
             "tcgen05.commit.cta_group::1.mbarrier::arrive::one.b64 [%0];\n"
@@ -282,10 +282,27 @@ __device__ static inline void tensor_commit(kittens::semaphore &sem, uint16_t ds
     }
     else {
         asm volatile(
-            "tcgen05.commit.cta_group::2.mbarrier::arrive::one.shared::cluster.multicast::cluster.b64 [%0], %1;\n"
-        ::  "l"(__cvta_generic_to_shared(&sem)), "h"(dst_cta_mask));
+            "tcgen05.commit.cta_group::2.mbarrier::arrive::one.shared::cluster.multicast::cluster" KITTENS_MCAST_SUFFIX ".b64 [%0], %1;\n"
+        ::  "l"(__cvta_generic_to_shared(&sem)), KITTENS_MCAST_OPERAND(dst_cta_mask));
     }
 }
+
+#ifdef KITTENS_SM107
+// Arrives when all prior tcgen05.mma operations have finished reading A from shared memory
+template <int ncta>
+__device__ static inline void tensor_aread_commit(kittens::semaphore &sem, kittens::cluster_mask_t dst_cta_mask = 0b11) {
+    if constexpr (ncta == 1) {
+        asm volatile(
+            "tcgen05.commit.cta_group::1.mbarrier::arrive::one.sync_restrict::shared::read::mma::a.b64 [%0];\n"
+        ::  "l"(__cvta_generic_to_shared(&sem)));
+    }
+    else {
+        asm volatile(
+            "tcgen05.commit.cta_group::2.mbarrier::arrive::one.sync_restrict::shared::read::mma::a.shared::cluster.multicast::cluster" KITTENS_MCAST_SUFFIX ".b64 [%0], %1;\n"
+        ::  "l"(__cvta_generic_to_shared(&sem)), KITTENS_MCAST_OPERAND(dst_cta_mask));
+    }
+}
+#endif
 
 #endif
 

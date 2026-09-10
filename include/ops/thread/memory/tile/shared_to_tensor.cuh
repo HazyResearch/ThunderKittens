@@ -13,15 +13,22 @@ __device__ inline static void load_mxnv_scale_async(TT &dst, const ST &src) {
     static_assert(std::is_same_v<typename TT::T, kittens::fp8e8m0> || std::is_same_v<typename TT::T, kittens::fp8e4m3>, "Scale TT must be fp8e8m0 or fp8e4m3");
     static_assert(std::is_same_v<typename TT::T, typename ST::T>, "Scale TT and ST must have the same type");
     static_assert(TT::rows == 128 && TT::cols == 16, "Tensor memory scale tile must always be 128x16");
-    static_assert(ST::rows == 32 && ST::cols == 16, "Shared memory scale tile must always be 32x16");
+    static_assert((ST::rows == 32 || ST::rows == 128) && ST::cols == 16, "Shared memory scale tile must be 32x16 or 128x16");
+    static_assert(ST::rows == 32 || std::is_same_v<typename ST::T, kittens::fp8e4m3>, "128x16 scale tile must be fp8e4m3");
     static_assert(!ST::swizzle, "Shared memory scale tile must not be TMA-swizzled");
 
     uint64_t st_desc = kittens::detail::matrix_descriptor_raw(&src.data[0], 128, 128, 0);
 
     if constexpr (ncta == 1) {
-        asm volatile("{tcgen05.cp.cta_group::1.32x128b.warpx4 [%0], %1;}" :: "r"(dst.addr), "l"(st_desc));
+        if constexpr (ST::rows == 128)
+            asm volatile("{tcgen05.cp.cta_group::1.128x128b [%0], %1;}" :: "r"(dst.addr), "l"(st_desc));
+        else
+            asm volatile("{tcgen05.cp.cta_group::1.32x128b.warpx4 [%0], %1;}" :: "r"(dst.addr), "l"(st_desc));
     } else {
-        asm volatile("{tcgen05.cp.cta_group::2.32x128b.warpx4 [%0], %1;}" :: "r"(dst.addr), "l"(st_desc));
+        if constexpr (ST::rows == 128)
+            asm volatile("{tcgen05.cp.cta_group::2.128x128b [%0], %1;}" :: "r"(dst.addr), "l"(st_desc));
+        else
+            asm volatile("{tcgen05.cp.cta_group::2.32x128b.warpx4 [%0], %1;}" :: "r"(dst.addr), "l"(st_desc));
     }
 }
 template<int ncta=1, kittens::ducks::tt::full TT, kittens::ducks::st::all ST>

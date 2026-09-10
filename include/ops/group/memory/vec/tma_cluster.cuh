@@ -16,7 +16,7 @@
  * @param[in] cluster_mask The mask of the clusters to broadcast to.
  */
  template<cache_policy policy, ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>>
- __device__ static inline void load_async(SV &dst, const GL &src, const COORD &idx, semaphore& bar, uint16_t cluster_mask, int dst_mbar_cta=-1) {
+ __device__ static inline void load_async(SV &dst, const GL &src, const COORD &idx, semaphore& bar, cluster_mask_t cluster_mask, int dst_mbar_cta=-1) {
      coord<> unit_coord = idx.template unit_coord<-1, 3>();
      uint64_t tma_ptr  = reinterpret_cast<uint64_t>(src.template get_tma<SV, -1>());
      uint32_t mbar_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(&bar));

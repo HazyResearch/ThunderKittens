@@ -2,7 +2,7 @@
 # If you want to run lots of tests without parallel compilation, be prepared
 # to spend a *long* time compiling. (like, HOURS single-threaded.)
 
-# Architecture Selection: Set to SM80, SM90, SM100, SM103, or SM120
+# Architecture Selection: Set to SM80, SM90, SM100, SM103, SM107, or SM120
 ARCH=SM90
 COMP_LEVEL=fast
 
@@ -40,6 +40,8 @@ else ifeq ($(ARCH),SM100)
 NVCCFLAGS+= -gencode arch=compute_100a,code=sm_100a -DKITTENS_SM100 -lcuda -lcudart
 else ifeq ($(ARCH),SM103)
 NVCCFLAGS+= -gencode arch=compute_103a,code=sm_103a -DKITTENS_SM103 -lcuda -lcudart
+else ifeq ($(ARCH),SM107)
+NVCCFLAGS+= -gencode arch=compute_107a,code=sm_107a -DKITTENS_SM107 -lcuda -lcudart
 else ifeq ($(ARCH),SM120)
 NVCCFLAGS+= -gencode arch=compute_120a,code=sm_120a -DKITTENS_SM120 -lcuda -lcudart
 endif

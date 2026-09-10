@@ -168,9 +168,14 @@ __device__ static inline void hmma16816(      float2 &d0,       float2 &d1,
         "{%8, %9}, "
         "{%10, %11, %12, %13};"
         
-        // D matrix (output)
+        // CUDA 13 ptxas miscompiles expanded SM10x FP8 MMA when D aliases a C input.
+#if defined(KITTENS_SM10X) && defined(__CUDACC_VER_MAJOR__) && __CUDACC_VER_MAJOR__ >= 13
+        : "=&f"(d0.x), "=&f"(d0.y),
+          "=&f"(d1.x), "=&f"(d1.y)
+#else
         : "+f"(d0.x), "+f"(d0.y),
           "+f"(d1.x), "+f"(d1.y)
+#endif
         
         // A matrix
         : "r"(*(uint32_t*)(&a0)), "r"(*(uint32_t*)(&a1)),
@@ -185,6 +190,7 @@ __device__ static inline void hmma16816(      float2 &d0,       float2 &d1,
     );
 }
 #endif
+
 /**
  * @brief Perform the IMMA.16832 operation for 8-bit integer inputs.
  *

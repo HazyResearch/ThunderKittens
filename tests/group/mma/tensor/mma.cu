@@ -245,6 +245,51 @@ static void run_type(test_data &results, const std::string &type_name) {
     run_one<T, true,  false, true,  true >(results, "tcgen05_tt_st_mma_ABt=" + type_name);
 }
 
+template<typename T>
+static T *copy_to_device(const std::vector<T> &host) {
+    T *device;
+    cudaMalloc(&device, host.size() * sizeof(T));
+    cudaMemcpy(device, host.data(), host.size() * sizeof(T), cudaMemcpyHostToDevice);
+    CudaCheckError();
+    return device;
+}
+
+template<typename T>
+static T *zero_on_device(size_t count) {
+    T *device;
+    cudaMalloc(&device, count * sizeof(T));
+    cudaMemset(device, 0, count * sizeof(T));
+    CudaCheckError();
+    return device;
+}
+
+template<typename T>
+static void check_output(
+    test_data &results,
+    const std::string &label,
+    T *d_o,
+    std::vector<T> &h_o,
+    const std::vector<T> &h_ref,
+    float tolerance
+) {
+    cudaMemcpy(h_o.data(), d_o, h_o.size() * sizeof(T), cudaMemcpyDeviceToHost);
+    CudaCheckError();
+
+    int bad_idx = -1;
+    for (int i = 0; i < h_o.size(); i++) {
+        if (std::abs(h_o[i] - h_ref[i]) > tolerance) {
+            bad_idx = i;
+            break;
+        }
+    }
+    std::cout << "test `" << label << "`";
+    if (bad_idx < 0) std::cout << " -- PASSED" << std::endl;
+    else             std::cout << " ----- ALERT! FAILED test `" << label
+                               << "` first mismatch got " << h_o[bad_idx]
+                               << " expected " << h_ref[bad_idx] << " -----" << std::endl;
+    results.push_back({label, bad_idx < 0 ? test_result::PASSED : test_result::FAILED});
+}
+
 #ifdef KITTENS_SM10X
 using fp4_packed = kittens::fp4e2m1_2;
 
@@ -312,6 +357,7 @@ __global__ void tcgen05_nvfp4_k64_wrapper(
             sb_smem[atom].data[idx] = k64_scale_value<Scale>(1);
         }
     }
+    asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
     __syncthreads();
 
     kittens::tensor_allocator<1, 1> tm_alloc{};
@@ -351,9 +397,8 @@ template<typename Scale>
 static void run_nvfp4_k64(test_data &results) {
     constexpr int M = 128;
     constexpr int N = 256;
-    test_info this_result;
     const std::string scale_name = std::is_same_v<Scale, kittens::fp8e4m3> ? "e4m3" : "e8m0";
-    this_result.label = "tcgen05_st_st_mm_ABt_k64=nvfp4_" + scale_name;
+    const std::string label = "tcgen05_st_st_mm_ABt_k64=nvfp4_" + scale_name;
 
     const fp4_packed one = std::bit_cast<fp4_packed>(uint8_t(0x22));
     std::vector<fp4_packed> h_a(M * NVFP4_K64_PACKED, one);
@@ -361,16 +406,9 @@ static void run_nvfp4_k64(test_data &results) {
     std::vector<float> h_o(M * N, 0.0f);
     std::vector<float> h_ref(M * N, 64.0f * 1.0f + 64.0f * 2.0f);
 
-    fp4_packed *d_a, *d_b;
-    float *d_o;
-    cudaMalloc(&d_a, h_a.size() * sizeof(fp4_packed));
-    cudaMalloc(&d_b, h_b.size() * sizeof(fp4_packed));
-    cudaMalloc(&d_o, h_o.size() * sizeof(float));
-    CudaCheckError();
-    cudaMemcpy(d_a, h_a.data(), h_a.size() * sizeof(fp4_packed), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_b, h_b.data(), h_b.size() * sizeof(fp4_packed), cudaMemcpyHostToDevice);
-    cudaMemset(d_o, 0, h_o.size() * sizeof(float));
-    CudaCheckError();
+    fp4_packed *d_a = copy_to_device(h_a);
+    fp4_packed *d_b = copy_to_device(h_b);
+    float *d_o = zero_on_device<float>(h_o.size());
 
     using A_ST = kittens::st<fp4_packed, M, NVFP4_K64_PACKED>;
     using B_ST = kittens::st<fp4_packed, N, NVFP4_K64_PACKED>;
@@ -390,57 +428,76 @@ static void run_nvfp4_k64(test_data &results) {
         dim3(1), dim3(kittens::group<4>::GROUP_THREADS), kittens::MAX_SHARED_MEMORY - 1024
     >>>(a_gl, b_gl, o_gl);
     CudaCheckError();
-    cudaMemcpy(h_o.data(), d_o, h_o.size() * sizeof(float), cudaMemcpyDeviceToHost);
-    CudaCheckError();
-
-    bool good = true;
-    int bad_idx = -1;
-    for (int i = 0; i < h_o.size(); i++) {
-        if (std::abs(h_o[i] - h_ref[i]) > NVFP4_K64_TOL) {
-            good = false;
-            bad_idx = i;
-            break;
-        }
-    }
-    std::cout << "test `" << this_result.label << "`";
-    if(good) std::cout << " -- PASSED" << std::endl;
-    else     std::cout << " ----- ALERT! FAILED test `" << this_result.label
-                       << "` first mismatch got " << h_o[bad_idx]
-                       << " expected " << h_ref[bad_idx] << " -----" << std::endl;
+    check_output(results, label, d_o, h_o, h_ref, NVFP4_K64_TOL);
 
     cudaFree(d_a);
     cudaFree(d_b);
     cudaFree(d_o);
     CudaCheckError();
-    this_result.result = good ? test_result::PASSED : test_result::FAILED;
-    results.push_back(this_result);
 }
 #endif
 
-#ifdef KITTENS_SM103
+#if defined(KITTENS_SM103) || defined(KITTENS_SM107)
 using nvfp4_scale = kittens::fp8e8m0;
-constexpr float NVFP4_K96_TOL = 1e-3f;
+constexpr float NVFP4_E8_TOL = 1e-3f;
 constexpr int NVFP4_K96_MMAS = 8;
-constexpr int NVFP4_K96_LOGICAL = 96 * NVFP4_K96_MMAS;
-constexpr int NVFP4_K96_PACKED = NVFP4_K96_LOGICAL / 2;
+constexpr int NVFP4_K96_PACKED = 48 * NVFP4_K96_MMAS;
 constexpr int NVFP4_K96_SCALE_COLS = 16 * NVFP4_K96_MMAS;
 
-template<bool ACC, kittens::ducks::gl::all GL_A, kittens::ducks::gl::all GL_B, kittens::ducks::gl::all GL_O>
-__cluster_dims__(2, 1, 1) __launch_bounds__(kittens::group<4>::GROUP_THREADS)
-__global__ void tcgen05_nvfp4_k96_wrapper(
-    const __grid_constant__ GL_A a_gl,
-    const __grid_constant__ GL_B b_gl,
-    const __grid_constant__ GL_O o_gl
+using k96_compat_a = kittens::st<fp4_packed, 128, NVFP4_K96_PACKED>;
+using k96_compat_b1 = kittens::st<fp4_packed, 256, NVFP4_K96_PACKED>;
+using k96_compat_b2 = kittens::st<fp4_packed, 128, NVFP4_K96_PACKED>;
+using k96_compat_d = kittens::tt<float, 128, 256>;
+using k96_compat_sa = kittens::full_tt_fp8e8m0<NVFP4_K96_SCALE_COLS>;
+using k96_compat_sb = kittens::full_tt_fp8e8m0<2 * NVFP4_K96_SCALE_COLS>;
+
+[[maybe_unused]] __device__ static inline void compile_block_scaled_api_compat(
+    k96_compat_d &d, const k96_compat_a &a, const k96_compat_b1 &b1, const k96_compat_b2 &b2,
+    const k96_compat_sa &sa, const k96_compat_sb &sb, kittens::semaphore &sem
 ) {
+    kittens::mm_ABt<48>(d, a, b1, sa, sb, sem);
+    kittens::mma_ABt<48>(d, a, b1, sa, sb, sem);
+    kittens::mm2_ABt<48>(d, a, b2, sa, sb, sem);
+    kittens::mma2_ABt<48>(d, a, b2, sa, sb, sem);
+    kittens::mm_ABt<48>(d, a, b1, sa, sb);
+    kittens::mma_ABt<48>(d, a, b1, sa, sb);
+    kittens::mm2_ABt<48>(d, a, b2, sa, sb);
+    kittens::mma2_ABt<48>(d, a, b2, sa, sb);
+    kittens::group<4>::mm_ABt<48>(d, a, b1, sa, sb, sem);
+    kittens::group<4>::mma_ABt<48>(d, a, b1, sa, sb, sem);
+    kittens::group<4>::mm2_ABt<48>(d, a, b2, sa, sb, sem);
+    kittens::group<4>::mma2_ABt<48>(d, a, b2, sa, sb, sem);
+    kittens::group<4>::mm_ABt<48>(d, a, b1, sa, sb);
+    kittens::group<4>::mma_ABt<48>(d, a, b1, sa, sb);
+    kittens::group<4>::mm2_ABt<48>(d, a, b2, sa, sb);
+    kittens::group<4>::mma2_ABt<48>(d, a, b2, sa, sb);
+#if defined(KITTENS_SM103) || defined(KITTENS_SM107)
+    kittens::st_descriptor<k96_compat_a, 0> a_desc(a);
+    (void)a_desc.chunk_descriptor_k96(0);
+#endif
+}
+
+template<int MMA_K_BYTES, int MMAS, int CTA_COUNT, bool ACC, kittens::ducks::gl::all GL_A, kittens::ducks::gl::all GL_B, kittens::ducks::gl::all GL_O>
+__device__ static inline void tcgen05_nvfp4_e8(
+    const GL_A a_gl,
+    const GL_B b_gl,
+    const GL_O o_gl
+) {
+    static_assert(CTA_COUNT == 1 || CTA_COUNT == 2);
     constexpr int M = 128;
     constexpr int N = 256;
+    constexpr int K_PACKED = MMA_K_BYTES * MMAS;
+    constexpr int SCALE_COLS = 16 * MMAS;
     using G = kittens::group<4>;
-    using A_ST = kittens::st<fp4_packed, M, NVFP4_K96_PACKED>;
-    using B_ST = kittens::st<fp4_packed, N / 2, NVFP4_K96_PACKED>;
+    using A_ST = kittens::st<fp4_packed, M, K_PACKED>;
+    using B_ST = kittens::st<fp4_packed, N / CTA_COUNT, K_PACKED>;
     using D_TT = kittens::tt<float, M, N>;
     using D_RT = kittens::rt<float, M / G::GROUP_WARPS, N>;
-    using S_ST = kittens::st<nvfp4_scale, 32, NVFP4_K96_SCALE_COLS, false>;
+    using D_GROUP_RT = kittens::rt<float, G::GROUP_WARPS * D_RT::rows, D_RT::cols>;
+    using S_ST = kittens::st<nvfp4_scale, 32, SCALE_COLS, false>;
     using S_ATOM_ST = kittens::st<nvfp4_scale, 32, 16, false>;
+    using SA_TT = kittens::full_tt_fp8e8m0<SCALE_COLS>;
+    using SB_TT = kittens::full_tt_fp8e8m0<2 * SCALE_COLS>;
 
     extern __shared__ kittens::alignment_dummy __shm[];
     kittens::tma_swizzle_allocator al((int*)&__shm[0]);
@@ -449,23 +506,24 @@ __global__ void tcgen05_nvfp4_k96_wrapper(
     S_ST (&sa_smem) = al.allocate<S_ST>();
     S_ST (&sb_smem) = al.allocate<S_ST>();
 
-    const int cta_id = kittens::cluster_ctarank();
+    const int cta_id = CTA_COUNT == 2 ? kittens::cluster_ctarank() : 0;
     G::load(a_smem, a_gl, kittens::coord<A_ST>{cta_id, 0});
     G::load(b_smem, b_gl, kittens::coord<B_ST>{cta_id, 0});
     for (int idx = threadIdx.x; idx < S_ST::num_elements; idx += blockDim.x) {
-        sa_smem.data[idx] = std::bit_cast<nvfp4_scale>(uint8_t(0x80));
-        sb_smem.data[idx] = std::bit_cast<nvfp4_scale>(uint8_t(0x00));
+        sa_smem.data[idx] = std::bit_cast<nvfp4_scale>(uint8_t(0x80)); // 2.0
+        sb_smem.data[idx] = std::bit_cast<nvfp4_scale>(uint8_t(CTA_COUNT == 2 ? 0x7f : 0x80));
     }
+    asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
     __syncthreads();
 
-    kittens::tensor_allocator<1, 2> tm_alloc{};
+    kittens::tensor_allocator<1, CTA_COUNT> tm_alloc{};
 
     D_TT d_tt = tm_alloc.template allocate<D_TT>(0);
-    auto sa_tt = tm_alloc.template allocate<kittens::full_tt_fp8e8m0<NVFP4_K96_SCALE_COLS>>(256);
-    auto sb_tt = tm_alloc.template allocate<kittens::full_tt_fp8e8m0<2 * NVFP4_K96_SCALE_COLS>>(256 + 4 * NVFP4_K96_MMAS);
+    auto sa_tt = tm_alloc.template allocate<SA_TT>(256);
+    auto sb_tt = tm_alloc.template allocate<SB_TT>(256 + 4 * MMAS);
     if (cta_id == 0 && kittens::warpid() == 0) {
         #pragma unroll
-        for (int i = 0; i < NVFP4_K96_MMAS; ++i) {
+        for (int i = 0; i < MMAS; ++i) {
             auto sa_tt_atom = sa_tt.template subtile<kittens::full_tt_fp8e8m0<16>>(i * 16);
             auto sb_tt_atom_0 = sb_tt.template subtile<kittens::full_tt_fp8e8m0<16>>(i * 32);
             auto sb_tt_atom_1 = sb_tt.template subtile<kittens::full_tt_fp8e8m0<16>>(i * 32 + 16);
@@ -473,9 +531,16 @@ __global__ void tcgen05_nvfp4_k96_wrapper(
                 reinterpret_cast<uint64_t>(&sa_smem.data[0]) + i * 16 * 32);
             auto &sb_smem_atom = *reinterpret_cast<S_ATOM_ST *>(
                 reinterpret_cast<uint64_t>(&sb_smem.data[0]) + i * 16 * 32);
-            load_mxnv_scale_async2(sa_tt_atom, sa_smem_atom);
-            load_mxnv_scale_async2(sb_tt_atom_0, sb_smem_atom);
-            load_mxnv_scale_async2(sb_tt_atom_1, sb_smem_atom);
+            if constexpr (CTA_COUNT == 2) {
+                load_mxnv_scale_async2(sa_tt_atom, sa_smem_atom);
+                load_mxnv_scale_async2(sb_tt_atom_0, sb_smem_atom);
+                load_mxnv_scale_async2(sb_tt_atom_1, sb_smem_atom);
+            }
+            else {
+                load_mxnv_scale_async(sa_tt_atom, sa_smem_atom);
+                load_mxnv_scale_async(sb_tt_atom_0, sb_smem_atom);
+                load_mxnv_scale_async(sb_tt_atom_1, sb_smem_atom);
+            }
         }
         kittens::tensor_store_wait();
     }
@@ -484,80 +549,201 @@ __global__ void tcgen05_nvfp4_k96_wrapper(
     __shared__ kittens::semaphore sem;
     kittens::warp::init_semaphore(sem, 0, 1);
     __syncthreads();
+    if constexpr (CTA_COUNT == 2) kittens::everyone::tma::cluster::sync();
 
+    if (cta_id == 0 && kittens::warpid() == 0) {
+        if constexpr (CTA_COUNT == 2) G::mm2_ABt<MMA_K_BYTES>(d_tt, a_smem, b_smem, sa_tt, sb_tt, sem);
+        else                          G::mm_ABt<MMA_K_BYTES> (d_tt, a_smem, b_smem, sa_tt, sb_tt, sem);
+    }
+    kittens::wait(sem, 0);
     if constexpr (ACC) {
         if (cta_id == 0 && kittens::warpid() == 0) {
-            G::mm2_ABt<48>(d_tt, a_smem, b_smem, sa_tt, sb_tt, sem);
-        }
-        kittens::wait(sem, 0);
-        if (cta_id == 0 && kittens::warpid() == 0) {
-            G::mma2_ABt<48>(d_tt, a_smem, b_smem, sa_tt, sb_tt, sem);
+            if constexpr (CTA_COUNT == 2) G::mma2_ABt<MMA_K_BYTES>(d_tt, a_smem, b_smem, sa_tt, sb_tt, sem);
+            else                          G::mma_ABt<MMA_K_BYTES> (d_tt, a_smem, b_smem, sa_tt, sb_tt, sem);
         }
         kittens::wait(sem, 1);
-    }
-    else {
-        if (cta_id == 0 && kittens::warpid() == 0) {
-            G::mm2_ABt<48>(d_tt, a_smem, b_smem, sa_tt, sb_tt, sem);
-        }
-        kittens::wait(sem, 0);
     }
 
     D_RT d_reg;
     G::load_async(d_reg, d_tt);
     kittens::tensor_load_wait();
-    G::store(o_gl, d_reg, kittens::coord<D_RT>{cta_id, 0});
+    if constexpr (CTA_COUNT == 2) G::store(o_gl, d_reg, kittens::coord<D_GROUP_RT>{cta_id, 0});
+    else                          G::store(o_gl, d_reg, kittens::coord<D_RT>{0, 0});
 }
 
-template<bool ACC, kittens::ducks::gl::all GL_A, kittens::ducks::gl::all GL_B, kittens::ducks::gl::all GL_O>
+template<int MMA_K_BYTES, int MMAS, bool ACC, kittens::ducks::gl::all GL_A, kittens::ducks::gl::all GL_B, kittens::ducks::gl::all GL_O>
+__cluster_dims__(2, 1, 1) __launch_bounds__(kittens::group<4>::GROUP_THREADS)
+__global__ void tcgen05_nvfp4_e8_2cta_wrapper(
+    const __grid_constant__ GL_A a_gl,
+    const __grid_constant__ GL_B b_gl,
+    const __grid_constant__ GL_O o_gl
+) {
+    tcgen05_nvfp4_e8<MMA_K_BYTES, MMAS, 2, ACC>(a_gl, b_gl, o_gl);
+}
+
+template<int MMA_K_BYTES, int MMAS, bool ACC, kittens::ducks::gl::all GL_A, kittens::ducks::gl::all GL_B, kittens::ducks::gl::all GL_O>
 __launch_bounds__(kittens::group<4>::GROUP_THREADS)
-__global__ void tcgen05_nvfp4_k96_1cta_wrapper(
+__global__ void tcgen05_nvfp4_e8_1cta_wrapper(
+    const __grid_constant__ GL_A a_gl,
+    const __grid_constant__ GL_B b_gl,
+    const __grid_constant__ GL_O o_gl
+) {
+    tcgen05_nvfp4_e8<MMA_K_BYTES, MMAS, 1, ACC>(a_gl, b_gl, o_gl);
+}
+
+template<int MMA_K_BYTES, int MMAS, int CTA_COUNT, bool ACC>
+static void run_nvfp4_e8_case(test_data &results) {
+    static_assert(CTA_COUNT == 1 || CTA_COUNT == 2);
+    constexpr int N = 256;
+    constexpr int M = 128 * CTA_COUNT;
+    constexpr int K_LOGICAL = 2 * MMA_K_BYTES * MMAS;
+    constexpr int K_PACKED = MMA_K_BYTES * MMAS;
+    const std::string op = ACC ? "mma" : "mm";
+    const std::string cta = CTA_COUNT == 2 ? "2" : "";
+    const std::string label = "tcgen05_st_st_" + op + cta + "_ABt_k" + std::to_string(2 * MMA_K_BYTES) + "=nvfp4_e8m0";
+
+    const fp4_packed one = std::bit_cast<fp4_packed>(uint8_t(0x22));
+    std::vector<fp4_packed> h_a(M * K_PACKED, one);
+    std::vector<fp4_packed> h_b(N * K_PACKED, one);
+    std::vector<float> h_o(M * N, 0.0f);
+    constexpr int scale_product = CTA_COUNT == 2 ? 2 : 4;
+    std::vector<float> h_ref(M * N, float(K_LOGICAL * scale_product * (ACC ? 2 : 1)));
+
+    fp4_packed *d_a = copy_to_device(h_a);
+    fp4_packed *d_b = copy_to_device(h_b);
+    float *d_o = zero_on_device<float>(h_o.size());
+
+    using A_ST = kittens::st<fp4_packed, 128, K_PACKED>;
+    using B_ST = kittens::st<fp4_packed, N / CTA_COUNT, K_PACKED>;
+    using GL_A = kittens::gl<fp4_packed, 1, 1, M, K_PACKED, A_ST>;
+    using GL_B = kittens::gl<fp4_packed, 1, 1, N, K_PACKED, B_ST>;
+    using GL_O = kittens::gl<float, 1, 1, M, N>;
+    GL_A a_gl(d_a, nullptr, nullptr, nullptr, nullptr);
+    GL_B b_gl(d_b, nullptr, nullptr, nullptr, nullptr);
+    GL_O o_gl(d_o, nullptr, nullptr, nullptr, nullptr);
+
+    if constexpr (CTA_COUNT == 2) {
+        cudaFuncSetAttribute(
+            tcgen05_nvfp4_e8_2cta_wrapper<MMA_K_BYTES, MMAS, ACC, GL_A, GL_B, GL_O>,
+            cudaFuncAttributeMaxDynamicSharedMemorySize,
+            kittens::MAX_SHARED_MEMORY - 1024
+        );
+        kittens::LaunchConfig<true> launch_config(
+            dim3(2), dim3(kittens::group<4>::GROUP_THREADS), kittens::MAX_SHARED_MEMORY - 1024, nullptr, dim3(2)
+        );
+        cudaLaunchKernelEx(
+            launch_config, tcgen05_nvfp4_e8_2cta_wrapper<MMA_K_BYTES, MMAS, ACC, GL_A, GL_B, GL_O>, a_gl, b_gl, o_gl
+        );
+    }
+    else {
+        cudaFuncSetAttribute(
+            tcgen05_nvfp4_e8_1cta_wrapper<MMA_K_BYTES, MMAS, ACC, GL_A, GL_B, GL_O>,
+            cudaFuncAttributeMaxDynamicSharedMemorySize,
+            kittens::MAX_SHARED_MEMORY - 1024
+        );
+        tcgen05_nvfp4_e8_1cta_wrapper<MMA_K_BYTES, MMAS, ACC, GL_A, GL_B, GL_O><<<
+            dim3(1), dim3(kittens::group<4>::GROUP_THREADS), kittens::MAX_SHARED_MEMORY - 1024
+        >>>(a_gl, b_gl, o_gl);
+    }
+    CudaCheckError();
+    check_output(results, label, d_o, h_o, h_ref, NVFP4_E8_TOL);
+
+    cudaFree(d_a);
+    cudaFree(d_b);
+    cudaFree(d_o);
+    CudaCheckError();
+}
+
+static void run_nvfp4_k96(test_data &results) {
+    run_nvfp4_e8_case<48, NVFP4_K96_MMAS, 2, false>(results);
+    run_nvfp4_e8_case<48, NVFP4_K96_MMAS, 2, true>(results);
+    run_nvfp4_e8_case<48, NVFP4_K96_MMAS, 1, false>(results);
+    run_nvfp4_e8_case<48, NVFP4_K96_MMAS, 1, true>(results);
+}
+#endif
+
+#ifdef KITTENS_SM107
+constexpr float NVFP4_K128_TOL = 1e-3f;
+constexpr int NVFP4_K128_SF128_MMAS = 2;
+constexpr int NVFP4_K128_SF128_LOGICAL = 128 * NVFP4_K128_SF128_MMAS;
+constexpr int NVFP4_K128_SF128_PACKED = NVFP4_K128_SF128_LOGICAL / 2;
+
+// Layout-discriminating scale values (exact powers of two).
+__host__ __device__ static inline constexpr int k128_sa_log2(int m, int kb) { return (m/32 + kb) % 3; }
+__host__ __device__ static inline constexpr int k128_sb_log2(int n, int kb) { return (n/32 + kb) % 2; }
+__device__ static inline kittens::fp8e4m3 k128_scale_value(int log2v) {
+    return std::bit_cast<kittens::fp8e4m3>(uint8_t(0x38 + (log2v << 3)));
+}
+
+// Fill either the SM107 128-lane A-scale layout or consecutive 32x16 B-scale atoms.
+template<int DIM, bool IS_A, kittens::ducks::st::all S_ST>
+__device__ static inline void k128_fill_scales(S_ST &s_smem) {
+    for (int idx = threadIdx.x; idx < S_ST::num_elements; idx += blockDim.x) {
+        if constexpr (IS_A) {
+            s_smem.data[idx] = k128_scale_value(k128_sa_log2(idx / 16, idx % 16));
+        }
+        else {
+            const int i = (idx >> 4) % 32, c = 4*(idx >> 9) + ((idx >> 2) & 3), b = idx & 3;
+            const int region = 2 * (DIM/32);                                       // word-columns per MMA
+            const int j = c / region, lc = c % region;
+            const int mn = 32*(lc % (DIM/32)) + i, kb = 4*(2*j + lc/(DIM/32)) + b; // matrix row/col, 16-elem block index
+            s_smem.data[idx] = k128_scale_value(k128_sb_log2(mn, kb));
+        }
+    }
+}
+
+template<
+    kittens::ducks::gl::all GL_A,
+    kittens::ducks::gl::all GL_B,
+    kittens::ducks::gl::all GL_O
+>
+__launch_bounds__(kittens::group<4>::GROUP_THREADS)
+__global__ void tcgen05_nvfp4_k128_1cta_wrapper(
     const __grid_constant__ GL_A a_gl,
     const __grid_constant__ GL_B b_gl,
     const __grid_constant__ GL_O o_gl
 ) {
     constexpr int M = 128;
     constexpr int N = 256;
+    constexpr int A_SCALE_COLS = 16;
+    constexpr int B_SCALE_COLS = 32 * 2 * NVFP4_K128_SF128_MMAS;
+    using Scale = kittens::fp8e4m3;
     using G = kittens::group<4>;
-    using A_ST = kittens::st<fp4_packed, M, NVFP4_K96_PACKED>;
-    using B_ST = kittens::st<fp4_packed, N, NVFP4_K96_PACKED>;
+    using A_ST = kittens::st<fp4_packed, M, NVFP4_K128_SF128_PACKED>;
+    using B_ST = kittens::st<fp4_packed, N, NVFP4_K128_SF128_PACKED>;
     using D_TT = kittens::tt<float, M, N>;
     using D_RT = kittens::rt<float, M / G::GROUP_WARPS, N>;
-    using S_ST = kittens::st<nvfp4_scale, 32, NVFP4_K96_SCALE_COLS, false>;
-    using S_ATOM_ST = kittens::st<nvfp4_scale, 32, 16, false>;
+    using D_GROUP_RT = kittens::rt<float, G::GROUP_WARPS * D_RT::rows, D_RT::cols>;
+    using S_ATOM_ST = kittens::st<Scale, 32, 16, false>;
+    using SA_ST = kittens::st<Scale, kittens::MAX_TENSOR_ROWS, 16, false>;
+    using SA_TT = kittens::full_tt_fp8e4m3<16>;
+    using SB_TT = kittens::tt<Scale, kittens::MAX_TENSOR_ROWS, B_SCALE_COLS>;
+    using S_ATOM_TT = kittens::tt<Scale, kittens::MAX_TENSOR_ROWS, 16>;
 
     extern __shared__ kittens::alignment_dummy __shm[];
     kittens::tma_swizzle_allocator al((int*)&__shm[0]);
     A_ST (&a_smem) = al.allocate<A_ST>();
     B_ST (&b_smem) = al.allocate<B_ST>();
-    S_ST (&sa_smem) = al.allocate<S_ST>();
-    S_ST (&sb_smem) = al.allocate<S_ST>();
+    SA_ST (&sa_smem) = al.allocate<SA_ST>();
+    S_ATOM_ST (&sb_smem)[B_SCALE_COLS / 16] = al.allocate<S_ATOM_ST, B_SCALE_COLS / 16>();
 
     G::load(a_smem, a_gl, kittens::coord<A_ST>{0, 0});
     G::load(b_smem, b_gl, kittens::coord<B_ST>{0, 0});
-    for (int idx = threadIdx.x; idx < S_ST::num_elements; idx += blockDim.x) {
-        sa_smem.data[idx] = std::bit_cast<nvfp4_scale>(uint8_t(0x80));
-        sb_smem.data[idx] = std::bit_cast<nvfp4_scale>(uint8_t(0x80));
-    }
+    k128_fill_scales<M, true>(sa_smem);
+    k128_fill_scales<N, false>(*reinterpret_cast<kittens::st<Scale, 32, B_SCALE_COLS, false> *>(&sb_smem[0]));
+    asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
     __syncthreads();
 
     kittens::tensor_allocator<1, 1> tm_alloc{};
-
     D_TT d_tt = tm_alloc.template allocate<D_TT>(0);
-    auto sa_tt = tm_alloc.template allocate<kittens::full_tt_fp8e8m0<NVFP4_K96_SCALE_COLS>>(256);
-    auto sb_tt = tm_alloc.template allocate<kittens::full_tt_fp8e8m0<2 * NVFP4_K96_SCALE_COLS>>(256 + 4 * NVFP4_K96_MMAS);
+    SA_TT sa_tt = tm_alloc.template allocate<SA_TT>(256);
+    SB_TT sb_tt = tm_alloc.template allocate<SB_TT>(256 + A_SCALE_COLS / 4);
     if (kittens::warpid() == 0) {
+        load_mxnv_scale_async(sa_tt, sa_smem);
         #pragma unroll
-        for (int i = 0; i < NVFP4_K96_MMAS; ++i) {
-            auto sa_tt_atom = sa_tt.template subtile<kittens::full_tt_fp8e8m0<16>>(i * 16);
-            auto sb_tt_atom_0 = sb_tt.template subtile<kittens::full_tt_fp8e8m0<16>>(i * 32);
-            auto sb_tt_atom_1 = sb_tt.template subtile<kittens::full_tt_fp8e8m0<16>>(i * 32 + 16);
-            auto &sa_smem_atom = *reinterpret_cast<S_ATOM_ST *>(
-                reinterpret_cast<uint64_t>(&sa_smem.data[0]) + i * 16 * 32);
-            auto &sb_smem_atom = *reinterpret_cast<S_ATOM_ST *>(
-                reinterpret_cast<uint64_t>(&sb_smem.data[0]) + i * 16 * 32);
-            load_mxnv_scale_async(sa_tt_atom, sa_smem_atom);
-            load_mxnv_scale_async(sb_tt_atom_0, sb_smem_atom);
-            load_mxnv_scale_async(sb_tt_atom_1, sb_smem_atom);
+        for (int i = 0; i < B_SCALE_COLS / 16; ++i) {
+            auto sb_tt_atom = sb_tt.template subtile<S_ATOM_TT>(i * 16);
+            load_mxnv_scale_async(sb_tt_atom, sb_smem[i]);
         }
         kittens::tensor_store_wait();
     }
@@ -567,177 +753,287 @@ __global__ void tcgen05_nvfp4_k96_1cta_wrapper(
     kittens::warp::init_semaphore(sem, 0, 1);
     __syncthreads();
 
-    if constexpr (ACC) {
-        if (kittens::warpid() == 0) {
-            G::mm_ABt<48>(d_tt, a_smem, b_smem, sa_tt, sb_tt, sem);
-        }
-        kittens::wait(sem, 0);
-        if (kittens::warpid() == 0) {
-            G::mma_ABt<48>(d_tt, a_smem, b_smem, sa_tt, sb_tt, sem);
-        }
-        kittens::wait(sem, 1);
+    if (kittens::warpid() == 0) {
+        G::mm_ABt<64, true>(d_tt, a_smem, b_smem, sa_tt, sb_tt, sem);
     }
-    else {
-        if (kittens::warpid() == 0) {
-            G::mm_ABt<48>(d_tt, a_smem, b_smem, sa_tt, sb_tt, sem);
-        }
-        kittens::wait(sem, 0);
-    }
-
+    kittens::wait(sem, 0);
     D_RT d_reg;
     G::load_async(d_reg, d_tt);
     kittens::tensor_load_wait();
-    G::store(o_gl, d_reg, kittens::coord<D_RT>{0, 0});
+    G::store(o_gl, d_reg, kittens::coord<D_GROUP_RT>{0, 0});
 }
 
-template<bool ACC>
-static void run_nvfp4_k96_2cta(test_data &results) {
-    constexpr int M = 256;
+static void run_nvfp4_k128_sf128(test_data &results) {
+    constexpr int M = 128;
     constexpr int N = 256;
-    test_info this_result;
-    this_result.label = ACC ? "tcgen05_st_st_mma2_ABt_k96=nvfp4_e8m0"
-                            : "tcgen05_st_st_mm2_ABt_k96=nvfp4_e8m0";
+    const std::string label = "tcgen05_st_st_mm_ABt_k128=nvfp4_e4m3";
 
     const fp4_packed one = std::bit_cast<fp4_packed>(uint8_t(0x22));
-    std::vector<fp4_packed> h_a(M * NVFP4_K96_PACKED, one);
-    std::vector<fp4_packed> h_b(N * NVFP4_K96_PACKED, one);
+    std::vector<fp4_packed> h_a(M * NVFP4_K128_SF128_PACKED, one);
+    std::vector<fp4_packed> h_b(N * NVFP4_K128_SF128_PACKED, one);
     std::vector<float> h_o(M * N, 0.0f);
-    const float expected = std::ldexp(float(NVFP4_K96_LOGICAL * 2 * (ACC ? 2 : 1)), -127);
-    std::vector<float> h_ref(M * N, expected);
+    std::vector<float> h_ref(M * N);
+    for (int m = 0; m < M; m++) {
+        for (int n = 0; n < N; n++) {
+            float sum = 0.0f;
+            for (int kb = 0; kb < NVFP4_K128_SF128_LOGICAL / 16; kb++)
+                sum += 16 * std::ldexp(1.0f, k128_sa_log2(m, kb)) * std::ldexp(1.0f, k128_sb_log2(n, kb));
+            h_ref[m*N + n] = sum;
+        }
+    }
 
-    fp4_packed *d_a, *d_b;
-    float *d_o;
-    cudaMalloc(&d_a, h_a.size() * sizeof(fp4_packed));
-    cudaMalloc(&d_b, h_b.size() * sizeof(fp4_packed));
-    cudaMalloc(&d_o, h_o.size() * sizeof(float));
-    CudaCheckError();
-    cudaMemcpy(d_a, h_a.data(), h_a.size() * sizeof(fp4_packed), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_b, h_b.data(), h_b.size() * sizeof(fp4_packed), cudaMemcpyHostToDevice);
-    cudaMemset(d_o, 0, h_o.size() * sizeof(float));
-    CudaCheckError();
+    fp4_packed *d_a = copy_to_device(h_a);
+    fp4_packed *d_b = copy_to_device(h_b);
+    float *d_o = zero_on_device<float>(h_o.size());
 
-    using A_ST = kittens::st<fp4_packed, 128, NVFP4_K96_PACKED>;
-    using B_ST = kittens::st<fp4_packed, N / 2, NVFP4_K96_PACKED>;
-    using GL_A = kittens::gl<fp4_packed, 1, 1, M, NVFP4_K96_PACKED, A_ST>;
-    using GL_B = kittens::gl<fp4_packed, 1, 1, N, NVFP4_K96_PACKED, B_ST>;
+    using A_ST = kittens::st<fp4_packed, M, NVFP4_K128_SF128_PACKED>;
+    using B_ST = kittens::st<fp4_packed, N, NVFP4_K128_SF128_PACKED>;
+    using GL_A = kittens::gl<fp4_packed, 1, 1, M, NVFP4_K128_SF128_PACKED, A_ST>;
+    using GL_B = kittens::gl<fp4_packed, 1, 1, N, NVFP4_K128_SF128_PACKED, B_ST>;
     using GL_O = kittens::gl<float, 1, 1, M, N>;
     GL_A a_gl(d_a, nullptr, nullptr, nullptr, nullptr);
     GL_B b_gl(d_b, nullptr, nullptr, nullptr, nullptr);
     GL_O o_gl(d_o, nullptr, nullptr, nullptr, nullptr);
 
     cudaFuncSetAttribute(
-        tcgen05_nvfp4_k96_wrapper<ACC, GL_A, GL_B, GL_O>,
+        tcgen05_nvfp4_k128_1cta_wrapper<GL_A, GL_B, GL_O>,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         kittens::MAX_SHARED_MEMORY - 1024
     );
-    kittens::LaunchConfig<true> launch_config(
-        dim3(2), dim3(kittens::group<4>::GROUP_THREADS), kittens::MAX_SHARED_MEMORY - 1024, nullptr, dim3(2)
-    );
-    cudaLaunchKernelEx(
-        launch_config, tcgen05_nvfp4_k96_wrapper<ACC, GL_A, GL_B, GL_O>, a_gl, b_gl, o_gl
-    );
+    tcgen05_nvfp4_k128_1cta_wrapper<GL_A, GL_B, GL_O><<<
+        dim3(1), dim3(kittens::group<4>::GROUP_THREADS), kittens::MAX_SHARED_MEMORY - 1024
+    >>>(a_gl, b_gl, o_gl);
     CudaCheckError();
-    cudaMemcpy(h_o.data(), d_o, h_o.size() * sizeof(float), cudaMemcpyDeviceToHost);
-    CudaCheckError();
-
-    bool good = true;
-    int bad_idx = -1;
-    for (int i = 0; i < h_o.size(); i++) {
-        if (std::abs(h_o[i] - h_ref[i]) > 1e-3f) {
-            good = false;
-            bad_idx = i;
-            break;
-        }
-    }
-    std::cout << "test `" << this_result.label << "`";
-    if(good) std::cout << " -- PASSED" << std::endl;
-    else     std::cout << " ----- ALERT! FAILED test `" << this_result.label
-                       << "` first mismatch got " << h_o[bad_idx]
-                       << " expected " << h_ref[bad_idx] << " -----" << std::endl;
+    check_output(results, label, d_o, h_o, h_ref, NVFP4_K128_TOL);
 
     cudaFree(d_a);
     cudaFree(d_b);
     cudaFree(d_o);
     CudaCheckError();
-    this_result.result = good ? test_result::PASSED : test_result::FAILED;
-    results.push_back(this_result);
 }
 
-template<bool ACC>
-static void run_nvfp4_k96_1cta(test_data &results) {
+static void run_nvfp4_k128(test_data &results) {
+    // Each call initializes D on its first K chunk and accumulates the remaining chunks.
+    run_nvfp4_k128_sf128(results);
+    run_nvfp4_e8_case<64, 4, 2, false>(results);
+}
+
+constexpr float F8_K64_TOL = 1e-3f;
+constexpr int F8_K64_MMAS = 4;
+constexpr int F8_K64_K = 64 * F8_K64_MMAS;
+
+// Chunk-index-discriminating exact values (powers of two) so descriptor-stepping bugs are visible.
+__host__ __device__ static inline constexpr int f8_k64_a_log2(int m, int kc) { return (m/32 + kc) % 3 - 1; }
+__host__ __device__ static inline constexpr int f8_k64_b_log2(int n, int kc) { return (n/32 + kc) % 2; }
+
+template<kittens::ducks::gl::all GL_A, kittens::ducks::gl::all GL_B, kittens::ducks::gl::all GL_O>
+__cluster_dims__(2, 1, 1) __launch_bounds__(kittens::group<4>::GROUP_THREADS)
+__global__ void tcgen05_f8_k64_wrapper(
+    const __grid_constant__ GL_A a_gl,
+    const __grid_constant__ GL_B b_gl,
+    const __grid_constant__ GL_O o_gl
+) {
+    constexpr int M = 128;
     constexpr int N = 256;
-    constexpr int M_1CTA = 128;
-    test_info one_cta_result;
-    one_cta_result.label = ACC ? "tcgen05_st_st_mma_ABt_k96=nvfp4_e8m0"
-                               : "tcgen05_st_st_mm_ABt_k96=nvfp4_e8m0";
+    using G = kittens::group<4>;
+    using A_ST = kittens::st<kittens::fp8e4m3, M, F8_K64_K>;
+    using B_ST = kittens::st<kittens::fp8e4m3, N / 2, F8_K64_K>;
+    using D_TT = kittens::tt<float, M, N>;
+    using D_RT = kittens::rt<float, M / G::GROUP_WARPS, N>;
+    using D_GROUP_RT = kittens::rt<float, G::GROUP_WARPS * D_RT::rows, D_RT::cols>;
 
-    const fp4_packed one = std::bit_cast<fp4_packed>(uint8_t(0x22));
-    std::vector<fp4_packed> h_a_1cta(M_1CTA * NVFP4_K96_PACKED, one);
-    std::vector<fp4_packed> h_b_1cta(N * NVFP4_K96_PACKED, one);
-    std::vector<float> h_o_1cta(M_1CTA * N, 0.0f);
-    std::vector<float> h_ref_1cta(M_1CTA * N, float(NVFP4_K96_LOGICAL * 4 * (ACC ? 2 : 1)));
+    extern __shared__ kittens::alignment_dummy __shm[];
+    kittens::tma_swizzle_allocator al((int*)&__shm[0]);
+    A_ST (&a_smem) = al.allocate<A_ST>();
+    B_ST (&b_smem) = al.allocate<B_ST>();
 
-    fp4_packed *d_a_1cta, *d_b_1cta;
-    float *d_o_1cta;
-    cudaMalloc(&d_a_1cta, h_a_1cta.size() * sizeof(fp4_packed));
-    cudaMalloc(&d_b_1cta, h_b_1cta.size() * sizeof(fp4_packed));
-    cudaMalloc(&d_o_1cta, h_o_1cta.size() * sizeof(float));
-    CudaCheckError();
-    cudaMemcpy(d_a_1cta, h_a_1cta.data(), h_a_1cta.size() * sizeof(fp4_packed), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_b_1cta, h_b_1cta.data(), h_b_1cta.size() * sizeof(fp4_packed), cudaMemcpyHostToDevice);
-    cudaMemset(d_o_1cta, 0, h_o_1cta.size() * sizeof(float));
-    CudaCheckError();
+    const int cta_id = kittens::cluster_ctarank();
+    G::load(a_smem, a_gl, kittens::coord<A_ST>{cta_id, 0});
+    G::load(b_smem, b_gl, kittens::coord<B_ST>{cta_id, 0});
+    asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
+    __syncthreads();
 
-    using A_ST_1CTA = kittens::st<fp4_packed, M_1CTA, NVFP4_K96_PACKED>;
-    using B_ST_1CTA = kittens::st<fp4_packed, N, NVFP4_K96_PACKED>;
-    using GL_A_1CTA = kittens::gl<fp4_packed, 1, 1, M_1CTA, NVFP4_K96_PACKED, A_ST_1CTA>;
-    using GL_B_1CTA = kittens::gl<fp4_packed, 1, 1, N, NVFP4_K96_PACKED, B_ST_1CTA>;
-    using GL_O_1CTA = kittens::gl<float, 1, 1, M_1CTA, N>;
-    GL_A_1CTA a_gl_1cta(d_a_1cta, nullptr, nullptr, nullptr, nullptr);
-    GL_B_1CTA b_gl_1cta(d_b_1cta, nullptr, nullptr, nullptr, nullptr);
-    GL_O_1CTA o_gl_1cta(d_o_1cta, nullptr, nullptr, nullptr, nullptr);
+    kittens::tensor_allocator<1, 2> tm_alloc{};
+    D_TT d_tt = tm_alloc.template allocate<D_TT>(0);
+    __shared__ kittens::semaphore sem;
+    kittens::warp::init_semaphore(sem, 0, 1);
+    __syncthreads();
 
+    kittens::everyone::tma::cluster::sync();
+
+    if (cta_id == 0 && kittens::warpid() == 0 && kittens::laneid() == 0) {
+        kittens::st_descriptor<A_ST, 0> a_desc(a_smem);
+        kittens::st_descriptor<B_ST, 0> b_desc(b_smem);
+        #pragma unroll
+        for (int i = 0; i < F8_K64_MMAS; ++i) {
+            kittens::mma2_ABt_chunk(d_tt, a_desc, b_desc, i, i == 0);
+        }
+        kittens::tensor_commit<2>(sem);
+    }
+    kittens::wait(sem, 0);
+
+    D_RT d_reg;
+    G::load_async(d_reg, d_tt);
+    kittens::tensor_load_wait();
+    G::store(o_gl, d_reg, kittens::coord<D_GROUP_RT>{cta_id, 0});
+}
+
+static void run_f8_k64(test_data &results) {
+    constexpr int M = 256;
+    constexpr int N = 256;
+    const std::string label = "tcgen05_st_st_mm2_ABt_k64=f8";
+
+    std::vector<kittens::fp8e4m3> h_a(M * F8_K64_K), h_b(N * F8_K64_K);
+    for (int m = 0; m < M; m++) for (int k = 0; k < F8_K64_K; k++)
+        h_a[m*F8_K64_K + k] = kittens::fp8e4m3(std::ldexp(1.0f, f8_k64_a_log2(m, k/64)));
+    for (int n = 0; n < N; n++) for (int k = 0; k < F8_K64_K; k++)
+        h_b[n*F8_K64_K + k] = kittens::fp8e4m3(std::ldexp(1.0f, f8_k64_b_log2(n, k/64)));
+    std::vector<float> h_o(M * N, 0.0f), h_ref(M * N);
+    for (int m = 0; m < M; m++) for (int n = 0; n < N; n++) {
+        float sum = 0.0f;
+        for (int kc = 0; kc < F8_K64_MMAS; kc++)
+            sum += 64.0f * std::ldexp(1.0f, f8_k64_a_log2(m, kc) + f8_k64_b_log2(n, kc));
+        h_ref[m*N + n] = sum;
+    }
+
+    kittens::fp8e4m3 *d_a = copy_to_device(h_a);
+    kittens::fp8e4m3 *d_b = copy_to_device(h_b);
+    float *d_o = zero_on_device<float>(h_o.size());
+
+    using A_ST = kittens::st<kittens::fp8e4m3, M / 2, F8_K64_K>;
+    using B_ST = kittens::st<kittens::fp8e4m3, N / 2, F8_K64_K>;
+    using GL_A = kittens::gl<kittens::fp8e4m3, 1, 1, M, F8_K64_K, A_ST>;
+    using GL_B = kittens::gl<kittens::fp8e4m3, 1, 1, N, F8_K64_K, B_ST>;
+    using GL_O = kittens::gl<float, 1, 1, M, N>;
+    GL_A a_gl(d_a, nullptr, nullptr, nullptr, nullptr);
+    GL_B b_gl(d_b, nullptr, nullptr, nullptr, nullptr);
+    GL_O o_gl(d_o, nullptr, nullptr, nullptr, nullptr);
+
+    kittens::LaunchConfig<true> launch_config(
+        dim3(2), dim3(kittens::group<4>::GROUP_THREADS), kittens::MAX_SHARED_MEMORY - 1024, nullptr, dim3(2)
+    );
     cudaFuncSetAttribute(
-        tcgen05_nvfp4_k96_1cta_wrapper<ACC, GL_A_1CTA, GL_B_1CTA, GL_O_1CTA>,
+        tcgen05_f8_k64_wrapper<GL_A, GL_B, GL_O>,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
         kittens::MAX_SHARED_MEMORY - 1024
     );
-    tcgen05_nvfp4_k96_1cta_wrapper<ACC, GL_A_1CTA, GL_B_1CTA, GL_O_1CTA><<<
-        dim3(1), dim3(kittens::group<4>::GROUP_THREADS), kittens::MAX_SHARED_MEMORY - 1024
-    >>>(a_gl_1cta, b_gl_1cta, o_gl_1cta);
+    cudaLaunchKernelEx(
+        launch_config, tcgen05_f8_k64_wrapper<GL_A, GL_B, GL_O>, a_gl, b_gl, o_gl
+    );
     CudaCheckError();
-    cudaMemcpy(h_o_1cta.data(), d_o_1cta, h_o_1cta.size() * sizeof(float), cudaMemcpyDeviceToHost);
-    CudaCheckError();
+    check_output(results, label, d_o, h_o, h_ref, F8_K64_TOL);
 
-    bool good = true;
-    int bad_idx = -1;
-    for (int i = 0; i < h_o_1cta.size(); i++) {
-        if (std::abs(h_o_1cta[i] - h_ref_1cta[i]) > NVFP4_K96_TOL) {
-            good = false;
-            bad_idx = i;
-            break;
+    cudaFree(d_a);
+    cudaFree(d_b);
+    cudaFree(d_o);
+    CudaCheckError();
+}
+
+// tensor_aread_commit fires after prior MMAs finish reading A, so refilling A then must leave D intact.
+// An early arrive corrupts D, a missing one hangs, and the refill must be a real global load the compiler keeps.
+template<kittens::ducks::gl::all GL_A, kittens::ducks::gl::all GL_B, kittens::ducks::gl::all GL_O>
+__cluster_dims__(2, 1, 1) __launch_bounds__(kittens::group<4>::GROUP_THREADS)
+__global__ void tcgen05_aread_commit_2cta_wrapper(
+    const __grid_constant__ GL_A a_gl,
+    const __grid_constant__ GL_A az_gl,
+    const __grid_constant__ GL_B b_gl,
+    const __grid_constant__ GL_O o_gl
+) {
+    constexpr int M = 128;
+    constexpr int N = 256;
+    using G = kittens::group<4>;
+    using A_ST = kittens::st<kittens::fp8e4m3, M, F8_K64_K>;
+    using B_ST = kittens::st<kittens::fp8e4m3, N / 2, F8_K64_K>;
+    using D_TT = kittens::tt<float, M, N>;
+    using D_RT = kittens::rt<float, M / G::GROUP_WARPS, N>;
+    using D_GROUP_RT = kittens::rt<float, G::GROUP_WARPS * D_RT::rows, D_RT::cols>;
+
+    extern __shared__ kittens::alignment_dummy __shm[];
+    kittens::tma_swizzle_allocator al((int*)&__shm[0]);
+    A_ST (&a_smem) = al.allocate<A_ST>();
+    B_ST (&b_smem) = al.allocate<B_ST>();
+
+    const int cta_id = kittens::cluster_ctarank();
+    G::load(a_smem, a_gl, kittens::coord<A_ST>{cta_id, 0});
+    G::load(b_smem, b_gl, kittens::coord<B_ST>{cta_id, 0});
+    asm volatile ("fence.proxy.async.shared::cta;\n" ::: "memory");
+    __syncthreads();
+
+    kittens::tensor_allocator<1, 2> tm_alloc{};
+    D_TT d_tt = tm_alloc.template allocate<D_TT>(0);
+    __shared__ kittens::semaphore a_sem, d_sem;
+    kittens::warp::init_semaphore(a_sem, 0, 1);
+    kittens::warp::init_semaphore(d_sem, 0, 1);
+    __syncthreads();
+
+    kittens::everyone::tma::cluster::sync();
+
+    if (cta_id == 0 && kittens::warpid() == 0 && kittens::laneid() == 0) {
+        kittens::st_descriptor<A_ST, 0> a_desc(a_smem);
+        kittens::st_descriptor<B_ST, 0> b_desc(b_smem);
+        #pragma unroll
+        for (int i = 0; i < F8_K64_MMAS; ++i) {
+            kittens::mma2_ABt_chunk(d_tt, a_desc, b_desc, i, i == 0);
         }
+        kittens::tensor_aread_commit<2>(a_sem);
+        kittens::tensor_commit<2>(d_sem);
     }
-    std::cout << "test `" << one_cta_result.label << "`";
-    if(good) std::cout << " -- PASSED" << std::endl;
-    else     std::cout << " ----- ALERT! FAILED test `" << one_cta_result.label
-                       << "` first mismatch got " << h_o_1cta[bad_idx]
-                       << " expected " << h_ref_1cta[bad_idx] << " -----" << std::endl;
+    kittens::wait(a_sem, 0);
+    G::load(a_smem, az_gl, kittens::coord<A_ST>{cta_id, 0});
+    __syncthreads();
+    kittens::wait(d_sem, 0);
 
-    cudaFree(d_a_1cta);
-    cudaFree(d_b_1cta);
-    cudaFree(d_o_1cta);
+    D_RT d_reg;
+    G::load_async(d_reg, d_tt);
+    kittens::tensor_load_wait();
+    G::store(o_gl, d_reg, kittens::coord<D_GROUP_RT>{cta_id, 0});
+}
+
+static void run_aread_commit(test_data &results) {
+    constexpr int M = 256;
+    constexpr int N = 256;
+    const std::string label = "tcgen05_aread_commit2_k64=f8";
+
+    std::vector<kittens::fp8e4m3> h_a(M * F8_K64_K, kittens::fp8e4m3(1.0f));
+    std::vector<kittens::fp8e4m3> h_b(N * F8_K64_K, kittens::fp8e4m3(1.0f));
+    std::vector<float> h_o(M * N, 0.0f), h_ref(M * N, float(F8_K64_K));
+
+    kittens::fp8e4m3 *d_a = copy_to_device(h_a);
+    kittens::fp8e4m3 *d_az = zero_on_device<kittens::fp8e4m3>(h_a.size());
+    kittens::fp8e4m3 *d_b = copy_to_device(h_b);
+    float *d_o = zero_on_device<float>(h_o.size());
+
+    using A_ST = kittens::st<kittens::fp8e4m3, M / 2, F8_K64_K>;
+    using B_ST = kittens::st<kittens::fp8e4m3, N / 2, F8_K64_K>;
+    using GL_A = kittens::gl<kittens::fp8e4m3, 1, 1, M, F8_K64_K, A_ST>;
+    using GL_B = kittens::gl<kittens::fp8e4m3, 1, 1, N, F8_K64_K, B_ST>;
+    using GL_O = kittens::gl<float, 1, 1, M, N>;
+    GL_A a_gl(d_a, nullptr, nullptr, nullptr, nullptr);
+    GL_A az_gl(d_az, nullptr, nullptr, nullptr, nullptr);
+    GL_B b_gl(d_b, nullptr, nullptr, nullptr, nullptr);
+    GL_O o_gl(d_o, nullptr, nullptr, nullptr, nullptr);
+
+    kittens::LaunchConfig<true> launch_config(
+        dim3(2), dim3(kittens::group<4>::GROUP_THREADS), kittens::MAX_SHARED_MEMORY - 1024, nullptr, dim3(2)
+    );
+    cudaFuncSetAttribute(
+        tcgen05_aread_commit_2cta_wrapper<GL_A, GL_B, GL_O>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        kittens::MAX_SHARED_MEMORY - 1024
+    );
+    cudaLaunchKernelEx(
+        launch_config, tcgen05_aread_commit_2cta_wrapper<GL_A, GL_B, GL_O>, a_gl, az_gl, b_gl, o_gl
+    );
     CudaCheckError();
-    one_cta_result.result = good ? test_result::PASSED : test_result::FAILED;
-    results.push_back(one_cta_result);
+    check_output(results, label, d_o, h_o, h_ref, F8_K64_TOL);
+
+    cudaFree(d_a);
+    cudaFree(d_az);
+    cudaFree(d_b);
+    cudaFree(d_o);
+    CudaCheckError();
 }
 
-static void run_nvfp4_k96(test_data &results) {
-    run_nvfp4_k96_2cta<false>(results);
-    run_nvfp4_k96_2cta<true>(results);
-    run_nvfp4_k96_1cta<false>(results);
-    run_nvfp4_k96_1cta<true>(results);
-}
 #endif
 
 }
@@ -748,7 +1044,7 @@ void group::mma::tensor::mma::tests(test_data &results) {
     run_type<kittens::half>(results, "half");
     run_type<kittens::fp8e4m3>(results, "fp8e4m3");
     run_type<kittens::fp8e5m2>(results, "fp8e5m2");
-#ifndef KITTENS_SM103
+#if !defined(KITTENS_SM103) && !defined(KITTENS_SM107)
     run_type<kittens::int8>(results, "int8");
     run_type<kittens::uint8>(results, "uint8");
 #endif
@@ -756,8 +1052,13 @@ void group::mma::tensor::mma::tests(test_data &results) {
     run_nvfp4_k64<kittens::fp8e4m3>(results);
     run_nvfp4_k64<kittens::fp8e8m0>(results);
 #endif
-#ifdef KITTENS_SM103
+#if defined(KITTENS_SM103) || defined(KITTENS_SM107)
     run_nvfp4_k96(results);
+#endif
+#ifdef KITTENS_SM107
+    run_nvfp4_k128(results);
+    run_f8_k64(results);
+    run_aread_commit(results);
 #endif
     std::cout << std::endl;
 }

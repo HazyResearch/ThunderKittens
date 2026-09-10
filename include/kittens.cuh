@@ -15,17 +15,15 @@
 #if defined(KITTENS_BLACKWELL)
 #define KITTENS_SM100
 #endif
-
-// The user must define exactly one of KITTENS_SM80, KITTENS_SM90, KITTENS_SM100, KITTENS_SM103, KITTENS_SM120
-#if defined(KITTENS_SM80) + defined(KITTENS_SM90) + defined(KITTENS_SM100) + defined(KITTENS_SM103) + defined(KITTENS_SM120) != 1
-#error "Define exactly one of: KITTENS_SM80, KITTENS_SM90, KITTENS_SM100, KITTENS_SM103, KITTENS_SM120"
+// The user must define exactly one of KITTENS_SM80, KITTENS_SM90, KITTENS_SM100, KITTENS_SM103, KITTENS_SM107, KITTENS_SM120
+#if defined(KITTENS_SM80) + defined(KITTENS_SM90) + defined(KITTENS_SM100) + defined(KITTENS_SM103) + defined(KITTENS_SM107) + defined(KITTENS_SM120) != 1
+#error "Define exactly one of: KITTENS_SM80, KITTENS_SM90, KITTENS_SM100, KITTENS_SM103, KITTENS_SM107, KITTENS_SM120"
 #endif
 
 // Convert to family
-#if defined(KITTENS_SM100) || defined(KITTENS_SM103)
+#if defined(KITTENS_SM100) || defined(KITTENS_SM103) || defined(KITTENS_SM107)
 #define KITTENS_SM10X
 #endif
-
 // Standard library includes
 #include <bit>
 #include <concepts>

@@ -1,5 +1,5 @@
 # Example usage:
-#   ARCH := SM80 | SM90 | SM100 | SM103 | SM120
+#   ARCH := SM80 | SM90 | SM100 | SM103 | SM107 | SM120
 #   SRC := kernel.cu
 #   OUT := kernel
 #   CMD := ./kernel
@@ -7,13 +7,13 @@
 #   include common.mk
 
 # These should be set by the including Makefile
-ARCH ?= NOT_SET # SM80 | SM90 | SM100 | SM103 | SM120
+ARCH ?= NOT_SET # SM80 | SM90 | SM100 | SM103 | SM107 | SM120
 SRC ?= NOT_SET # ex. my_kernel.cu
 OUT ?= NOT_SET # ex. _C$(shell python3 -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))")
 CMD ?= NOT_SET # ex. ./my_kernel, OMP_NUM_THREADS=1 torchrun --nproc_per_node=8 benchmark.py
 CONFIG ?= NOT_SET # standalone | python | pytorch
 ifeq ($(ARCH),NOT_SET)
-$(error ARCH is not set. Please set ARCH to SM80, SM90, SM100, SM103, or SM120)
+$(error ARCH is not set. Please set ARCH to SM80, SM90, SM100, SM103, SM107, or SM120)
 endif
 ifeq ($(SRC),NOT_SET)
 $(error SRC is not set. Please set SRC to the entry .cu file)
@@ -86,6 +86,8 @@ endif
 # Architecture-specific flags
 ifeq ($(ARCH),SM120)
 NVCCFLAGS += -DKITTENS_SM120 -gencode arch=compute_120a,code=sm_120a
+else ifeq ($(ARCH),SM107)
+NVCCFLAGS += -DKITTENS_SM107 -gencode arch=compute_107a,code=sm_107a
 else ifeq ($(ARCH),SM103)
 NVCCFLAGS += -DKITTENS_SM103 -gencode arch=compute_103a,code=sm_103a
 else ifeq ($(ARCH),SM100)
@@ -95,7 +97,7 @@ NVCCFLAGS += -DKITTENS_SM90 -gencode arch=compute_90a,code=sm_90a
 else ifeq ($(ARCH),SM80)
 NVCCFLAGS += -DKITTENS_SM80 -gencode arch=compute_80,code=sm_80
 else
-$(error Unsupported ARCH: $(ARCH). Please set ARCH to SM80, SM90, SM100, SM103, or SM120.)
+$(error Unsupported ARCH: $(ARCH). Please set ARCH to SM80, SM90, SM100, SM103, SM107, or SM120.)
 endif
 
 all: $(OUT)
