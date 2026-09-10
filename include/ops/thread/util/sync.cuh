@@ -119,6 +119,7 @@ __device__ static inline void wait(semaphore& sem, int kPhaseBit) {
         "}\n"
         :: "r"(mbar_ptr),
         "r"(kPhaseBit)
+        : "memory"
     );
 #else
     asm volatile (
@@ -133,6 +134,7 @@ __device__ static inline void wait(semaphore& sem, int kPhaseBit) {
         "}\n"
         :: "r"(mbar_ptr),
         "r"(kPhaseBit)
+        : "memory"
     );
 #endif
 }
@@ -181,6 +183,7 @@ __device__ static inline void careful_wait(semaphore& sem, int kPhaseBit) {
         "}\n"
         :: "r"(mbar_ptr),
         "r"(kPhaseBit)
+        : "memory"
     );
 #else
     asm volatile (
@@ -195,6 +198,7 @@ __device__ static inline void careful_wait(semaphore& sem, int kPhaseBit) {
         "}\n"
         :: "r"(mbar_ptr),
         "r"(kPhaseBit)
+        : "memory"
     );
 #endif
 }
@@ -217,6 +221,7 @@ __device__ static inline int test_wait(semaphore& sem, int kPhaseBit) {
         "}\n"
         : "=r"(result)
         : "r"(mbar_ptr), "r"(kPhaseBit)
+        : "memory"
     );
     return result;
 }
