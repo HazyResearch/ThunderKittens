@@ -21,7 +21,16 @@ struct identifier {};
 namespace detail {
 
 // See https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#asynchronous-warpgroup-level-matrix-shared-memory-layout-matrix-descriptor
-__device__ static inline uint64_t matrix_descriptor_encode(uint64_t x) { return (((x) & 0x3FFFF) >> 0x4); }
+
+#ifdef KITTENS_SM107
+constexpr uint64_t DESCRIPTOR_ADDR_MASK = 0x7FFF;
+#else
+constexpr uint64_t DESCRIPTOR_ADDR_MASK = 0x3FFF;
+#endif
+constexpr uint64_t DESCRIPTOR_OFFSET_MASK = 0x3FFF;
+
+__device__ static inline uint64_t matrix_descriptor_encode_addr(uint64_t x) { return (x >> 4) & DESCRIPTOR_ADDR_MASK; }
+__device__ static inline uint64_t matrix_descriptor_encode_offset(uint64_t x) { return (x >> 4) & DESCRIPTOR_OFFSET_MASK; }
 
 template <typename T>
 __device__ static inline uint64_t matrix_descriptor_raw(
@@ -32,13 +41,13 @@ __device__ static inline uint64_t matrix_descriptor_raw(
 ) {
 #ifdef KITTENS_SM10X
     // see https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#tcgen05-shared-memory-descriptor
-    return matrix_descriptor_encode(reinterpret_cast<uint64_t>(addr)) | 
+    return matrix_descriptor_encode_addr(reinterpret_cast<uint64_t>(addr)) |
            (1llu << 46) | // needed for blackwell shared memory descriptors
 #else
-    return matrix_descriptor_encode(reinterpret_cast<uint64_t>(addr)) |
+    return matrix_descriptor_encode_addr(reinterpret_cast<uint64_t>(addr)) |
 #endif
-           matrix_descriptor_encode((uint64_t)leading_dim_offset) << 16 |
-           matrix_descriptor_encode((uint64_t)stride_dim_offset) << 32 |
+           matrix_descriptor_encode_offset((uint64_t)leading_dim_offset) << 16 |
+           matrix_descriptor_encode_offset((uint64_t)stride_dim_offset) << 32 |
            (uint64_t)swizzle_mode << 62;
 }
 
@@ -74,51 +83,56 @@ struct st_descriptor {
         }
     }
     __device__ inline st_descriptor(const st_descriptor<ST, MN_major> &other) : base_desc(other.base_desc) {} // copy constructor
+    template<int chunk_bytes=32>
     __device__ inline uint64_t chunk_descriptor(int chunk_idx) {
-        // Return the n-th chunk along the K dimension.
-        // In MMA instructions, K per tensor core call is always 32 bytes
-        //   ex. Hopper: K=32 for FP8, K=16 for BF16/FP16, K=8 for TF32)
-        //   ex. Blackwell: K=64 for FP4, K=32 for FP8, K=16 for BF16/FP16, K=8 for TF32 (for FP4, K=96 is also possible on SM103; see chunk_descriptor_k96)
-        // So for MN-major, this is same as asking "how to forward 32 bytes worth of elements (=K elements) in the stride dimension?"
-        // And for K-major, "how to forward K elements in the leading dimension?"
-        if constexpr (MN_major) { // MN major mode (i.e., K x M for A matrix, K x N for B matrix)
-            if constexpr (ST::swizzle_bytes == 128) { // 128B swizzle: 
-                return base_desc + detail::matrix_descriptor_encode(chunk_idx*2048);
-            }
-            else if constexpr (ST::swizzle_bytes == 64) {
-                return base_desc + detail::matrix_descriptor_encode(chunk_idx*1024);
-            }
-            else {
-                return base_desc + detail::matrix_descriptor_encode(chunk_idx*512);
-            }
+        // Return the n-th chunk along the K dimension, where chunk_bytes is the number of
+        // operand bytes consumed per row by one tensor-core call. The default 32-byte chunk
+        // covers the legacy MMA shapes; packed FP4 K96 uses 48 bytes (see
+        // chunk_descriptor_k96), while SM107 packed FP4 K128 and FP8 K64 use 64 bytes.
+        // For MN-major, advance chunk_bytes in the stride dimension; for K-major, advance
+        // chunk_bytes in the leading dimension while respecting the swizzle-atom boundary.
+#if defined(KITTENS_SM107)
+        static_assert(chunk_bytes == 32 || chunk_bytes == 48 || chunk_bytes == 64, "SM107 chunk descriptors support 32-, 48-, or 64-byte chunks.");
+#elif defined(KITTENS_SM103)
+        static_assert(chunk_bytes == 32 || chunk_bytes == 48, "SM103 chunk descriptors support 32- or 48-byte chunks.");
+#else
+        static_assert(chunk_bytes == 32, "Chunk descriptors larger than 32 bytes require SM103 or SM107.");
+#endif
+        if constexpr (chunk_bytes == 48) {
+#if defined(KITTENS_SM103) || defined(KITTENS_SM107)
+            static_assert(!MN_major && std::is_same_v<T, fp4e2m1_2> && ST::swizzle_bytes == 128,
+                          "48-byte chunks require K-major packed FP4 with 128B swizzling.");
+#endif
+            // K96 chunks that cross a 128B swizzle atom need a continuation box.
+            const int start_byte = chunk_idx*48;
+            const int edge_gap = 128 - start_byte%128;
+            const int cont_byte = start_byte + (edge_gap < 48 ? edge_gap : 32);
+            const uint64_t start_desc = base_desc + detail::matrix_descriptor_encode_addr(start_byte%128 + (start_byte/128)*(ST::rows/TILE_ROW_DIM<T>)*2048);
+            const uint64_t cont_desc  = base_desc + detail::matrix_descriptor_encode_addr(cont_byte%128 + (cont_byte/128)*(ST::rows/TILE_ROW_DIM<T>)*2048);
+            return (start_desc & ~(detail::DESCRIPTOR_ADDR_MASK << 16)) | ((cont_desc & detail::DESCRIPTOR_ADDR_MASK) << 16) | (1ull << 52);
         }
-        else { // K major mode (i.e., M x K for A matrix, N x K for B matrix)
-            if constexpr (ST::swizzle_bytes == 128) {
-                // 128B swizzle: 4 chunks fit within swizzle bytes; move on to next every 4 chunks (rows * 128B swizzle bytes)
-                return base_desc + detail::matrix_descriptor_encode((chunk_idx%4)*32 + (chunk_idx/4)*(ST::rows/TILE_ROW_DIM<T>)*2048);
+        else {
+            if constexpr (chunk_bytes == 64) {
+#ifdef KITTENS_SM107
+                static_assert(!MN_major &&
+                              (std::is_same_v<T, fp4e2m1_2> || std::is_same_v<T, fp8e4m3> || std::is_same_v<T, fp8e5m2>) &&
+                              (ST::swizzle_bytes == 128 || ST::swizzle_bytes == 64),
+                              "64-byte chunks require K-major packed FP4 or FP8 with 64B or 128B swizzling.");
+#endif
             }
-            else if constexpr (ST::swizzle_bytes == 64) {
-                // 64B swizzle: 2 chunks fit within swizzle bytes; move on to next every 2 chunks (rows * 64B swizzle bytes)
-                return base_desc + detail::matrix_descriptor_encode((chunk_idx%2)*32 + (chunk_idx/2)*(ST::rows/TILE_ROW_DIM<T>)*1024);
+            constexpr int atom_stride = (ST::rows/TILE_ROW_DIM<T>)*ST::swizzle_bytes*16;
+            if constexpr (MN_major) {
+                return base_desc + detail::matrix_descriptor_encode_addr(chunk_idx*ST::swizzle_bytes*16);
             }
             else {
-                // 32B swizzle: Entire chunk fits within swizzle bytes; move on to next on every chunk (rows * 32B swizzle bytes)
-                return base_desc + detail::matrix_descriptor_encode(chunk_idx*(ST::rows/TILE_ROW_DIM<T>)*512);
+                constexpr int chunks_per_atom = chunk_bytes <= ST::swizzle_bytes ? ST::swizzle_bytes/chunk_bytes : 1;
+                return base_desc + detail::matrix_descriptor_encode_addr((chunk_idx%chunks_per_atom)*chunk_bytes + (chunk_idx/chunks_per_atom)*atom_stride);
             }
         }
     }
-#ifdef KITTENS_SM103
+#if defined(KITTENS_SM103) || defined(KITTENS_SM107)
     __device__ inline uint64_t chunk_descriptor_k96(int chunk_idx) {
-        static_assert(!MN_major, "K96 chunk descriptors are only supported for K-major tcgen05 operands.");
-        static_assert(std::is_same_v<T, fp4e2m1_2>, "K96 chunk descriptors are only supported for packed FP4.");
-        static_assert(ST::swizzle_bytes == 128, "K96 chunk descriptors require 128B swizzle mode.");
-        const int start_byte = chunk_idx*48;
-        const int edge_gap = 128 - start_byte%128;                          // bytes from the chunk start to the swizzle atom's edge
-        const int cont_byte = start_byte + (edge_gap < 48 ? edge_gap : 32); // first box read through the leading byte offset
-        // 8 chunks span 3 swizzle atoms (384B); move on to the next atom every 128 bytes (rows * 128B swizzle bytes)
-        const uint64_t start_desc = base_desc + detail::matrix_descriptor_encode(start_byte%128 + (start_byte/128)*(ST::rows/TILE_ROW_DIM<T>)*2048);
-        const uint64_t cont_desc  = base_desc + detail::matrix_descriptor_encode(cont_byte%128 + (cont_byte/128)*(ST::rows/TILE_ROW_DIM<T>)*2048);
-        return (start_desc & ~(0x3FFFull << 16)) | ((cont_desc & 0x3FFFull) << 16) | (1ull << 52);
+        return chunk_descriptor<48>(chunk_idx);
     }
 #endif
 };

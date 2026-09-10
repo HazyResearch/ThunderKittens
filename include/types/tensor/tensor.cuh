@@ -33,22 +33,31 @@ template<typename T> concept all = requires {
 } // namespace tensor_allocator
 } // namespace ducks
 
-template<int _nblocks_per_sm, int _ncta, bool _managed = true> struct tensor_allocator {
+template<int _nblocks_per_sm, int _ncta, bool _managed = true, bool _exclusive = false> struct tensor_allocator {
     static_assert(_nblocks_per_sm == 1 || _nblocks_per_sm == 2, "nblocks_per_sm must be 1 or 2");
     static_assert(_ncta == 1 || _ncta == 2, "ncta must be 1 or 2");
+    static_assert(!_exclusive || _nblocks_per_sm == 1, "exclusive allocation requires nblocks_per_sm == 1");
+#if !defined(KITTENS_SM107)
+    static_assert(!_exclusive, "exclusive tensor memory allocation is only supported on SM107");
+#endif
 
     using identifier = ducks::tensor_allocator::identifier;
 
     static constexpr int nblocks_per_sm = _nblocks_per_sm;
-    static constexpr int cols =((MAX_TENSOR_COLS/nblocks_per_sm) / 32) * 32;
+    static constexpr bool exclusive = _exclusive;
+    static constexpr int alloc_cols = exclusive ? MAX_TENSOR_COLS_EXCLUSIVE : MAX_TENSOR_COLS;
+    static constexpr int cols =((alloc_cols/nblocks_per_sm) / 32) * 32;
     static_assert(cols>0 && cols%32==0, "cols must be a multiple of 32");
     static constexpr int ncta = _ncta;
     static constexpr bool managed = _managed;
 
     uint32_t addr;
 
+    template<ducks::tt::all TT>
+    static constexpr int tmem_cols = TT::cols / (4 / sizeof(typename TT::dtype));
+
     template<ducks::tt::all TT, int col_offset> __device__ inline void check_bounds() {
-        static_assert(col_offset >= 0 && col_offset + TT::cols <= cols, "Tile allocation extends out of bounds of the tensor allocator!");
+        static_assert(col_offset >= 0 && col_offset + tmem_cols<TT> <= cols, "Tile allocation extends out of bounds of the tensor allocator!");
     }
 
     __device__ inline void set_addr(uint32_t _addr) {
@@ -68,19 +77,17 @@ template<int _nblocks_per_sm, int _ncta, bool _managed = true> struct tensor_all
         //   1. This function must be called by one entire warp in a CTA
         //   2. `shared_addr` must be on shared memory
         //   3. The caller of this function is responsible for distributing the tensor memory address
-        if constexpr (ncta == 1) {
+        if constexpr (exclusive) {
             asm volatile(
-                "tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32  [%0], %1;\n"
-            ::  "l"(reinterpret_cast<uint64_t>(&shared_addr)), "n"(cols)
+                "tcgen05.alloc.exclusive.cta_group::%2.sync.aligned.shared::cta.b32 [%0], %1;\n"
+                :: "l"(reinterpret_cast<uint64_t>(&shared_addr)), "n"(cols), "n"(ncta)
             );
-            asm volatile("tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned;\n");
-        }
-        else {
+        } else {
             asm volatile(
-                "tcgen05.alloc.cta_group::2.sync.aligned.shared::cta.b32  [%0], %1;\n"
-            ::  "l"(reinterpret_cast<uint64_t>(&shared_addr)), "n"(cols)
+                "tcgen05.alloc.cta_group::%2.sync.aligned.shared::cta.b32 [%0], %1;\n"
+                :: "l"(reinterpret_cast<uint64_t>(&shared_addr)), "n"(cols), "n"(ncta)
             );
-            asm volatile("tcgen05.relinquish_alloc_permit.cta_group::2.sync.aligned;\n");
+            asm volatile("tcgen05.relinquish_alloc_permit.cta_group::%0.sync.aligned;\n" :: "n"(ncta));
         }
     }
 
@@ -96,8 +103,9 @@ template<int _nblocks_per_sm, int _ncta, bool _managed = true> struct tensor_all
     }
 
     template<ducks::tt::half TT> __device__ inline auto allocate(int superlane, int col_offset) {
+        static_assert(tmem_cols<TT> <= cols, "Tile allocation extends out of bounds of the tensor allocator!");
 #ifndef NDEBUG
-        int allocate_cols = std::is_same_v<typename TT::dtype, fp8e8m0> ? TT::cols/4 : TT::cols; // for fp8e8m0 and fp8e4m3, we need to divide by 4 to get the correct number of columns
+        constexpr int allocate_cols = tmem_cols<TT>; // sub-4-byte dtypes pack 4/sizeof(T) elements per 32-bit tensor memory column
         if(col_offset + allocate_cols > cols) {
             if(laneid() == 0) printf("Tile allocation extends out of bounds of the tensor allocator! col_offset: %d, TT::cols: %d, allocator cols: %d\n", col_offset, TT::cols, cols);
             asm volatile("trap;");
@@ -111,8 +119,9 @@ template<int _nblocks_per_sm, int _ncta, bool _managed = true> struct tensor_all
     }
 
     template<ducks::tt::full TT> __device__ inline auto allocate(int col_offset) {
+        static_assert(tmem_cols<TT> <= cols, "Tile allocation extends out of bounds of the tensor allocator!");
 #ifndef NDEBUG
-        int allocate_cols = std::is_same_v<typename TT::dtype, fp8e8m0> ? TT::cols/4 : TT::cols;
+        constexpr int allocate_cols = tmem_cols<TT>;
         if(col_offset + allocate_cols > cols) {
             if(laneid() == 0) printf("Tile allocation extends out of bounds of the tensor allocator! col_offset: %d, TT::cols: %d, allocator cols: %d\n", col_offset, TT::cols, cols);
             asm volatile("trap;");
@@ -125,13 +134,15 @@ template<int _nblocks_per_sm, int _ncta, bool _managed = true> struct tensor_all
         // Two requirements that are not explictly checked for versatility:
         //   1. This function must be called by one entire warp in a CTA
         //   2. The current instance must have called provision() previously
-        if constexpr (ncta == 1) {
-            asm volatile("tcgen05.dealloc.cta_group::1.sync.aligned.b32  %0, %1;\n"
-            ::  "r"(addr), "n"(cols)
+        if constexpr (exclusive) {
+            asm volatile(
+                "tcgen05.dealloc.exclusive.cta_group::%2.sync.aligned.b32 %0, %1;\n"
+                :: "r"(addr), "n"(cols), "n"(ncta)
             );
         } else {
-            asm volatile("tcgen05.dealloc.cta_group::2.sync.aligned.b32  %0, %1;\n"
-            ::  "r"(addr), "n"(cols)
+            asm volatile(
+                "tcgen05.dealloc.cta_group::%2.sync.aligned.b32 %0, %1;\n"
+                :: "r"(addr), "n"(cols), "n"(ncta)
             );
         }
     }

@@ -83,12 +83,12 @@ __device__ static inline void arrive(semaphore& bar, int dst_cta, uint32_t count
 
 /* ------- Non-tensor TMA transfers ------- */
 
-__device__ static inline void load_async(void *dst, void *src, uint32_t size_bytes, semaphore& bar, uint16_t cta_mask) {
+__device__ static inline void load_async(void *dst, void *src, uint32_t size_bytes, semaphore& bar, cluster_mask_t cta_mask) {
     if(laneid() == 0) {
         ::kittens::tma::cluster::load_async(dst, src, size_bytes, bar, cta_mask);
     }
 }
 template<typename T>
-__device__ static inline void load_async(T &dst, T &src, uint32_t size_bytes, semaphore& bar, uint16_t cta_mask) {
+__device__ static inline void load_async(T &dst, T &src, uint32_t size_bytes, semaphore& bar, cluster_mask_t cta_mask) {
     load_async(reinterpret_cast<void*>(&dst), reinterpret_cast<void*>(&src), size_bytes, bar, cta_mask);
 }

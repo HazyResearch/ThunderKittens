@@ -337,18 +337,19 @@ __device__ static inline void arrive(semaphore& bar, int dst_cta, uint32_t count
 
 /* ------- Non-tensor TMA transfers ------- */
 
-__device__ static inline void load_async(void *dst, void *src, uint32_t size_bytes, semaphore& bar, uint16_t cta_mask) {
+__device__ static inline void load_async(void *dst, void *src, uint32_t size_bytes, semaphore& bar, cluster_mask_t cta_mask) {
     asm volatile (
-        "cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes.multicast::cluster [%0], [%1], %2, [%3], %4;\n"
-        :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(dst))), 
-           "l"(src), "r"(size_bytes), 
+        "cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes.multicast::cluster" KITTENS_MCAST_SUFFIX
+        " [%0], [%1], %2, [%3], %4;\n"
+        :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(dst))),
+           "l"(src), "r"(size_bytes),
            "r"(static_cast<uint32_t>(__cvta_generic_to_shared(&bar))),
-           "h"(cta_mask)
+           KITTENS_MCAST_OPERAND(cta_mask)
         : "memory"
     );
 }
 template<typename T>
-__device__ static inline void load_async(T &dst, T &src, uint32_t size_bytes, semaphore& bar, uint16_t cta_mask) {
+__device__ static inline void load_async(T &dst, T &src, uint32_t size_bytes, semaphore& bar, cluster_mask_t cta_mask) {
     load_async(reinterpret_cast<void*>(&dst), reinterpret_cast<void*>(&src), size_bytes, bar, cta_mask);
 }
 

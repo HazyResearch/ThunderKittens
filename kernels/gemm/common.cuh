@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <vector>
 #include <cmath>
+#include <cstdlib>
 #include <thread>
 #include <chrono>
 #include <cuda_runtime.h>
@@ -233,12 +234,25 @@ static inline void reference_nvfp4_gemm(
 
 #endif
 
+#ifdef KITTENS_SM107
+template <typename KernelT>
+static inline void set_oversized_smem(KernelT *kernel, int smem_bytes) {
+    if (smem_bytes > kittens::MAX_SHARED_MEMORY - 1024) {
+        CUfunction f = nullptr;
+        CUDACHECK(cudaGetFuncBySymbol(&f, (const void *)kernel));
+        CUCHECK(cuFuncSetAttribute(f, CU_FUNC_ATTRIBUTE_SHARED_MEMORY_MODE, CU_SHARED_MEMORY_MODE_ALLOW_OVERSIZED_SHARED_MEMORY));
+    } else {
+        CUDACHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, smem_bytes));
+    }
+}
+#endif
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Correctness Check
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 template <typename T>
-static inline void check_correctness(T const* d_out, T const* d_out_ref, size_t count) {
+static inline void check_correctness(T const* d_out, T const* d_out_ref, size_t count, double rel_err_tol = -1.0) {
     std::vector<T> h_out(count);
     std::vector<T> h_out_ref(count);
 
@@ -247,12 +261,14 @@ static inline void check_correctness(T const* d_out, T const* d_out_ref, size_t 
 
     double abs_sum = 0.0, abs_max = 0.0;
     double err_sum = 0.0, err_max = 0.0;
+    size_t nonfinite = 0;
 
     for (size_t i = 0; i < count; ++i) {
         float val = kittens::base_types::convertor<float, T>::convert(h_out[i]);
         float ref = kittens::base_types::convertor<float, T>::convert(h_out_ref[i]);
         float err = std::abs(val - ref);
 
+        if (!std::isfinite(val)) ++nonfinite;
         abs_sum += std::abs(val);
         abs_max = std::max(abs_max, (double)std::abs(val));
         err_sum += err;
@@ -266,4 +282,13 @@ static inline void check_correctness(T const* d_out, T const* d_out_ref, size_t 
     std::cout << "abs max:  " << std::setw(12) << abs_max << std::endl;
     std::cout << "err mean: " << std::setw(12) << err_mean << std::endl;
     std::cout << "err max:  " << std::setw(12) << err_max << std::endl;
+
+    if (rel_err_tol >= 0.0) {
+        double rel_err = err_mean / abs_mean; // NaN if 0/0, inf if all-zero output
+        bool pass = nonfinite == 0 && abs_mean > 0.0 && rel_err <= rel_err_tol;
+        std::cout << (pass ? "correctness: PASS" : "correctness: FAIL")
+                  << " (rel err " << rel_err << ", tol " << rel_err_tol
+                  << ", nonfinite " << nonfinite << ")" << std::endl;
+        if (!pass) std::exit(EXIT_FAILURE);
+    }
 }
