@@ -29,6 +29,8 @@ ThunderKittens is built for NVIDIA GPUs. For AMD GPUs, check out [HipKittens](ht
 * The repository structure has changed. We no longer support the repo as a Python package (i.e., a top-level `setup.py`). Kernels under the `/kernels` directory must now be compiled individually. Makefiles, tests, and benchmarks reside alongside their corresponding kernel source files.
 * We no longer actively support Ampere GPUs. While ThunderKittens should still work on Ampere, we do not plan to bring further support to it.
 
+* **Sept 10, 2026:** **Vera Rubin support** is out! New PTX instructions for Rubin GPUs and various GEMM kernels are included in this release.
+
 ## Overview
 
 ThunderKittens is built from the hardware up; we do what the silicon tells us. And modern GPUs tell us that they want to work with fairly small tiles of data. A GPU is not really a 1000x1000 matrix multiply machine (even if it is often used as such); it’s a manycore processor where each core can efficiently run ~16x16 matrix multiplies. Consequently, ThunderKittens is built around manipulating tiles of data no smaller than 16x16 values.
@@ -390,6 +392,7 @@ Learn more about ThunderKittens and how GPUs work by checking out our blog posts
 * [We Bought the Whole GPU, So We're Damn Well Going to Use the Whole GPU, Sep 2025](https://hazyresearch.stanford.edu/blog/2025-09-28-tp-llama-main)
 * [Loads and Loads of Fluffy Kittens, Nov 2025](https://hazyresearch.stanford.edu/blog/2025-11-17-fluffy-kittens)
 * [ThunderKittens 2.0: Even Faster Kernels for Your GPUs, Feb 2026](https://hazyresearch.stanford.edu/blog/2026-02-19-tk-2)
+* [To Infinity and Beyond: ThunderKittens Now on NVIDIA Vera Rubin NVL72!, Sept 2026](https://www.together.ai/blog/to-infinity-and-beyond-thunderkittens-now-on-nvidia-vera-rubin-nvl72)
 
 Explore the Kittens Cinematic Universe:
 
