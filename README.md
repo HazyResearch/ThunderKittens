@@ -29,7 +29,7 @@ ThunderKittens is built for NVIDIA GPUs. For AMD GPUs, check out [HipKittens](ht
 * The repository structure has changed. We no longer support the repo as a Python package (i.e., a top-level `setup.py`). Kernels under the `/kernels` directory must now be compiled individually. Makefiles, tests, and benchmarks reside alongside their corresponding kernel source files.
 * We no longer actively support Ampere GPUs. While ThunderKittens should still work on Ampere, we do not plan to bring further support to it.
 
-* **Sept 10, 2026:** **Vera Rubin support** is out! New PTX instructions for Rubin GPUs and various GEMM kernels are included in this release.
+**Sept 10, 2026:** **Vera Rubin support** is out! New PTX instructions for Rubin GPUs and various GEMM kernels are included in this release.
 
 ## Overview
 
