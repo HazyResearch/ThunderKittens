@@ -5,7 +5,8 @@ using namespace kittens;
 
 namespace fp8_gemm {
 
-template <int _Nb, int _M_TILE_COUNT, int _N_PAIR_COUNT, int _SUPERGROUP_SIZE, int _LOAD_PIPE_DEPTH, int _EPI_PIPE_DEPTH>
+template <int _Nb, int _M_TILE_COUNT, int _N_PAIR_COUNT,
+          int _SUPERGROUP_SIZE, int _LOAD_PIPE_DEPTH, int _EPI_PIPE_DEPTH>
 struct config {
     static_assert(_Nb == 64 || _Nb == 128 || _Nb == 160 || _Nb == 256,
                   "Nb must be 64, 128, 160, or 256");
@@ -14,6 +15,7 @@ struct config {
     static_assert(_SUPERGROUP_SIZE >= 1, "SUPERGROUP_SIZE must be at least 1");
     static_assert(_LOAD_PIPE_DEPTH >= 1 && _LOAD_PIPE_DEPTH <= 8, "LOAD_PIPE_DEPTH must be 1-8");
     static_assert(_EPI_PIPE_DEPTH >= 1, "EPI_PIPE_DEPTH must be at least 1");
+    static_assert(_Nb % _EPI_PIPE_DEPTH == 0 && (_Nb / _EPI_PIPE_DEPTH) % 32 == 0, "FP8 epilogue slices must be a multiple of 32 columns");
 
     static constexpr int Mb = 256;
     static constexpr int Nb = _Nb;
@@ -25,6 +27,7 @@ struct config {
 
     static constexpr bool SINGLE_TILE = M_TILE_COUNT == 1;
     static constexpr bool USE_PREFERRED_CLUSTER = N_PAIR_COUNT > 1;
+
     static constexpr int LOAD_PIPE_DEPTH = _LOAD_PIPE_DEPTH;
     static constexpr int MMA_PIPE_DEPTH = SINGLE_TILE ? 2 : 1;
     static constexpr int EPI_PIPE_DEPTH = _EPI_PIPE_DEPTH;
@@ -36,11 +39,12 @@ struct config {
     static constexpr int NUM_WARPS = NUM_WARPGROUPS * WARPGROUP_WARPS;
     static constexpr int NUM_THREADS = NUM_WARPS * WARP_THREADS;
 
-    static constexpr int NUM_D_TILES = 2;
+    static constexpr int NUM_D_TILES = EPI_PIPE_DEPTH >= 2 && LOAD_PIPE_DEPTH <= 5 ? 4 : 2;
     static constexpr int NUM_DRAIN_SEMS = 2;
 
+    // One fp32 accumulator per M tile per MMA pipeline stage, each Nb tmem columns wide.
     static constexpr int TMEM_COLS = M_TILE_COUNT * MMA_PIPE_DEPTH * Nb;
-    static_assert(TMEM_COLS <= MAX_TENSOR_COLS,
+    static_assert(TMEM_COLS <= MAX_TENSOR_COLS_EXCLUSIVE,
                   "Tensor-memory allocation exceeds allocator capacity");
 };
 
@@ -53,17 +57,19 @@ __device__ inline int2 get_job_coords(int block_idx, int num_row_blocks, int num
 
 template <typename C>
 struct globals {
-    using A_tile = st_fp8e4m3<C::Mb/2, C::Kb>;
-    using B_tile = st_fp8e4m3<C::Nb/2, C::Kb>;
-    using D_tile = st_bf<C::Mb/2, C::Nb/C::EPI_PIPE_DEPTH>;
+    using A_tile = st_fp8e4m3<C::Mb / 2, C::Kb>;
+    using B_tile = st_fp8e4m3<C::Nb / 2, C::Kb>;
+    using D_tile = st_fp8e4m3<C::Mb / 2, C::Nb / C::EPI_PIPE_DEPTH>;
 
     using A_gl = gl<fp8e4m3, 1, 1, -1, -1, A_tile>;
     using B_gl = gl<fp8e4m3, 1, 1, -1, -1, B_tile>;
-    using D_gl = gl<bf16, 1, 1, -1, -1, D_tile>;
+    using D_gl = gl<fp8e4m3, 1, 1, -1, -1, D_tile>;
+    using scale_gl = gl<float, 1, 1, 1, 1>;
 
     A_gl A;
     B_gl B;
     D_gl D;
+    scale_gl a_scale, b_scale, d_scale; // (1,) each; d_scale converts compute range to e4m3 range
 
     struct input_tiles_t {
         A_tile A[C::M_TILE_COUNT];
@@ -90,6 +96,35 @@ struct globals {
     }
 };
 
+// Lane-row epilogue step: tmem load, scale to e4m3, packed 16-byte smem store.
+template <int N, ducks::tt::all TM, ducks::st::all ST>
+__device__ __forceinline__ void load_scale_store_fp8_lanerow(ST &dst, const TM &src,
+                                                             int src_col, int dst_col, float scale) {
+    static_assert(N == 16 || N == 32);
+    static_assert(std::is_same_v<typename TM::dtype, float>);
+    static_assert(std::is_same_v<typename ST::dtype, fp8e4m3>);
+    static_assert(TM::rows == 128);
+    rv_fl<32*N, naive_l> values;
+    warpgroup::load_async(values, src, src_col);
+    const float2 scale2 = make_float2(scale, scale);
+    const float2 zero2 = make_float2(0.0f, 0.0f);
+    const int row = 32 * warpgroup::warpid() + laneid();
+    const uint32_t smem = static_cast<uint32_t>(__cvta_generic_to_shared(dst.data));
+    #pragma unroll
+    for (int j = 0; j < N; j += 16) {
+        uint32_t packed[4];
+        #pragma unroll
+        for (int q = 0; q < 16; q += 4) {
+            const float2 lo = base_ops::fma_AxBtC::op<float2>(make_float2(values[j+q][0], values[j+q+1][0]), scale2, zero2);
+            const float2 hi = base_ops::fma_AxBtC::op<float2>(make_float2(values[j+q+2][0], values[j+q+3][0]), scale2, zero2);
+            packed[q/4] = __nv_fp8x4_e4m3(make_float4(lo.x, lo.y, hi.x, hi.y)).__x;
+        }
+        const uint32_t dst_addr = ST::idx(smem, {row, dst_col + j});
+        asm volatile("st.shared.v4.b32 [%0], {%1, %2, %3, %4};" ::
+                     "r"(dst_addr), "r"(packed[0]), "r"(packed[1]), "r"(packed[2]), "r"(packed[3]) : "memory");
+    }
+}
+
 template <typename C>
 __device__ inline void kernel(const globals<C> &g) {
     using G = globals<C>;
@@ -101,21 +136,27 @@ __device__ inline void kernel(const globals<C> &g) {
     }
 
     const int warpgroup_id = warpgroup::groupid();
+
     const int cta_rank = cluster_ctarank();
-    const int cluster_id = clusterIdx().x;
     const int cta_in_pair = C::USE_PREFERRED_CLUSTER ? (cta_rank & 1) : cta_rank;
     const int pair_id = C::USE_PREFERRED_CLUSTER ? (cta_rank >> 1) : 0;
     const int pair_leader = C::USE_PREFERRED_CLUSTER ? (cta_rank & ~1) : 0;
+
+    const int cluster_id = clusterIdx().x;
+
     const int cluster_width = C::USE_PREFERRED_CLUSTER ? cluster_nctarank() : C::CLUSTER_SIZE;
     const int num_pairs = cluster_width >> 1;
     const uint32_t full_mask = (1u << cluster_width) - 1;
-    const uint32_t pair_mask = (0x55555555u & full_mask) << cta_in_pair; // one CTA of every pair
+    const uint32_t pair_mask = (0x55555555u & full_mask) << cta_in_pair;
     const uint32_t self_mask = uint32_t(1u << cta_rank);
     const uint32_t pair_ctas_mask = uint32_t(0b11u << pair_leader);
+
     const int num_row_blocks = g.D.rows() / (C::M_TILE_COUNT * C::Mb);
     const int num_col_blocks = (g.D.cols() + C::N_PAIR_COUNT*C::Nb - 1) / (C::N_PAIR_COUNT * C::Nb);
     const int num_blocks = num_row_blocks * num_col_blocks;
     const int num_red_blocks = g.A.cols() / C::Kb;
+
+    // Static pair-slot scheduling is deliberate; CLC measured neutral-to-negative here.
     const int pair_slot = blockIdx.x >> 1;
     const int num_pair_slots = gridDim.x >> 1;
     int num_task_iters = 0;
@@ -132,7 +173,7 @@ __device__ inline void kernel(const globals<C> &g) {
     tma_swizzle_allocator sm_allocator((int*)&__shm[0]);
     typename G::input_tiles_t (&input_tiles)[C::LOAD_PIPE_DEPTH] = sm_allocator.allocate<G::input_tiles_t, C::LOAD_PIPE_DEPTH>();
     typename G::outputs_t &output_tiles = sm_allocator.allocate<G::outputs_t>();
-    tensor_allocator<1, C::CLUSTER_SIZE, false> tm_alloc;
+    tensor_allocator<1, C::CLUSTER_SIZE, false, true> tm_alloc;
 
     __shared__ uint32_t tmem_addr;
     __shared__ semaphore tmem_provisioned, tmem_finished;
@@ -186,7 +227,8 @@ __device__ inline void kernel(const globals<C> &g) {
                         for (int t = 0; t < C::M_TILE_COUNT; ++t)
                             tma::cluster::load_async(input_tiles[stage].A[t], g.A, {(row_block_idx*C::M_TILE_COUNT + t)*2 + cta_in_pair, i}, tiles_arrived[stage], pair_mask, pair_leader);
                     }
-                    tma::cluster::load_async(input_tiles[stage].B, g.B, {col_block_idx*2 + cta_in_pair, i}, tiles_arrived[stage], self_mask, 0);
+                    tma::cluster::load_async(input_tiles[stage].B, g.B, {col_block_idx*2 + cta_in_pair, i},
+                                            tiles_arrived[stage], self_mask, 0);
                     update_phasebit<1>(bitfield, stage);
                     stage = ring_advance<C::LOAD_PIPE_DEPTH>(stage);
                 }
@@ -203,7 +245,7 @@ __device__ inline void kernel(const globals<C> &g) {
                 int block_idx;
                 if (!next_job(task_iter, block_idx)) break;
                 const int p = task_iter % C::MMA_PIPE_DEPTH;
-                wait(outputs_finished[p], ((task_iter + C::MMA_PIPE_DEPTH) / C::MMA_PIPE_DEPTH) % 2);
+                wait(outputs_finished[p], ((task_iter + C::MMA_PIPE_DEPTH)/C::MMA_PIPE_DEPTH) % 2);
                 tensor_after_thread_sync();
                 auto mma_block = [&](bool init) {
                     tma::expect_bytes(tiles_arrived[stage], 2*sizeof(G::input_tiles_t));
@@ -232,6 +274,7 @@ __device__ inline void kernel(const globals<C> &g) {
                     stage = ring_advance<C::LOAD_PIPE_DEPTH>(stage);
                 };
                 mma_block(true);
+                #pragma unroll 1
                 for (int i = 1; i < num_red_blocks; i++) mma_block(false);
                 tensor_commit<2>(outputs_arrived, pair_ctas_mask);
             }
@@ -245,11 +288,15 @@ __device__ inline void kernel(const globals<C> &g) {
         wait(tmem_provisioned, 0);
         tm_alloc.set_addr(tmem_addr);
         constexpr int EPI_COLS = C::Nb / C::EPI_PIPE_DEPTH;
+        constexpr int LOAD_COLS = 16; // lane-row segment width
+        constexpr int STORE_WAIT_COUNT = C::SINGLE_TILE ? 1 : C::NUM_D_TILES - 1;
         constexpr int NSUB = C::M_TILE_COUNT * C::EPI_PIPE_DEPTH;
         full_tt_fl<C::M_TILE_COUNT*C::Nb> d_tt[C::MMA_PIPE_DEPTH];
         #pragma unroll
         for (int p = 0; p < C::MMA_PIPE_DEPTH; ++p)
             d_tt[p] = tm_alloc.template allocate<full_tt_fl<C::M_TILE_COUNT*C::Nb>>(p*C::Nb);
+        const float global_scale = g.a_scale[{0}] * g.b_scale[{0}] * g.d_scale[{0}];
+
         for (int task_iter = 0; ; ++task_iter) {
             int block_idx;
             if (!next_job(task_iter, block_idx)) break;
@@ -260,20 +307,20 @@ __device__ inline void kernel(const globals<C> &g) {
 
             #pragma unroll
             for (int i = 0; i < NSUB; i++) {
-                rt_fl<C::Mb / 8, EPI_COLS> d_reg;
-                warpgroup::load_async(d_reg, d_tt[p].template subtile<full_tt_fl<EPI_COLS>>(0, EPI_COLS*i));
+                const int dslot = i % C::NUM_D_TILES;
+                if (!C::SINGLE_TILE || i >= 2) {
+                    warpgroup::tma::store_async_read_wait<STORE_WAIT_COUNT>();
+                    warpgroup::sync(1);
+                }
+                #pragma unroll
+                for (int seg = 0; seg < EPI_COLS; seg += LOAD_COLS)
+                    load_scale_store_fp8_lanerow<LOAD_COLS>(output_tiles.D[dslot], d_tt[p], EPI_COLS*i + seg, seg, global_scale);
                 if ((!C::SINGLE_TILE && i == NSUB/2 - 1) || i == NSUB - 1) {
                     tensor_load_wait();
                     tensor_before_thread_sync();
                     warpgroup::sync(1);
                     warpgroup::tma::cluster::arrive(outputs_finished[!C::SINGLE_TILE ? (i == NSUB - 1) : p], pair_leader, 1);
                 }
-                rt_bf<C::Mb / 8, EPI_COLS> d_bf;
-                warp::copy(d_bf, d_reg);
-                warpgroup::tma::store_async_read_wait<C::NUM_D_TILES-1>();
-                warpgroup::sync(1);
-                const int dslot = i % C::NUM_D_TILES;
-                warpgroup::store(output_tiles.D[dslot], d_bf);
                 warpgroup::sync(1);
                 const int mt = i / C::EPI_PIPE_DEPTH;
                 const int store_row = (row_block_idx*C::M_TILE_COUNT + mt)*2 + cta_in_pair;
@@ -307,6 +354,17 @@ __global__ void kernel_entrypoint(const __grid_constant__ fp8_gemm::globals<C> g
     fp8_gemm::kernel<C>(g);
 }
 
+__global__ void reference_fp8_output_kernel(__nv_fp8_e4m3 *D, const __nv_fp8_e4m3 *A,
+                                           const __nv_fp8_e4m3 *B, float sAB, int M, int N, int K) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= M || col >= N) return;
+    float acc = 0.0f;
+    for (int k = 0; k < K; ++k)
+        acc += (float)A[(size_t)row*K + k] * (float)B[(size_t)col*K + k];
+    D[(size_t)row*N + col] = __nv_fp8_e4m3(acc * sAB);
+}
+
 template <typename C>
 __host__ void run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     using G = fp8_gemm::globals<C>;
@@ -315,7 +373,8 @@ __host__ void run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     std::cout << "Template: Nb=" << C::Nb << " M_TILE_COUNT=" << C::M_TILE_COUNT
               << " N_PAIR_COUNT=" << C::N_PAIR_COUNT
               << " SUPERGROUP_SIZE=" << C::SUPERGROUP_SIZE
-              << " LOAD_PIPE_DEPTH=" << C::LOAD_PIPE_DEPTH << " EPI_PIPE_DEPTH=" << C::EPI_PIPE_DEPTH << "\n";
+              << " LOAD_PIPE_DEPTH=" << C::LOAD_PIPE_DEPTH
+              << " EPI_PIPE_DEPTH=" << C::EPI_PIPE_DEPTH << "\n";
 
     constexpr size_t M_STEP = C::M_TILE_COUNT * C::Mb;
     if (M % M_STEP != 0 || K < C::Kb || K % C::Kb != 0) {
@@ -327,32 +386,40 @@ __host__ void run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     // L2 cache eviction - multiple buffer groups
     int l2_cache_size;
     CUDACHECK(cudaDeviceGetAttribute(&l2_cache_size, cudaDevAttrL2CacheSize, 0));
-    const size_t arg_size = M*K + N*K + M*N*2;
+    const size_t arg_size = M*K + N*K + M*N;
     const size_t ideal_arg_size = size_t(l2_cache_size) * 3;
     const int arg_group_count = (arg_size > ideal_arg_size) ? 1 : int(ideal_arg_size / arg_size) + 1;
 
     // Allocate device memory
     std::vector<__nv_fp8_e4m3*> d_A(arg_group_count);
     std::vector<__nv_fp8_e4m3*> d_B(arg_group_count);
-    std::vector<__nv_bfloat16*> d_D(arg_group_count);
-    __nv_bfloat16* d_D_ref;
+    std::vector<__nv_fp8_e4m3*> d_D(arg_group_count);
+    __nv_fp8_e4m3* d_D_ref;
     for (int i = 0; i < arg_group_count; i++) {
         CUDACHECK(cudaMalloc(&d_A[i], M*K));
         CUDACHECK(cudaMalloc(&d_B[i], N*K));
-        CUDACHECK(cudaMalloc(&d_D[i], M*N*sizeof(__nv_bfloat16)));
+        CUDACHECK(cudaMalloc(&d_D[i], M*N*sizeof(__nv_fp8_e4m3)));
     }
-    CUDACHECK(cudaMalloc(&d_D_ref, M*N*sizeof(__nv_bfloat16)));
+    CUDACHECK(cudaMalloc(&d_D_ref, M*N*sizeof(__nv_fp8_e4m3)));
+    float *d_scales; // {a_scale, b_scale, d_scale}
+    CUDACHECK(cudaMalloc(&d_scales, 3*sizeof(float)));
 
-    // Initialize matrices with random values on device
+    // Initialize matrices with random values on device; 448 is the max finite e4m3 magnitude.
+    const float inv_scale = 448.0f;
+    const float s = 1.0f / inv_scale, d = 1.0f;
     uint64_t seed = 2024;
     for (int i = 0; i < arg_group_count; i++) {
-        fill<__nv_fp8_e4m3, FillMode::RANDOM>(d_A[i], M*K, seed + i*100, -1.0f, 1.0f);
-        fill<__nv_fp8_e4m3, FillMode::RANDOM>(d_B[i], N*K, seed + i*100 + 1, -1.0f, 1.0f);
-        fill<__nv_bfloat16, FillMode::CONSTANT>(d_D[i], M*N, 0.0f);
+        fill<__nv_fp8_e4m3, FillMode::RANDOM>(d_A[i], M*K, seed + i*100, -inv_scale, inv_scale);
+        fill<__nv_fp8_e4m3, FillMode::RANDOM>(d_B[i], N*K, seed + i*100 + 1, -inv_scale, inv_scale);
+        fill<__nv_fp8_e4m3, FillMode::CONSTANT>(d_D[i], M*N, 0.0f);
     }
+    const float h_scales[3] = {s, s, d};
+    CUDACHECK(cudaMemcpy(d_scales, h_scales, sizeof(h_scales), cudaMemcpyHostToDevice));
 
-    // Compute reference GEMM on device
-    reference_gemm<__nv_fp8_e4m3, __nv_bfloat16>(d_D_ref, d_A[0], d_B[0], M, N, K);
+    {
+        dim3 block(16, 16), grid((N + 15) / 16, (M + 15) / 16);
+        reference_fp8_output_kernel<<<grid, block>>>(d_D_ref, d_A[0], d_B[0], s*s*d, M, N, K);
+    }
     CUDACHECK(cudaDeviceSynchronize());
 
     // Prepare kernel inputs
@@ -361,16 +428,17 @@ __host__ void run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
         typename G::A_gl Ag{reinterpret_cast<fp8e4m3*>(d_A[i]), nullptr, nullptr, M, K};
         typename G::B_gl Bg{reinterpret_cast<fp8e4m3*>(d_B[i]), nullptr, nullptr, N, K};
         typename G::D_gl Dg{d_D[i], nullptr, nullptr, M, N};
-        g.push_back(G{Ag, Bg, Dg});
+        typename G::scale_gl As{d_scales+0, nullptr, nullptr, nullptr, nullptr};
+        typename G::scale_gl Bs{d_scales+1, nullptr, nullptr, nullptr, nullptr};
+        typename G::scale_gl Ds{d_scales+2, nullptr, nullptr, nullptr, nullptr};
+        g.push_back(G{Ag, Bg, Dg, As, Bs, Ds});
     }
 
-    // Set kernel attributes and prepare launch configuration
     set_oversized_smem(kernel_entrypoint<C>, g[0].dynamic_shared_memory());
     LaunchConfig<true, true> launch_config(g[0].grid(), g[0].block(), g[0].dynamic_shared_memory(), 0,
                                            dim3(C::CLUSTER_SIZE * C::N_PAIR_COUNT, 1, 1),
                                            dim3(C::CLUSTER_SIZE, 1, 1));
 
-    // Number of iterations
     int num_warmups = ncu ? 0 : 5;
     int num_iters = ncu ? 1 : 10;
 
@@ -400,7 +468,6 @@ __host__ void run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
     std::cout << "Average kernel execution time: " << microseconds << " us\n";
     std::cout << "Achieved performance: " << tflops << " TFLOPs\n";
 
-    // Check correctness
     check_correctness(d_D[0], d_D_ref, M * N, 5e-6);
 
     // Cleanup
@@ -410,6 +477,7 @@ __host__ void run_benchmark(size_t M, size_t N, size_t K, bool ncu = false) {
         CUDACHECK(cudaFree(d_D[i]));
     }
     CUDACHECK(cudaFree(d_D_ref));
+    CUDACHECK(cudaFree(d_scales));
     CUDACHECK(cudaEventDestroy(start));
     CUDACHECK(cudaEventDestroy(stop));
 }
@@ -418,29 +486,29 @@ int main(int argc, char **) {
     bool ncu = argc > 1;
 
     // Template parameters: Nb, M_TILE_COUNT, N_PAIR_COUNT, SUPERGROUP_SIZE, LOAD_PIPE_DEPTH, EPI_PIPE_DEPTH
-    run_benchmark<fp8_gemm::config<64, 1, 1, 1, 8, 4>>( 1024,  1024,  1024, ncu);
-    run_benchmark<fp8_gemm::config<160, 1, 1, 1, 6, 5>>( 2048,  2048,  2048, ncu);
-    run_benchmark<fp8_gemm::config<160, 2, 1, 1, 7, 5>>( 4096,  4096,  4096, ncu);
-    run_benchmark<fp8_gemm::config<256, 2, 4, 6, 6, 8>>( 8192,  8192,  8192, ncu);
-    run_benchmark<fp8_gemm::config<256, 2, 4, 4, 5, 8>>(16384, 16384, 16384, ncu);
-    run_benchmark<fp8_gemm::config<256, 2, 4, 4, 5, 8>>(32768, 32768, 32768, ncu);
+    run_benchmark<fp8_gemm::config<64, 1, 1, 1, 8, 1>>( 1024,  1024,  1024, ncu);
+    run_benchmark<fp8_gemm::config<160, 1, 1, 1, 8, 1>>( 2048,  2048,  2048, ncu);
+    run_benchmark<fp8_gemm::config<160, 2, 1, 1, 6, 1>>( 4096,  4096,  4096, ncu);
+    run_benchmark<fp8_gemm::config<256, 2, 4, 6, 6, 2>>( 8192,  8192,  8192, ncu);
+    run_benchmark<fp8_gemm::config<256, 2, 4, 7, 5, 2>>(16384, 16384, 16384, ncu);
+    run_benchmark<fp8_gemm::config<256, 2, 4, 5, 5, 8>>(32768, 32768, 32768, ncu);
 
-    // run_benchmark<fp8_gemm::config<64, 1, 1, 1, 8, 4>>( 1024,   128,   128, ncu);
-    // run_benchmark<fp8_gemm::config<64, 1, 1, 1, 8, 4>>( 1024,   512,   512, ncu);
-    // run_benchmark<fp8_gemm::config<64, 1, 1, 1, 8, 2>>( 1024,  1024,  1024, ncu);
-    // run_benchmark<fp8_gemm::config<128, 1, 1, 1, 8, 4>>( 1024,  2048,  2048, ncu);
-    // run_benchmark<fp8_gemm::config<160, 1, 1, 1, 8, 5>>( 1024,  4096,  4096, ncu);
-    // run_benchmark<fp8_gemm::config<256, 2, 1, 1, 6, 4>>( 1024,  8192,  8192, ncu);
-    // run_benchmark<fp8_gemm::config<256, 2, 4, 5, 6, 8>>( 1024, 16384, 16384, ncu);
-    // run_benchmark<fp8_gemm::config<256, 2, 4, 6, 6, 8>>( 1024, 32768, 32768, ncu);
+    // run_benchmark<fp8_gemm::config<64, 1, 1, 1, 8, 1>>( 1024,   128,   128, ncu);
+    // run_benchmark<fp8_gemm::config<64, 1, 1, 1, 8, 1>>( 1024,   512,   512, ncu);
+    // run_benchmark<fp8_gemm::config<64, 1, 1, 1, 8, 1>>( 1024,  1024,  1024, ncu);
+    // run_benchmark<fp8_gemm::config<128, 1, 1, 1, 8, 2>>( 1024,  2048,  2048, ncu);
+    // run_benchmark<fp8_gemm::config<160, 1, 1, 1, 8, 1>>( 1024,  4096,  4096, ncu);
+    // run_benchmark<fp8_gemm::config<256, 2, 1, 1, 6, 2>>( 1024,  8192,  8192, ncu);
+    // run_benchmark<fp8_gemm::config<256, 2, 4, 6, 6, 2>>( 1024, 16384, 16384, ncu);
+    // run_benchmark<fp8_gemm::config<256, 2, 4, 5, 6, 4>>( 1024, 32768, 32768, ncu);
 
     // run_benchmark<fp8_gemm::config<64, 1, 1, 1, 8, 1>>( 1024,   384,  3584, ncu);
-    // run_benchmark<fp8_gemm::config<128, 1, 1, 1, 8, 4>>( 1024,  3072,  3584, ncu);
-    // run_benchmark<fp8_gemm::config<256, 2, 1, 1, 6, 4>>( 1024,  9216,  3584, ncu);
-    // run_benchmark<fp8_gemm::config<256, 2, 1, 1, 6, 8>>( 1024, 12288,  3584, ncu);
-    // run_benchmark<fp8_gemm::config<256, 2, 1, 8, 6, 4>>( 1024, 24576,  3584, ncu);
-    // run_benchmark<fp8_gemm::config<256, 2, 1, 12, 6, 8>>( 1024, 36864,  3584, ncu);
-    // run_benchmark<fp8_gemm::config<256, 2, 1, 12, 6, 4>>( 1024, 48768,  3584, ncu);
+    // run_benchmark<fp8_gemm::config<128, 1, 1, 1, 8, 1>>( 1024,  3072,  3584, ncu);
+    // run_benchmark<fp8_gemm::config<256, 2, 1, 1, 6, 2>>( 1024,  9216,  3584, ncu);
+    // run_benchmark<fp8_gemm::config<256, 2, 1, 1, 6, 2>>( 1024, 12288,  3584, ncu);
+    // run_benchmark<fp8_gemm::config<256, 2, 1, 8, 6, 2>>( 1024, 24576,  3584, ncu);
+    // run_benchmark<fp8_gemm::config<256, 2, 1, 8, 6, 4>>( 1024, 36864,  3584, ncu);
+    // run_benchmark<fp8_gemm::config<256, 2, 1, 12, 6, 2>>( 1024, 48768,  3584, ncu);
 
     return 0;
 }
