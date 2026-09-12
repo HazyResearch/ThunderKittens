@@ -50,6 +50,7 @@ int main(int argc, char **argv) {
 
     float *q = new float[TOTAL_ELEMENTS_QK];
     float *a = new float[TOTAL_ELEMENTS_A];
+    float *b = new float[]
     float *k = new float[TOTAL_ELEMENTS_QK];
     float *v = new float[TOTAL_ELEMENTS_VO];
     float *o_ref = new float[TOTAL_ELEMENTS_VO];
