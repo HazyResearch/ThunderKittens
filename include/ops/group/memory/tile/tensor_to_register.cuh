@@ -491,3 +491,92 @@ __device__ inline static void store_async(TM &dst, const RT &src) {
         }
     }
 }
+
+/**
+ * @brief Load contiguous columns from one tensor-memory row per lane.
+ *
+ * @tparam RV The naive register vector type.
+ * @param dst[out] Per-lane destination registers.
+ * @param src[in] Source tensor tile.
+ * @param col_offset[in] First tensor-memory column to load.
+ */
+template<ducks::rv::naive_layout RV, ducks::tt::all TM>
+__device__ inline static void load_async(RV &dst, const TM &src, int col_offset=0) {
+    static_assert(std::is_same_v<typename TM::dtype, float>, "Tensor-row loads require a float tensor tile");
+    static_assert(std::is_same_v<typename RV::dtype, float>, "Tensor-row loads require a float register vector");
+    static_assert(RV::length == 32*16 || RV::length == 32*32,
+                  "Tensor-row loads support 16 or 32 columns per lane");
+    static_assert(TM::rows == 32*GROUP_WARPS, "Tensor-row loads require one tensor-memory row per lane");
+    constexpr int lane_cols = RV::length / 32;
+
+    if constexpr (GROUP_WARPS == 1) {
+        auto load_src = src.template subtile<tt<typename TM::dtype, 32, lane_cols>>(0, col_offset);
+        if constexpr (lane_cols == 16) {
+            asm volatile(
+                "{tcgen05.ld.sync.aligned.32x32b.x16.b32 "
+                "{%0,%1,%2,%3,%4,%5,%6,%7,%8,%9,%10,%11,%12,%13,%14,%15}, [%16];}"
+                : "=f"(dst.data[0][0]),  "=f"(dst.data[1][0]),  "=f"(dst.data[2][0]),  "=f"(dst.data[3][0]),
+                  "=f"(dst.data[4][0]),  "=f"(dst.data[5][0]),  "=f"(dst.data[6][0]),  "=f"(dst.data[7][0]),
+                  "=f"(dst.data[8][0]),  "=f"(dst.data[9][0]),  "=f"(dst.data[10][0]), "=f"(dst.data[11][0]),
+                  "=f"(dst.data[12][0]), "=f"(dst.data[13][0]), "=f"(dst.data[14][0]), "=f"(dst.data[15][0])
+                : "r"(load_src.addr));
+        }
+        else {
+            asm volatile(
+                "{tcgen05.ld.sync.aligned.32x32b.x32.b32 "
+                "{%0,%1,%2,%3,%4,%5,%6,%7,%8,%9,%10,%11,%12,%13,%14,%15,"
+                "%16,%17,%18,%19,%20,%21,%22,%23,%24,%25,%26,%27,%28,%29,%30,%31}, [%32];}"
+                : "=f"(dst.data[0][0]),  "=f"(dst.data[1][0]),  "=f"(dst.data[2][0]),  "=f"(dst.data[3][0]),
+                  "=f"(dst.data[4][0]),  "=f"(dst.data[5][0]),  "=f"(dst.data[6][0]),  "=f"(dst.data[7][0]),
+                  "=f"(dst.data[8][0]),  "=f"(dst.data[9][0]),  "=f"(dst.data[10][0]), "=f"(dst.data[11][0]),
+                  "=f"(dst.data[12][0]), "=f"(dst.data[13][0]), "=f"(dst.data[14][0]), "=f"(dst.data[15][0]),
+                  "=f"(dst.data[16][0]), "=f"(dst.data[17][0]), "=f"(dst.data[18][0]), "=f"(dst.data[19][0]),
+                  "=f"(dst.data[20][0]), "=f"(dst.data[21][0]), "=f"(dst.data[22][0]), "=f"(dst.data[23][0]),
+                  "=f"(dst.data[24][0]), "=f"(dst.data[25][0]), "=f"(dst.data[26][0]), "=f"(dst.data[27][0]),
+                  "=f"(dst.data[28][0]), "=f"(dst.data[29][0]), "=f"(dst.data[30][0]), "=f"(dst.data[31][0])
+                : "r"(load_src.addr));
+        }
+    }
+    else {
+        static_assert(GROUP_WARPS == 4, "Tensor-row loads support warp or warpgroup scope");
+        auto src_subtile = src.template subtile<tt<typename TM::dtype, 32, TM::cols>>(32*warpid(), 0);
+        ::kittens::group<1>::load_async(dst, src_subtile, col_offset);
+    }
+}
+
+#if defined(KITTENS_SM103) || defined(KITTENS_SM107)
+/**
+ * @brief Load 16 contiguous columns and their maximum absolute value from one tensor-memory row per lane.
+ *
+ * @param dst[out] Per-lane destination registers.
+ * @param max_abs[out] Maximum absolute value of the loaded registers.
+ * @param src[in] Source tensor tile.
+ * @param col_offset[in] First tensor-memory column to load.
+ */
+template<ducks::rv::naive_layout RV, ducks::tt::all TM>
+__device__ inline static void load_async_max_abs(RV &dst, float &max_abs, const TM &src, int col_offset=0) {
+    static_assert(std::is_same_v<typename TM::dtype, float>, "Tensor-row reduction loads require a float tensor tile");
+    static_assert(std::is_same_v<typename RV::dtype, float>, "Tensor-row reduction loads require a float register vector");
+    static_assert(RV::length == 32*16, "Tensor-row reduction loads require 16 columns per lane");
+    static_assert(TM::rows == 32*GROUP_WARPS, "Tensor-row reduction loads require one tensor-memory row per lane");
+    constexpr int lane_cols = RV::length / 32;
+
+    if constexpr (GROUP_WARPS == 1) {
+        auto load_src = src.template subtile<tt<typename TM::dtype, 32, lane_cols>>(0, col_offset);
+        asm volatile(
+            "{tcgen05.ld.red.sync.aligned.32x32b.x16.max.abs.f32 "
+            "{%0,%1,%2,%3,%4,%5,%6,%7,%8,%9,%10,%11,%12,%13,%14,%15}, %16, [%17];}"
+            : "=f"(dst.data[0][0]),  "=f"(dst.data[1][0]),  "=f"(dst.data[2][0]),  "=f"(dst.data[3][0]),
+              "=f"(dst.data[4][0]),  "=f"(dst.data[5][0]),  "=f"(dst.data[6][0]),  "=f"(dst.data[7][0]),
+              "=f"(dst.data[8][0]),  "=f"(dst.data[9][0]),  "=f"(dst.data[10][0]), "=f"(dst.data[11][0]),
+              "=f"(dst.data[12][0]), "=f"(dst.data[13][0]), "=f"(dst.data[14][0]), "=f"(dst.data[15][0]),
+              "=f"(max_abs)
+            : "r"(load_src.addr));
+    }
+    else {
+        static_assert(GROUP_WARPS == 4, "Tensor-row reduction loads support warp or warpgroup scope");
+        auto src_subtile = src.template subtile<tt<typename TM::dtype, 32, TM::cols>>(32*warpid(), 0);
+        ::kittens::group<1>::load_async_max_abs(dst, max_abs, src_subtile, col_offset);
+    }
+}
+#endif
