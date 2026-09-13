@@ -1,5 +1,6 @@
 #include "kittens.cuh"
 #include "prototype.cuh"
+#include "pyutils/cuda_utils.cuh"
 
 #ifdef TORCH_COMPILE
 #define TK_COMPILE_FUSED_ROTARY
@@ -111,17 +112,14 @@ template<int _headdim> struct rotary_template {
     };
 };
 
-#ifdef TK_COMPILE_FUSED_ROTARY
-#include "pyutils/torchutils.cuh"
-#include <iostream>
-#include <ATen/Functions.h>
 template<int ATTN_D>
 void dispatch_fused_rotary(
     bf16 * d_o,
     bf16 * d_x,
     bf16 * d_sin_in,
     bf16 * d_cos_in,
-    const int ATTN_B, const int ATTN_H, const int ATTN_N
+    const int ATTN_B, const int ATTN_H, const int ATTN_N,
+    cudaStream_t stream = nullptr
 ) {
 
     using rope_t = rotary_template<ATTN_D>;
@@ -139,11 +137,20 @@ void dispatch_fused_rotary(
 
     unsigned long mem_size = (MAX_SHARED_MEMORY-2048);
     constexpr int ROWS_PER_BLOCK = rope_t::NUM_CONSUMER_WARPS * rope_t::layout::seq_tile::rows;
-    cudaFuncSetAttribute(prototype::lcsf::kernel<rope_t>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
+    kittens::detail::throw_if_cuda_error(
+        cudaFuncSetAttribute(prototype::lcsf::kernel<rope_t>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size),
+        "cudaFuncSetAttribute"
+    );
     dim3 grid((ATTN_N+ROWS_PER_BLOCK-1)/ROWS_PER_BLOCK, (ATTN_B+BATCHES_PER_BLOCK-1)/BATCHES_PER_BLOCK);
     dim3 block(kittens::prototype::detail::NUM_THREADS_v<rope_t>);
-    kittens::prototype::lcsf::kernel<rope_t><<<grid, block, mem_size>>>(g); 
+    kittens::prototype::lcsf::kernel<rope_t><<<grid, block, mem_size, stream>>>(g);
+    kittens::detail::throw_if_cuda_error(cudaGetLastError(), "rotary kernel launch");
 }
+
+#ifdef TK_COMPILE_FUSED_ROTARY
+#include "pyutils/torchutils.cuh"
+#include <iostream>
+#include <ATen/Functions.h>
 
 at::Tensor fused_rotary(
     const at::Tensor x,
@@ -179,6 +186,7 @@ at::Tensor fused_rotary(
     bf16 *d_sin_in = reinterpret_cast<bf16*>(sin_in_bf16);
     bf16 *d_cos_in = reinterpret_cast<bf16*>(cos_in_bf16);
     bf16 *d_out = reinterpret_cast<bf16*>(out_bf16);
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
     if(x.size(3) == 64) {
         dispatch_fused_rotary<64>(
@@ -186,7 +194,7 @@ at::Tensor fused_rotary(
             d_x,
             d_sin_in,
             d_cos_in, 
-            B, H, N
+            B, H, N, stream
         );
     }
     else {
@@ -195,16 +203,94 @@ at::Tensor fused_rotary(
             d_x,
             d_sin_in,
             d_cos_in, 
-            B, H, N
+            B, H, N, stream
         );
     }
 
-    CHECK_CUDA_ERROR(cudaGetLastError());
     return out;
 }
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("fused_rotary", fused_rotary, "Rotary TK. Takes tensors (x, cos_in, sin_in). All tensors are bf16. Returns (B, H, N, 128) in bf16.");
 }
+#elif defined(TVM_FFI_COMPILE)
+#include "pyutils/tvm_ffi_utils.cuh"
+
+namespace {
+
+void check_matching_shape(const tvm::ffi::TensorView &output,
+                          const tvm::ffi::TensorView &input) {
+  TVM_FFI_CHECK(output.ndim() == input.ndim(), ValueError)
+      << "Output and input must have the same rank";
+  for (int32_t axis = 0; axis < input.ndim(); ++axis) {
+    TVM_FFI_CHECK(output.size(axis) == input.size(axis), ValueError)
+        << "Output and input shape mismatch at axis " << axis;
+  }
+}
+
+// The caller-owned output buffer must not overlap any input tensor.
+// Violating this precondition results in undefined behavior.
+void TkRotary(tvm::ffi::TensorView output, tvm::ffi::TensorView input,
+              tvm::ffi::TensorView cos, tvm::ffi::TensorView sin) {
+  kittens::tvm_ffi::check_same_device(output, input, cos, sin);
+  TVM_FFI_CHECK(input.ndim() == 4, ValueError)
+      << "tk_rotary expects input to be 4-dimensional";
+  TVM_FFI_CHECK(output.ndim() == 4, ValueError)
+      << "tk_rotary expects output to be 4-dimensional";
+  TVM_FFI_CHECK(cos.ndim() == 2 && sin.ndim() == 2, ValueError)
+      << "tk_rotary expects cos and sin to be 2-dimensional";
+  check_matching_shape(output, input);
+
+  constexpr DLDataType expected_dtype{kDLBfloat, 16, 1};
+  TVM_FFI_CHECK(
+      output.dtype() == expected_dtype && input.dtype() == expected_dtype &&
+          cos.dtype() == expected_dtype && sin.dtype() == expected_dtype,
+      TypeError)
+      << "tk_rotary supports only bfloat16 tensors";
+
+  const int64_t sequence_length = input.size(2);
+  const int64_t head_dimension = input.size(3);
+  TVM_FFI_CHECK(sequence_length % 16 == 0, ValueError)
+      << "tk_rotary expects the sequence length to be a multiple of 16";
+  TVM_FFI_CHECK(head_dimension == 64 || head_dimension == 128, ValueError)
+      << "tk_rotary expects head dimension 64 or 128";
+  TVM_FFI_CHECK(cos.size(0) == sequence_length &&
+                    sin.size(0) == sequence_length,
+                ValueError)
+      << "cos and sin sequence lengths must match input";
+  TVM_FFI_CHECK(cos.size(1) == head_dimension / 2 &&
+                    sin.size(1) == head_dimension / 2,
+                ValueError)
+      << "cos and sin widths must be half the input head dimension";
+
+  bf16 *output_ptr = kittens::tvm_ffi::tensor_data_ptr<bf16>(output);
+  bf16 *input_ptr = kittens::tvm_ffi::tensor_data_ptr<bf16>(input);
+  bf16 *cos_ptr = kittens::tvm_ffi::tensor_data_ptr<bf16>(cos);
+  bf16 *sin_ptr = kittens::tvm_ffi::tensor_data_ptr<bf16>(sin);
+
+  kittens::tvm_ffi::check_data_alignment(output, 16);
+  kittens::tvm_ffi::check_data_alignment(input, 16);
+  kittens::tvm_ffi::check_data_alignment(cos, 16);
+  kittens::tvm_ffi::check_data_alignment(sin, 16);
+
+  tvm::ffi::CUDADeviceGuard guard(input.device().device_id);
+  cudaStream_t stream = kittens::tvm_ffi::get_cuda_stream(input.device());
+  if (head_dimension == 64) {
+    dispatch_fused_rotary<64>(
+      output_ptr, input_ptr, sin_ptr, cos_ptr,
+      static_cast<int>(input.size(0)), static_cast<int>(input.size(1)),
+      static_cast<int>(sequence_length), stream);
+  }
+  else {
+    dispatch_fused_rotary<128>(
+      output_ptr, input_ptr, sin_ptr, cos_ptr,
+      static_cast<int>(input.size(0)), static_cast<int>(input.size(1)),
+      static_cast<int>(sequence_length), stream);
+  }
+}
+
+} // namespace
+
+TVM_FFI_DLL_EXPORT_TYPED_FUNC(tk_rotary, TkRotary);
 #else
 #include "harness.impl"
 #endif
