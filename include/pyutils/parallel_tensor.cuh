@@ -272,6 +272,10 @@ struct TKParallelTensor {
     }
 
     __host__ inline void destroy() {
+        // Guard against moved-from objects: move constructor sets local_rank_ = -1.
+        // Also makes destroy() idempotent (safe to call multiple times).
+        if (local_rank_ < 0) return;
+
         // 1. Multicast cleanup
         if (multicast_ && multicast_ptr_) {
             brokers_.at({local_rank_, local_world_size_}).sync();
