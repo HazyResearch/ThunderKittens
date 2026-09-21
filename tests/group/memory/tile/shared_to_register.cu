@@ -41,7 +41,7 @@ template<typename T>
 struct group_shared_reg_load_store_tilevec {
     using dtype = T;
     template<int H, int W, int NW> using valid = std::bool_constant<
-        ( NW==1 && W*H<=64 ) && (!std::is_same_v<T, kittens::fp8e4m3> && !std::is_same_v<T, kittens::fp8e5m2>)
+        ( NW==1 && W*H<=64 ) && ( sizeof(T) != 1 ) // fp8 types exist only on SM90+
     >;
     static inline const std::string test_identifier = std::is_same_v<T, kittens::bf16> ? "group_shared_reg_loadstore_tilevec_gmem=bf16" :
                                                       std::is_same_v<T, kittens::half> ? "group_shared_reg_loadstore_tilevec_gmem=half" :
