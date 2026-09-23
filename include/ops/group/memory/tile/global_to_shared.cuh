@@ -35,17 +35,19 @@ __device__ static inline void load(ST &dst, const GL &src, const COORD &idx) {
         int col = (load_idx*elem_per_memcpy) % ST::cols;
 
         if constexpr (assume_aligned) {
-            float4 tmp;
-            move<float4>::ldg(tmp, (float4*)&src_ptr[row*row_stride + col]);
-            move<float4>::sts(dst.idx(dst_ptr, {row, col}), tmp);
-        }
-        else {
-            if (row + unit_coord.template dim<axis>() < src.template shape<axis>()) {
+            if (row < ST::rows) {
                 float4 tmp;
                 move<float4>::ldg(tmp, (float4*)&src_ptr[row*row_stride + col]);
                 move<float4>::sts(dst.idx(dst_ptr, {row, col}), tmp);
             }
-            else {
+        }
+        else {
+            if (row < ST::rows && row + unit_coord.template dim<axis>() < src.template shape<axis>()) {
+                float4 tmp;
+                move<float4>::ldg(tmp, (float4*)&src_ptr[row*row_stride + col]);
+                move<float4>::sts(dst.idx(dst_ptr, {row, col}), tmp);
+            }
+            else if (row < ST::rows) {
                 float4 zeros = {0.f,0.f,0.f,0.f};
                 move<float4>::sts(dst.idx(dst_ptr, {row, col}), zeros); // use the default value
             }
@@ -88,12 +90,14 @@ __device__ static inline void store(const GL &dst, const ST &src, const COORD &i
         int col = (load_idx*elem_per_memcpy) % ST::cols;
 
         if constexpr (assume_aligned) {
-            float4 tmp;
-            move<float4>::lds(tmp, src.idx(src_ptr, {row, col}));
-            move<float4>::stg((float4*)&dst_ptr[row*row_stride + col], tmp);
+            if (row < ST::rows) {
+                float4 tmp;
+                move<float4>::lds(tmp, src.idx(src_ptr, {row, col}));
+                move<float4>::stg((float4*)&dst_ptr[row*row_stride + col], tmp);
+            }
         }
         else {
-            if (row + unit_coord.template dim<axis>() < dst.template shape<axis>()) {
+            if (row < ST::rows && row + unit_coord.template dim<axis>() < dst.template shape<axis>()) {
                 float4 tmp;
                 move<float4>::lds(tmp, src.idx(src_ptr, {row, col}));
                 move<float4>::stg((float4*)&dst_ptr[row*row_stride + col], tmp);
@@ -138,21 +142,23 @@ __device__ static inline void load_async(ST &dst, const GL &src, const COORD &id
         int col = (load_idx*elem_per_memcpy) % ST::cols;
 
         if constexpr (assume_aligned) {
-            asm volatile(
-                "cp.async.cg.shared.global.L2::128B [%0], [%1], 16;\n"
-                :: "r"(dst.idx(dst_ptr, {row, col})), "l"(&src_ptr[row*row_stride + col])
-                : "memory"
-            );
-        }
-        else {
-            if (row + unit_coord.template dim<axis>() < src.template shape<axis>()) {
+            if (row < ST::rows) {
                 asm volatile(
                     "cp.async.cg.shared.global.L2::128B [%0], [%1], 16;\n"
                     :: "r"(dst.idx(dst_ptr, {row, col})), "l"(&src_ptr[row*row_stride + col])
                     : "memory"
                 );
             }
-            else {
+        }
+        else {
+            if (row < ST::rows && row + unit_coord.template dim<axis>() < src.template shape<axis>()) {
+                asm volatile(
+                    "cp.async.cg.shared.global.L2::128B [%0], [%1], 16;\n"
+                    :: "r"(dst.idx(dst_ptr, {row, col})), "l"(&src_ptr[row*row_stride + col])
+                    : "memory"
+                );
+            }
+            else if (row < ST::rows) {
                 // printf("thread %d skipping async load on row %d, col %d\n", threadIdx.x, row + unit_coord.template dim<axis>(), col);
                 float4 zeros = {0.f,0.f,0.f,0.f};
                 move<float4>::sts(dst.idx(dst_ptr, {row, col}), zeros); // use the default value
