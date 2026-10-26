@@ -2,6 +2,8 @@
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h> // for automatic Python list -> std::vector conversion
+#include <stdexcept>
+#include <string>
 
 namespace kittens {
 namespace py {
@@ -64,7 +66,7 @@ template<typename T> concept has_dynamic_shared_memory = requires(T t) { { t.dyn
 template<auto kernel, typename... MemberPtrs> __host__ static void bind_kernel(auto m, auto name, MemberPtrs... member_ptrs) {
     using TGlobal = first_arg_t<kernel>;
     ((void)member_cast<TGlobal>(member_ptrs), ...); // validate pointer compatibility.
-    m.def(name, [=](object<MemberPtrs>... args, pybind11::kwargs kwargs) {
+    m.def(name, [=, __kernel_name__ = std::string(name)](object<MemberPtrs>... args, pybind11::kwargs kwargs) {
         TGlobal __g__ {from_object<typename trait<MemberPtrs>::member_type>::make(args)...};
         cudaStream_t raw_stream = nullptr;
         if (kwargs.contains("stream")) {
@@ -74,10 +76,20 @@ template<auto kernel, typename... MemberPtrs> __host__ static void bind_kernel(a
         }
         if constexpr (has_dynamic_shared_memory<TGlobal>) {
             int __dynamic_shared_memory__ = (int)__g__.dynamic_shared_memory();
-            cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, __dynamic_shared_memory__);
+            cudaError_t __err__ = cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, __dynamic_shared_memory__);
+            if (__err__ != cudaSuccess) {
+                (void)cudaGetLastError(); // clear it so a later, unrelated check does not report it again
+                throw std::runtime_error(__kernel_name__ + ": cudaFuncSetAttribute(MaxDynamicSharedMemorySize=" +
+                                         std::to_string(__dynamic_shared_memory__) + ") failed: " + cudaGetErrorString(__err__));
+            }
             kernel<<<__g__.grid(), __g__.block(), __dynamic_shared_memory__, raw_stream>>>(__g__);
         } else {
             kernel<<<__g__.grid(), __g__.block(), 0, raw_stream>>>(__g__);
+        }
+        // launch-configuration errors are only reported by the launch itself, not by a later synchronize
+        cudaError_t __err__ = cudaGetLastError();
+        if (__err__ != cudaSuccess) {
+            throw std::runtime_error(__kernel_name__ + ": kernel launch failed: " + cudaGetErrorString(__err__));
         }
     });
 }
