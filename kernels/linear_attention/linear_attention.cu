@@ -169,7 +169,7 @@ void la_kernel (const __grid_constant__ la_globals g, int N)
     int tic = 0, toc = 1;
 
     __shared__ semaphore qkv_semaphore;
-    if (warpid == 0) {
+    if (warpid == 0 && laneid() == 0) {
         init_semaphore(qkv_semaphore, 0, 1);
         warp::tma::expect_bytes(qkv_semaphore, 
             size_bytes<typeof(q_smem[0])> + 
@@ -184,6 +184,8 @@ void la_kernel (const __grid_constant__ la_globals g, int N)
         warp::tma::load_async(k_smem_split[tic][1], g.k_split, {batch, head, 0, 1}, qkv_semaphore);
         warp::tma::load_async(v_smem[tic],          g.v,       {batch, head, 0, 0}, qkv_semaphore);
     }
+
+    __syncthreads();
 
     if (warpgroupid == 0) {
         wg_arange(q_decay);
@@ -236,9 +238,13 @@ void la_kernel (const __grid_constant__ la_globals g, int N)
             warpgroup::mm_AB(linear_o, qk_bf, v_smem[tic]);
             warpgroup::mma_async_wait();
 
+            // The previous bulk reduction may still be reading this tile.
+            if (block != 0 && warpid == 0) { warp::tma::store_async_read_wait(); }
+            warpgroup::sync(5 + warpgroupid);
             warpgroup::store(o_smem[warpgroupid], linear_o);
-
-            if (block != 0 && warpid == 0) { warp::tma::store_async_wait(); }
+            asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+            // All warps must publish their stores before one lane reduces the tile.
+            warpgroup::sync(5 + warpgroupid);
             if               (warpid == 0) { warp::tma::store_add_async(g.o, o_smem[warpgroupid], {batch, head, block, 0}); }
         }
 
@@ -262,7 +268,13 @@ void la_kernel (const __grid_constant__ la_globals g, int N)
             warpgroup::mma_async_wait();
             warp::mul_row(linear_o, linear_o, decay);
             
+            // The previous bulk reduction may still be reading this tile.
+            if (block != 0 && warpid == 4) { warp::tma::store_async_read_wait(); }
+            warpgroup::sync(5 + warpgroupid);
             warpgroup::store(o_smem[warpgroupid], linear_o);
+            asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+            // All warps must publish their stores before one lane reduces the tile.
+            warpgroup::sync(5 + warpgroupid);
 
             warpgroup::load(local_k_0, k_smem_split[tic][0]);
             warpgroup::load(local_k_1, k_smem_split[tic][1]);
@@ -274,7 +286,6 @@ void la_kernel (const __grid_constant__ la_globals g, int N)
             warpgroup::store(k_smem_split[tic][0], local_k_0);
             warpgroup::store(k_smem_split[tic][1], local_k_1);
 
-            if (block != 0 && warpid == 4) { warp::tma::store_async_wait(); }
             if               (warpid == 4) { warp::tma::store_add_async(g.o, o_smem[warpgroupid], {batch, head, block, 0}); }
 
             float block_decay = __expf(-slope * static_cast<float>(CHUNK_SIZE));
