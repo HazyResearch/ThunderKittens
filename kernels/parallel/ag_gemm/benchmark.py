@@ -2,7 +2,9 @@ import sys, os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 arch = os.environ.get("ARCH", "")
-assert arch == "SM100" or arch == "SM90", "ARCH must be set to SM100 or SM90"
+assert arch in ("SM90", "SM100", "SM103"), "ARCH must be set to SM90, SM100 or SM103"
+if arch == "SM103":
+    arch = "SM100"  # B300 runs the B200 kernel and layout
 
 import torch
 

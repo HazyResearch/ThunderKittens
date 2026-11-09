@@ -1,6 +1,10 @@
 #include <kittens.cuh>
 #include "pyutils/torchutils.cuh"
 
+#ifndef TK_NUM_DEVICES  // build with make NUM_DEVICES=<n>
+#define TK_NUM_DEVICES 8
+#endif
+
 using namespace kittens;
 
 namespace matmul_reduce_scatter {
@@ -12,7 +16,7 @@ static constexpr int Mb = 128;
 static constexpr int Nb = 256;
 static constexpr int Kb = 64;
 
-static constexpr int NUM_DEVICES = 8;
+static constexpr int NUM_DEVICES = TK_NUM_DEVICES;
 
 struct globals {
     using A_tile = st_bf<Mb, Kb>;
@@ -211,7 +215,7 @@ struct config {
 };
 
 struct globals {
-    static constexpr int NUM_DEVICES = 8;
+    static constexpr int NUM_DEVICES = TK_NUM_DEVICES;
     barrier_t<NUM_DEVICES> barrier;
     const int dev_idx;
 };
