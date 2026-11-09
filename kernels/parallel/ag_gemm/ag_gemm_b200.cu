@@ -2,6 +2,10 @@
 #include "prototype.cuh"
 #include "pyutils/torchutils.cuh"
 
+#ifndef TK_NUM_DEVICES  // build with make NUM_DEVICES=<n>
+#define TK_NUM_DEVICES 8
+#endif
+
 using namespace kittens;
 using namespace kittens::prototype;
 
@@ -20,7 +24,7 @@ struct config {
 };
 
 struct globals {
-    static constexpr int NUM_DEVICES = 8;
+    static constexpr int NUM_DEVICES = TK_NUM_DEVICES;
     static constexpr int PIPELINE_STAGES = 5;
     static constexpr int MMA_PIPE_DEPTH = 2;
     static constexpr int EPI_PIPE_DEPTH = 8;
