@@ -93,6 +93,9 @@ __device__ inline void dispatch(const globals &G, const int sm_idx) {
                 wait(token_arrived[lane_id], 0);
                 tma::store_async(G.post_tokens, token[lane_id], {token_idx, 0});
                 tma::store_async_wait();
+                // The token row was written through the async proxy (TMA store); order it
+                // before the generic-proxy release below.
+                asm volatile("{fence.proxy.async.global;}" ::: "memory");
             }
 
             asm volatile("{red.release.gpu.global.add.s32 [%0], %1;}" :: "l"(&G.barrier[G.dev_idx][{token_idx / globals::ROW_BLOCK}]), "r"(1) : "memory");
@@ -163,6 +166,11 @@ __device__ inline void group_gemm(const globals &G, const int sm_idx, const int 
                         __nanosleep(16);
                         asm volatile("{ld.relaxed.gpu.global.s32 %0, [%1];}" : "=r"(bar_val) : "l"(&G.barrier[G.dev_idx][{row_idx}]) : "memory");
                     }
+                    // The relaxed poll does not synchronize with the dispatch CTAs' red.release:
+                    // make it an acquire pattern, then order it before the async-proxy (TMA) reads
+                    // of post_tokens below.
+                    asm volatile("{fence.acq_rel.gpu;}" ::: "memory");
+                    asm volatile("{fence.proxy.async.global;}" ::: "memory");
 
                     for (int red_idx = 0; red_idx < num_iters; red_idx++) {
                         wait(inputs_finished[stage], get_phasebit<1>(phasebits, stage));
